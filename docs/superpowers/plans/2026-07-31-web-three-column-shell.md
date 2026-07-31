@@ -2434,7 +2434,7 @@ git commit -m "refactor(web): 工具调用行降噪并支持送入工作区"
   - `filterCommands(commands, query) => Command[]` — `query` 是不含前导 `/` 的字符串，按 `name` 前缀匹配，大小写不敏感
   - `useCommandPalette(commands)` => `{ open, query, filtered, activeIndex, openWith(query), close(), moveDown(), moveUp(), pick() }`
   - `Command` 形状：`{ name: string, description: string, run: () => void }`
-  - `CommandPalette.vue` props：`commands: Array`、`query: String`、`activeIndex: Number`；emit：`pick(command)`、`hover(index)`
+  - `CommandPalette.vue` props：`commands: Array`（已过滤好的列表）、`activeIndex: Number`；emit：`pick(index)`、`hover(index)`
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -2588,7 +2588,7 @@ export function useCommandPalette(commands) {
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `pnpm vitest run apps/web/src/composables/useCommandPalette.test.js`
-Expected: PASS，10 个用例通过
+Expected: PASS，9 个用例通过
 
 - [ ] **Step 5: 实现面板组件**
 
@@ -3013,7 +3013,7 @@ Expected: 构建成功
 - [ ] **Step 3: 跑全量测试**
 
 Run: `pnpm test`
-Expected: PASS，后端 4 个 + 前端 45 个用例（layout 10 · workspace 6 · resize 4 · toolCall 7 · http 8 · palette 10）全通过
+Expected: PASS，后端 4 个 + 前端 44 个用例（layout 10 · workspace 6 · resize 4 · toolCall 7 · http 8 · palette 9）全通过
 
 - [ ] **Step 4: 人工验证**
 
