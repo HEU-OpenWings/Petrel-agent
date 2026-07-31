@@ -1,17 +1,15 @@
 <template>
   <!-- toolResult 消息不单独渲染，结果已并入对应的 ToolCallBlock -->
   <div v-if="message.role !== 'toolResult'" class="message" :class="message.role">
-    <div class="role">{{ message.role === 'user' ? '你' : 'Petrel' }}</div>
-
     <div class="body">
       <template v-for="(block, index) in blocks" :key="index">
         <div v-if="block.type === 'thinking'" class="thinking">
-          <button class="thinking-toggle" type="button" @click="showThinking = !showThinking">
+          <button class="line-toggle" type="button" @click="showThinking = !showThinking">
             <Brain :size="14" />
             <span>思考过程</span>
             <ChevronRight class="chevron" :class="{ open: showThinking }" :size="14" />
           </button>
-          <pre v-if="showThinking">{{ block.thinking }}</pre>
+          <pre v-if="showThinking" class="thinking-body">{{ block.thinking }}</pre>
         </div>
 
         <ToolCallBlock
@@ -39,12 +37,19 @@
 
       <span v-if="streaming" class="cursor" />
     </div>
+
+    <div v-if="message.role === 'assistant' && !streaming" class="actions">
+      <button class="icon-btn" type="button" :title="copied ? '已复制' : '复制'" @click="copy">
+        <Check v-if="copied" :size="14" />
+        <Copy v-else :size="14" />
+      </button>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
-import { Brain, ChevronRight, TriangleAlert } from 'lucide-vue-next'
+import { Brain, Check, ChevronRight, Copy, TriangleAlert } from 'lucide-vue-next'
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
 import { useThemeStore } from '@/stores/theme'
@@ -59,6 +64,7 @@ const props = defineProps({
 })
 
 const showThinking = ref(false)
+const copied = ref(false)
 const themeStore = useThemeStore()
 const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
@@ -68,43 +74,74 @@ const blocks = computed(() => {
   if (typeof content === 'string') return [{ type: 'text', text: content }]
   return Array.isArray(content) ? content : []
 })
+
+const plainText = computed(() =>
+  blocks.value
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+)
+
+async function copy() {
+  try {
+    await navigator.clipboard.writeText(plainText.value)
+    copied.value = true
+    setTimeout(() => {
+      copied.value = false
+    }, 1500)
+  } catch {
+    // http 环境下 clipboard 不可用，静默失败好过弹一个用户无法处理的错误
+  }
+}
 </script>
 
 <style lang="less" scoped>
 .message {
   padding: 12px 0;
+}
 
-  & + .message {
-    border-top: 1px solid var(--gray-100);
+// 用户消息右对齐成气泡，助手消息全宽无气泡——这是两者最直观的区分方式，
+// 比加角色标签更省视觉噪音
+.user {
+  display: flex;
+  justify-content: flex-end;
+
+  .body {
+    max-width: 70%;
+    padding: 10px 14px;
+    border-radius: 18px;
+    background: var(--surface-subtle);
+    color: var(--text-strong);
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 }
 
-.role {
-  margin-bottom: 4px;
-  color: var(--gray-500);
-  font-size: 12px;
-}
-
-.user .body {
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--gray-1000);
+.assistant .body {
+  color: var(--text-strong);
 }
 
 .thinking {
   margin: 4px 0 8px;
 }
 
-.thinking-toggle {
+.line-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 0;
+  padding: 4px 6px;
   border: none;
+  border-radius: 6px;
   background: none;
-  color: var(--gray-500);
+  color: var(--text-muted);
   font-size: 12px;
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background: var(--surface-hover);
+    color: var(--text-strong);
+  }
 }
 
 .chevron {
@@ -115,12 +152,12 @@ const blocks = computed(() => {
   }
 }
 
-.thinking pre {
+.thinking-body {
   margin: 4px 0 0;
   padding: 8px;
-  border-radius: 4px;
-  background: var(--gray-50);
-  color: var(--gray-600);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
   font-size: 12px;
   white-space: pre-wrap;
 }
@@ -138,12 +175,17 @@ const blocks = computed(() => {
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  border: 1px solid #e8a3a3;
-  border-radius: 6px;
-  background: #fdf5f5;
-  color: #c04a4a;
+  border-radius: 8px;
+  background: var(--color-error-50);
+  color: var(--color-error-700);
   font-size: 13px;
   word-break: break-word;
+}
+
+.actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
 }
 
 .cursor {
