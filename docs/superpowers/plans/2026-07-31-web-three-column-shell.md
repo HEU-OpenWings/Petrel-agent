@@ -325,7 +325,7 @@ export const useLayoutStore = defineStore('layout', () => {
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `pnpm vitest run apps/web/src/stores/layout.test.js`
-Expected: PASS，9 个用例全绿
+Expected: PASS，10 个用例全绿
 
 - [ ] **Step 6: 确认没有破坏已有测试**
 
@@ -3013,7 +3013,7 @@ Expected: 构建成功
 - [ ] **Step 3: 跑全量测试**
 
 Run: `pnpm test`
-Expected: PASS，后端 4 个 + 前端 44 个用例（layout 9 · workspace 6 · resize 4 · toolCall 7 · http 8 · palette 10）全通过
+Expected: PASS，后端 4 个 + 前端 45 个用例（layout 10 · workspace 6 · resize 4 · toolCall 7 · http 8 · palette 10）全通过
 
 - [ ] **Step 4: 人工验证**
 
