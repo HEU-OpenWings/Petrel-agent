@@ -1,7 +1,7 @@
 <template>
   <div class="app-shell">
     <aside v-if="!layout.leftCollapsed" class="sidebar">
-      <div class="placeholder">SessionSidebar</div>
+      <SessionSidebar @new-chat="onNewChat" />
     </aside>
 
     <div class="main">
@@ -27,7 +27,7 @@
       </header>
 
       <div class="content">
-        <router-view />
+        <router-view :key="viewKey" />
       </div>
     </div>
 
@@ -46,13 +46,15 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { PanelLeft, PanelRight } from 'lucide-vue-next'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useResizePanel } from '@/composables/useResizePanel'
 import { useLayoutStore } from '@/stores/layout'
+import SessionSidebar from '@/components/shell/SessionSidebar.vue'
 
 const route = useRoute()
+const router = useRouter()
 const layout = useLayoutStore()
 
 // 右栏只属于对话页，由路由 meta 决定，非对话页自动只剩两栏
@@ -63,6 +65,20 @@ const { onPointerDown } = useResizePanel({
   getWidth: () => layout.rightWidth,
   setWidth: (width) => layout.setRightWidth(width)
 })
+
+// 已经在对话页时 router.push('/agent') 不会重新挂载组件，点「新对话」会毫无反应。
+// 递增 key 强制重挂载 ChatView，「全新对话」的语义正好等于「组件重新来过」，
+// 连输入框草稿和错误提示一起清干净。
+const chatKey = ref(0)
+const viewKey = computed(() => (route.path === '/agent' ? `agent#${chatKey.value}` : route.path))
+
+function onNewChat() {
+  if (route.path === '/agent') {
+    chatKey.value += 1
+  } else {
+    router.push('/agent')
+  }
+}
 </script>
 
 <style lang="less" scoped>
