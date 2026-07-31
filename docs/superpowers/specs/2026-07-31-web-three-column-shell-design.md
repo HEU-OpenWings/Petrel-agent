@@ -53,6 +53,12 @@ AppShell.vue
 
 右栏是否出现由路由 `meta.workspace` 决定，非对话页自动只剩两栏。
 
+**右栏的数据必须走 store，不能走 `provide` / `inject`**：`ChatView` 与 `WorkspacePanel` 都是
+`AppShell` 的子组件，是兄弟关系，`provide` 只向后代传递，兄弟之间注入不到。因此 `workspace`
+store 存的是选中工具调用的**快照**（`{ id, name, state, args, result, ms }`）而不只是一个 id：
+`ToolCallBlock` 在点「送到右栏」时写入快照，并在自己仍是选中项时随执行状态更新它。
+这样 `WorkspacePanel` 只依赖 store，可以脱离 ChatView 独立渲染。
+
 ### 新增文件
 
 | 文件 | 职责 | 依赖 |
@@ -62,10 +68,13 @@ AppShell.vue
 | `components/shell/WorkspacePanel.vue` | 右栏：渲染选中的工具调用详情 + 引用空态 | workspace store |
 | `composables/useResizePanel.js` | 右栏拖拽：pointer 事件、边界钳制、双击复位 | 无 |
 | `stores/layout.js` | `leftCollapsed` / `rightCollapsed` / `rightWidth` + localStorage | 无 |
-| `stores/workspace.js` | 右栏展示什么：`activeToolCallId` | 无 |
+| `stores/workspace.js` | 右栏展示什么：选中工具调用的快照 | 无 |
 | `apis/http.js` | fetch 封装 + JWT 注入 + 401 处理 | user store · router |
 | `components/chat/CommandPalette.vue` | `/` 命令面板 | 无（命令由 ChatView 注入） |
-| `views/EvalView.vue` | 新建壳，内层包现有 `EvaluationBenchmarks` | 现有组件 |
+| `views/EvalView.vue` | 新建，空态页（原因见下） | 无 |
+
+`EvalView` 只能是空态页：现有 `EvaluationBenchmarks` 声明了 `databaseId` 这个 **required prop**，
+它是知识库详情页的一个子 tab，不是独立页面，无法在没有知识库上下文时挂载。评测页要等 HEU-29。
 
 ### 修改文件
 
@@ -89,7 +98,7 @@ AgentEvent 归约逻辑，本次改造纯粹在其之上换渲染层。
 /knowledge           AppShell > DataBaseView          复用现有页，等后端
 /knowledge/:id       AppShell > DataBaseInfoView      复用现有页，等后端
 /dashboard           AppShell > DashboardView         复用现有页，等后端
-/eval                AppShell > EvalView              新建壳
+/eval                AppShell > EvalView              新建空态页
 *                    EmptyView
 ```
 
@@ -269,6 +278,9 @@ get / post / put / del
 
 选中态是圆角灰块（`--surface-hover`），左右留 8px 边距，不用左侧竖线指示器。
 
+用户区**不复用现有 `UserInfoComponent`**：它 `inject('settingsModal')` 拿的是 `AppLayout` 提供的
+依赖，挂到 AppShell 下会拿到空对象，点设置即崩。左栏自己写一个只读的用户区。
+
 ### WorkspacePanel
 
 ```
@@ -318,7 +330,7 @@ docker compose up -d    # 前端 :5173/agent 可访问，控制台无报错
 | 8 | 发一条触发工具的消息（「现在几点」）：中栏点摘要可内联展开；点 `↗` 右栏展开详情 |
 | 9 | 右栏折叠时点 `↗`：右栏自动展开并显示该工具调用 |
 | 10 | 用户消息右对齐气泡，助手消息全宽无气泡，消息间无分隔线 |
-| 11 | 输入 `/` 唤起面板，四条命令均可执行；`Esc` 关闭；输入 `/abc` 面板消失且不拦截 |
+| 11 | 输入 `/` 唤起面板，三条命令均可执行；`Esc` 关闭；输入 `/abc` 面板消失且不拦截 |
 | 12 | 左栏四个路由入口可达，页面套在同一 shell 内（旧页面接口报错属预期） |
 | 13 | 暗色模式下三栏配色正常，无残留亮色块 |
 | 14 | 所有可点元素 hover 无位移，仅背景/文字变色 |
