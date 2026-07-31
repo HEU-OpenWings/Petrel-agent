@@ -1,9 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import AppLayout from '@/layouts/AppLayout.vue';
-import BlankLayout from '@/layouts/BlankLayout.vue';
-import { useUserStore } from '@/stores/user';
-import { useAgentStore } from '@/stores/agent';
+import AppShell from '@/layouts/AppShell.vue'
+import BlankLayout from '@/layouts/BlankLayout.vue'
 
+/**
+ * meta 约定：
+ * - workspace: true  该页需要右栏工作区
+ * - title            中栏顶部工具条显示的标题
+ * - requiresAuth     HEU-7 落地前一律 false，见文件末尾的守卫说明
+ */
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -27,61 +31,60 @@ const router = createRouter({
       meta: { requiresAuth: false }
     },
     {
-      // v0.5 新对话界面：直接消费 agent-server 的 AgentEvent SSE。
-      // agent-server 暂无认证接口，因此不加登录守卫。
       path: '/agent',
       name: 'AgentMain',
-      component: () => import('../views/ChatView.vue'),
-      meta: { requiresAuth: false }
-    },
-    {
-      path: '/agent/:agent_id',
-      name: 'AgentSinglePage',
-      component: () => import('../views/AgentSingleView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/graph',
-      name: 'graph',
-      component: AppLayout,
+      component: AppShell,
       children: [
         {
           path: '',
-          name: 'GraphComp',
-          component: () => import('../views/GraphView.vue'),
-          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
+          name: 'Chat',
+          component: () => import('../views/ChatView.vue'),
+          meta: { requiresAuth: false, workspace: true, title: '新对话' }
         }
       ]
     },
     {
-      path: '/database',
-      name: 'database',
-      component: AppLayout,
+      path: '/knowledge',
+      name: 'knowledge',
+      component: AppShell,
       children: [
         {
           path: '',
-          name: 'DatabaseComp',
+          name: 'KnowledgeList',
           component: () => import('../views/DataBaseView.vue'),
-          meta: { keepAlive: true, requiresAuth: true, requiresAdmin: true }
+          meta: { keepAlive: true, requiresAuth: false, title: '知识库' }
         },
         {
           path: ':database_id',
-          name: 'DatabaseInfoComp',
+          name: 'KnowledgeDetail',
           component: () => import('../views/DataBaseInfoView.vue'),
-          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
+          meta: { keepAlive: false, requiresAuth: false, title: '知识库' }
         }
       ]
     },
-      {
+    {
       path: '/dashboard',
       name: 'dashboard',
-      component: AppLayout,
+      component: AppShell,
       children: [
         {
           path: '',
           name: 'DashboardComp',
           component: () => import('../views/DashboardView.vue'),
-          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
+          meta: { keepAlive: false, requiresAuth: false, title: 'Dashboard' }
+        }
+      ]
+    },
+    {
+      path: '/eval',
+      name: 'eval',
+      component: AppShell,
+      children: [
+        {
+          path: '',
+          name: 'EvalComp',
+          component: () => import('../views/EvalView.vue'),
+          meta: { requiresAuth: false, title: '评测' }
         }
       ]
     },
@@ -90,66 +93,29 @@ const router = createRouter({
       name: 'NotFound',
       component: () => import('../views/EmptyView.vue'),
       meta: { requiresAuth: false }
-    },
+    }
   ]
 })
 
-// 全局前置守卫
-router.beforeEach(async (to, from, next) => {
-  // 检查路由是否需要认证
-  const requiresAuth = to.matched.some(record => record.meta.requiresAuth === true);
-  const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin);
-
-  const userStore = useUserStore();
-  const isLoggedIn = userStore.isLoggedIn;
-  const isAdmin = userStore.isAdmin;
-
-  // 如果路由需要认证但用户未登录
-  if (requiresAuth && !isLoggedIn) {
-    // 保存尝试访问的路径，登录后跳转
-    sessionStorage.setItem('redirect', to.fullPath);
-    next('/login');
-    return;
-  }
-
-  // 如果路由需要管理员权限但用户不是管理员
-  if (requiresAdmin && !isAdmin) {
-    // 如果是普通用户，跳转到默认智能体页面
-    try {
-      const agentStore = useAgentStore();
-      // 等待 store 初始化完成
-      if (!agentStore.isInitialized) {
-        await agentStore.initialize();
-      }
-
-      const defaultAgent = agentStore.defaultAgent;
-      if (defaultAgent && defaultAgent.id) {
-        next(`/agent/${defaultAgent.id}`);
-      } else {
-        // 如果没有默认智能体，可以考虑跳转到第一个可用的智能体，或者一个特定的页面
-        const agentIds = Object.keys(agentStore.agents);
-        if (agentIds.length > 0) {
-          next(`/agent/${agentIds[0]}`);
-        } else {
-          // 没有可用的智能体，跳转到首页
-          next('/');
-        }
-      }
-    } catch (error) {
-      console.error('获取智能体信息失败:', error);
-      next('/');
-    }
-    return;
-  }
-
-  // 如果用户已登录但访问登录页
-  if (to.path === '/login' && isLoggedIn) {
-    next('/');
-    return;
-  }
-
-  // 其他情况正常导航
-  next();
-});
+/**
+ * 认证守卫暂时关闭：agent-server 还没有任何认证接口（HEU-7 未做）。
+ *
+ * HEU-7 落地后要做的事：
+ * 1. 给需要登录的路由把 meta.requiresAuth 改回 true
+ * 2. 打开下面被注释的分支
+ *
+ * 原来的 requiresAdmin 分支已整段删除而不是注释保留：它会调
+ * agentStore.initialize() 打 v0.4 的 Python API，必然抛错。留着它，
+ * 关掉认证的结果不是「不校验」而是「导航时报错」。
+ * 角色模型要等 HEU-7 定了范围再重写。
+ */
+router.beforeEach((to, from, next) => {
+  // const userStore = useUserStore()
+  // if (to.meta.requiresAuth === true && !userStore.isLoggedIn) {
+  //   next({ path: '/login', query: { redirect: to.fullPath } })
+  //   return
+  // }
+  next()
+})
 
 export default router
