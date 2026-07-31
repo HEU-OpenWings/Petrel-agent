@@ -87,7 +87,6 @@ import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useInfoStore } from '@/stores/info'
-import { useAgentStore } from '@/stores/agent'
 import { useThemeStore } from '@/stores/theme'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
 import ProjectOverview from '@/components/ProjectOverview.vue'
@@ -106,7 +105,6 @@ import {
 const router = useRouter()
 const userStore = useUserStore()
 const infoStore = useInfoStore()
-const agentStore = useAgentStore()
 const themeStore = useThemeStore()
 
 const goToChat = async () => {
@@ -126,18 +124,7 @@ const goToChat = async () => {
   }
 
   // 普通用户跳转到默认智能体
-  try {
-    // 获取默认智能体
-    const defaultAgent = agentStore.defaultAgent;
-    if (defaultAgent?.id) {
-      router.push('/agent');
-    } else {
-      router.push('/agent');
-    }
-  } catch (error) {
-    console.error('跳转到智能体页面失败:', error);
-    router.push("/");
-  }
+  router.push('/agent');
 };
 
 onMounted(async () => {

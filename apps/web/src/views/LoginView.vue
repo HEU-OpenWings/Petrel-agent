@@ -375,14 +375,14 @@ const handleLogin = async () => {
         // 尝试获取默认智能体
         if (agentStore.defaultAgentId) {
           // 如果存在默认智能体，直接跳转
-          router.push(`/agent/${agentStore.defaultAgentId}`);
+          router.push('/agent');
           return;
         }
 
         // 没有默认智能体，获取第一个可用智能体
         const agentIds = Object.keys(agentStore.agents);
         if (agentIds.length > 0) {
-          router.push(`/agent/${agentIds[0]}`);
+          router.push('/agent');
           return;
         }
 
