@@ -61,6 +61,8 @@ pnpm --filter @petrel/web run build           # 前端构建，每个组件任�
 | `apps/web/src/apis/http.test.js` | 上者的单元测试 |
 | `apps/web/src/layouts/AppShell.vue` | 三栏骨架，只管布局 |
 | `apps/web/src/components/shell/SessionSidebar.vue` | 左栏 |
+| `apps/web/src/utils/toolCall.js` | 工具调用的状态文案与参数/结果格式化，中栏右栏共用 |
+| `apps/web/src/utils/toolCall.test.js` | 上者的单元测试 |
 | `apps/web/src/components/shell/WorkspacePanel.vue` | 右栏 |
 | `apps/web/src/components/chat/CommandPalette.vue` | `/` 命令面板（纯渲染，逻辑在 composable 里） |
 | `apps/web/src/views/EvalView.vue` | 评测页空态 |
@@ -1163,17 +1165,129 @@ git commit -m "feat(web): 左栏 SessionSidebar"
 ## Task 6: WorkspacePanel
 
 **Files:**
+- Create: `apps/web/src/utils/toolCall.js`
+- Test: `apps/web/src/utils/toolCall.test.js`
 - Create: `apps/web/src/components/shell/WorkspacePanel.vue`
 - Modify: `apps/web/src/layouts/AppShell.vue`（替换右栏占位）
 
 **Interfaces:**
 - Consumes: `useWorkspaceStore()`（Task 2）、`useLayoutStore()`（Task 1）
-- Produces: `WorkspacePanel.vue`，**无 props**，全部数据来自 workspace store
+- Produces:
+  - `TOOL_STATE_TEXT` — `{ running, done, error, pending }` 到中文文案的映射
+  - `formatToolArgs(args) => string`
+  - `extractToolResultText(result) => string`
+  - `WorkspacePanel.vue`，**无 props**，全部数据来自 workspace store
 
 组件不接 props 是有意的：右栏与产生数据的 ChatView 是兄弟组件，只能通过 store 通信。
 好处是这个组件给一份 store 状态就能独立渲染。
 
-- [ ] **Step 1: 实现 WorkspacePanel**
+格式化逻辑抽进 `utils/toolCall.js` 是因为 Task 10 的 `ToolCallBlock` 要用同一套——
+中栏内联展开和右栏细读展示的是同一份数据，两处各写一遍迟早会漂移。
+
+- [ ] **Step 1: 写 toolCall 工具函数的失败测试**
+
+创建 `apps/web/src/utils/toolCall.test.js`：
+
+```js
+import { describe, expect, it } from 'vitest'
+import { extractToolResultText, formatToolArgs, TOOL_STATE_TEXT } from './toolCall.js'
+
+describe('TOOL_STATE_TEXT', () => {
+  it('覆盖四种执行状态', () => {
+    expect(TOOL_STATE_TEXT).toEqual({
+      running: '执行中',
+      done: '完成',
+      error: '失败',
+      pending: '待执行'
+    })
+  })
+})
+
+describe('formatToolArgs', () => {
+  it('空参数显示占位文案', () => {
+    expect(formatToolArgs(null)).toBe('(无)')
+    expect(formatToolArgs(undefined)).toBe('(无)')
+  })
+
+  it('字符串参数原样返回', () => {
+    expect(formatToolArgs('raw')).toBe('raw')
+  })
+
+  it('对象参数格式化为缩进 JSON', () => {
+    expect(formatToolArgs({ a: 1 })).toBe('{\n  "a": 1\n}')
+  })
+})
+
+describe('extractToolResultText', () => {
+  it('没有结果时返回空串', () => {
+    expect(extractToolResultText(null)).toBe('')
+  })
+
+  it('从 pi 的 content block 数组里取文本并按行拼接', () => {
+    const result = {
+      content: [
+        { type: 'text', text: '第一行' },
+        { type: 'image', data: 'ignored' },
+        { type: 'text', text: '第二行' }
+      ]
+    }
+    expect(extractToolResultText(result)).toBe('第一行\n第二行')
+  })
+
+  it('没有文本块时回退到原始 JSON', () => {
+    const result = { content: [{ type: 'image', data: 'x' }] }
+    expect(extractToolResultText(result)).toContain('"type": "image"')
+  })
+})
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `pnpm vitest run apps/web/src/utils/toolCall.test.js`
+Expected: FAIL，无法解析 `./toolCall.js`
+
+- [ ] **Step 3: 实现 toolCall 工具函数**
+
+创建 `apps/web/src/utils/toolCall.js`：
+
+```js
+/**
+ * 工具调用的展示格式化。
+ *
+ * 中栏的 ToolCallBlock 内联展开与右栏的 WorkspacePanel 细读用的是同一份数据，
+ * 格式化逻辑放这里共用，避免两处各写一遍后慢慢漂移。
+ */
+
+export const TOOL_STATE_TEXT = {
+  running: '执行中',
+  done: '完成',
+  error: '失败',
+  pending: '待执行'
+}
+
+export function formatToolArgs(args) {
+  if (args === undefined || args === null) return '(无)'
+  return typeof args === 'string' ? args : JSON.stringify(args, null, 2)
+}
+
+/** pi 的工具结果是 content block 数组，取其中的文本；一个文本块都没有就退回原始 JSON */
+export function extractToolResultText(result) {
+  if (!result) return ''
+  const blocks = Array.isArray(result.content) ? result.content : []
+  const text = blocks
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+  return text || JSON.stringify(result, null, 2)
+}
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `pnpm vitest run apps/web/src/utils/toolCall.test.js`
+Expected: PASS，7 个用例通过
+
+- [ ] **Step 5: 实现 WorkspacePanel**
 
 创建 `apps/web/src/components/shell/WorkspacePanel.vue`：
 
@@ -1220,33 +1334,15 @@ import { computed } from 'vue'
 import { PanelRightClose } from 'lucide-vue-next'
 import { useLayoutStore } from '@/stores/layout'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { extractToolResultText, formatToolArgs, TOOL_STATE_TEXT } from '@/utils/toolCall'
 
 const layout = useLayoutStore()
 const workspace = useWorkspaceStore()
 
 const active = computed(() => workspace.activeToolCall)
-
-const stateText = computed(
-  () => ({ running: '执行中', done: '完成', error: '失败', pending: '待执行' })[active.value?.state] ?? ''
-)
-
-const formattedArgs = computed(() => {
-  const args = active.value?.args
-  if (args === undefined || args === null) return '(无)'
-  return typeof args === 'string' ? args : JSON.stringify(args, null, 2)
-})
-
-const resultText = computed(() => {
-  const result = active.value?.result
-  if (!result) return ''
-  // pi 的工具结果是 content block 数组，取其中的文本
-  const blocks = Array.isArray(result.content) ? result.content : []
-  const text = blocks
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-  return text || JSON.stringify(result, null, 2)
-})
+const stateText = computed(() => TOOL_STATE_TEXT[active.value?.state] ?? '')
+const formattedArgs = computed(() => formatToolArgs(active.value?.args))
+const resultText = computed(() => extractToolResultText(active.value?.result))
 </script>
 
 <style lang="less" scoped>
@@ -1341,7 +1437,7 @@ const resultText = computed(() => {
 </style>
 ```
 
-- [ ] **Step 2: 接进 AppShell**
+- [ ] **Step 6: 接进 AppShell**
 
 `apps/web/src/layouts/AppShell.vue`：右栏占位替换为
 
@@ -1359,16 +1455,16 @@ import WorkspacePanel from '@/components/shell/WorkspacePanel.vue'
 
 `AppShell` 不需要为右栏传任何数据——它只负责给右栏留出位置和宽度，内容由 store 驱动。
 
-- [ ] **Step 3: 构建验证**
+- [ ] **Step 7: 构建验证**
 
 Run: `pnpm --filter @petrel/web run build`
 Expected: 构建成功
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add apps/web/src/components/shell/WorkspacePanel.vue apps/web/src/layouts/AppShell.vue
-git commit -m "feat(web): 右栏 WorkspacePanel"
+git add apps/web/src/utils/toolCall.js apps/web/src/utils/toolCall.test.js apps/web/src/components/shell/WorkspacePanel.vue apps/web/src/layouts/AppShell.vue
+git commit -m "feat(web): 右栏 WorkspacePanel 与工具调用格式化"
 ```
 
 ---
@@ -2145,6 +2241,7 @@ import { computed, ref, watch } from 'vue'
 import { ArrowUpRight, ChevronRight } from 'lucide-vue-next'
 import { useLayoutStore } from '@/stores/layout'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { extractToolResultText, formatToolArgs, TOOL_STATE_TEXT } from '@/utils/toolCall'
 
 const props = defineProps({
   /** pi 的 toolCall content block：{ id, name, arguments } */
@@ -2158,28 +2255,11 @@ const layout = useLayoutStore()
 const workspace = useWorkspaceStore()
 
 const state = computed(() => props.detail.state ?? 'pending')
-
-const stateText = computed(
-  () => ({ running: '执行中', done: '完成', error: '失败', pending: '待执行' })[state.value]
-)
-
-const formattedArgs = computed(() => {
-  const args = props.detail.args ?? props.toolCall.arguments
-  if (args === undefined || args === null) return '(无)'
-  return typeof args === 'string' ? args : JSON.stringify(args, null, 2)
-})
-
-const resultText = computed(() => {
-  const result = props.detail.result
-  if (!result) return ''
-  // pi 的工具结果是 content block 数组，取其中的文本
-  const blocks = Array.isArray(result.content) ? result.content : []
-  const text = blocks
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-  return text || JSON.stringify(result, null, 2)
-})
+const stateText = computed(() => TOOL_STATE_TEXT[state.value])
+// detail.args 来自 tool_execution_start 事件，工具还没开始执行时退回 content block 里的参数
+const args = computed(() => props.detail.args ?? props.toolCall.arguments)
+const formattedArgs = computed(() => formatToolArgs(args.value))
+const resultText = computed(() => extractToolResultText(props.detail.result))
 
 /** 右栏与本组件是兄弟关系，注入不到，只能把完整快照写进 store */
 function snapshot() {
@@ -2187,7 +2267,7 @@ function snapshot() {
     id: props.toolCall.id,
     name: props.toolCall.name,
     state: state.value,
-    args: props.detail.args ?? props.toolCall.arguments,
+    args: args.value,
     result: props.detail.result,
     ms: props.detail.ms
   }
@@ -2933,7 +3013,7 @@ Expected: 构建成功
 - [ ] **Step 3: 跑全量测试**
 
 Run: `pnpm test`
-Expected: PASS，后端 4 个 + 前端 37 个用例（layout 9 · workspace 6 · resize 4 · http 8 · palette 10）全通过
+Expected: PASS，后端 4 个 + 前端 44 个用例（layout 9 · workspace 6 · resize 4 · toolCall 7 · http 8 · palette 10）全通过
 
 - [ ] **Step 4: 人工验证**
 
