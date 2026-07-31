@@ -8,6 +8,7 @@ export default defineConfig({
       "@petrel/ai": fileURLToPath(new URL("./packages/ai/src/index.ts", import.meta.url)),
       "@petrel/config": fileURLToPath(new URL("./packages/config/src/index.ts", import.meta.url)),
       "@petrel/logger": fileURLToPath(new URL("./packages/logger/src/index.ts", import.meta.url)),
+      "@": fileURLToPath(new URL("./apps/web/src", import.meta.url)),
     },
   },
   test: {
