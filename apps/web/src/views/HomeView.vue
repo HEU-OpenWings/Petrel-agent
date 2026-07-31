@@ -10,10 +10,7 @@
           <router-link to="/agent" class="nav-link" v-if="userStore.isLoggedIn && userStore.isAdmin">
             <span>智能体</span>
           </router-link>
-          <router-link to="/graph" class="nav-link" v-if="userStore.isLoggedIn && userStore.isAdmin">
-            <span>知识图谱</span>
-          </router-link>
-          <router-link to="/database" class="nav-link" v-if="userStore.isLoggedIn && userStore.isAdmin">
+          <router-link to="/knowledge" class="nav-link" v-if="userStore.isLoggedIn && userStore.isAdmin">
             <span>知识库</span>
           </router-link>
           </nav>
@@ -133,7 +130,7 @@ const goToChat = async () => {
     // 获取默认智能体
     const defaultAgent = agentStore.defaultAgent;
     if (defaultAgent?.id) {
-      router.push(`/agent/${defaultAgent.id}`);
+      router.push('/agent');
     } else {
       router.push('/agent');
     }

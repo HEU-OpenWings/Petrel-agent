@@ -157,7 +157,7 @@ const formatDate = (dateStr) => {
 
 // 返回数据库列表
 const backToDatabase = () => {
-  router.push('/database');
+  router.push('/knowledge');
 };
 
 // 编辑相关逻辑（复用自 DatabaseHeader）
