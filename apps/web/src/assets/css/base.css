@@ -111,6 +111,17 @@
   --shadow-5: rgba(0, 0, 0, 0.20);
 
 
+  /* Shell Surfaces - 三栏 shell 专用暖中性色，与冷青灰的 --gray-* 阶梯并存 */
+  --surface-app: #ffffff;
+  --surface-sunken: #f9f9f7;
+  --surface-subtle: #f4f4f2;
+  --surface-hover: #ececea;
+  --border-subtle: #ecece8;
+  --text-strong: #1f1f1e;
+  --text-muted: #6e6e69;
+  --text-faint: #9b9b95;
+  --radius-lg: 12px;
+
   --min-width: 400px;
 
   /* Ant Design 兼容变量 */

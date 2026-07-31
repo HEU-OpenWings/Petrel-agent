@@ -38,6 +38,16 @@
   --gray-10:    #080808;
   --gray-0:     #030303;
 
+  /* Shell Surfaces - 与亮色同名，暗色下同样保持暖中性 */
+  --surface-app: #1a1a19;
+  --surface-sunken: #141413;
+  --surface-subtle: #262624;
+  --surface-hover: #302f2d;
+  --border-subtle: #2e2d2b;
+  --text-strong: #ececea;
+  --text-muted: #a3a29c;
+  --text-faint: #6e6e69;
+
   /* Standard Color System - 深色模式5档色阶系统 */
   --color-primary-50: #023944;    /* 主色调-最深 */
   --color-primary-100: #035065;   /* 主色调-深 */
