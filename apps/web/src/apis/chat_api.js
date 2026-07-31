@@ -1,0 +1,71 @@
+/**
+ * agent-server 的对话接口。
+ *
+ * POST /api/chat 返回 SSE，事件体是 pi 的 AgentEvent 原样透传。
+ * 因为需要 POST + 自定义请求头，这里用 fetch 读流，而不是 EventSource。
+ */
+
+/** 把 SSE 帧文本解析为 { event, data }，data 解析失败时为 null。 */
+function parseFrame(frame) {
+  let event = 'message'
+  const dataLines = []
+  for (const line of frame.split('\n')) {
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim()
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim())
+    }
+  }
+  if (dataLines.length === 0) return null
+  const raw = dataLines.join('\n')
+  try {
+    return { event, data: JSON.parse(raw) }
+  } catch {
+    return { event, data: null, raw }
+  }
+}
+
+/**
+ * 发起一次对话并逐帧回调。
+ *
+ * @param {{ message: string, systemPrompt?: string, signal?: AbortSignal }} params
+ * @param {(frame: { event: string, data: any }) => void} onFrame
+ */
+export async function streamChat({ message, systemPrompt, signal }, onFrame) {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, systemPrompt }),
+    signal
+  })
+
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const body = await response.json()
+      detail = body?.error?.message ?? ''
+    } catch {
+      detail = await response.text().catch(() => '')
+    }
+    throw new Error(detail || `请求失败（HTTP ${response.status}）`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary !== -1) {
+      const frame = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      const parsed = parseFrame(frame)
+      if (parsed) onFrame(parsed)
+      boundary = buffer.indexOf('\n\n')
+    }
+  }
+}

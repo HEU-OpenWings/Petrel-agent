@@ -1,0 +1,23 @@
+packages:
+  - apps/*
+  - packages/*
+
+allowBuilds:
+  # pi-ai 的 Google provider 传递依赖；本项目只用 OpenAI 兼容端点，无需执行其构建脚本
+  '@google/genai': false
+  # 前端传递依赖，postinstall 只打印赞助信息
+  core-js: false
+  esbuild: true
+  protobufjs: false
+minimumReleaseAgeExclude:
+  - '@biomejs/biome@2.5.6'
+  - '@biomejs/cli-darwin-arm64@2.5.6'
+  - '@biomejs/cli-darwin-x64@2.5.6'
+  - '@biomejs/cli-linux-arm64-musl@2.5.6'
+  - '@biomejs/cli-linux-arm64@2.5.6'
+  - '@biomejs/cli-linux-x64-musl@2.5.6'
+  - '@biomejs/cli-linux-x64@2.5.6'
+  - '@biomejs/cli-win32-arm64@2.5.6'
+  - '@biomejs/cli-win32-x64@2.5.6'
+  - '@earendil-works/pi-agent-core@0.83.0'
+  - '@earendil-works/pi-ai@0.83.0'

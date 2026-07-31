@@ -1,0 +1,53 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: development
+    image: petrel-api:0.5.dev
+    container_name: petrel-api-dev
+    working_dir: /app
+    # 逐个挂 src 而不是整个 apps/packages：挂目录会覆盖容器内 pnpm 的符号链接
+    volumes:
+      - ./apps/api/src:/app/apps/api/src
+      - ./packages/agent-core/src:/app/packages/agent-core/src
+      - ./packages/ai/src:/app/packages/ai/src
+      - ./packages/config/src:/app/packages/config/src
+      - ./packages/logger/src:/app/packages/logger/src
+      - ./tsconfig.base.json:/app/tsconfig.base.json
+    ports:
+      - "5050:5050"
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5050/api/system/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: development
+    image: petrel-web:0.5.dev
+    container_name: petrel-web-dev
+    working_dir: /app/apps/web
+    volumes:
+      - ./apps/web/src:/app/apps/web/src
+      - ./apps/web/public:/app/apps/web/public
+      - ./apps/web/index.html:/app/apps/web/index.html
+      - ./apps/web/vite.config.js:/app/apps/web/vite.config.js
+    ports:
+      - "5173:5173"
+    environment:
+      - NODE_ENV=development
+      # 前后端现在同属一个 compose 网络，直接用服务名，不再需要 host.docker.internal
+      - VITE_API_URL=http://api:5050
+    command: pnpm run server
+    depends_on:
+      - api
+    restart: unless-stopped

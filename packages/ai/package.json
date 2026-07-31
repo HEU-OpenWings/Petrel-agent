@@ -1,0 +1,20 @@
+{
+  "name": "@petrel/ai",
+  "version": "0.5.0-dev",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.check.json"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.83.0",
+    "@petrel/config": "workspace:*"
+  }
+}
