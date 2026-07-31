@@ -39,7 +39,7 @@
         @dblclick="layout.resetRightWidth()"
       />
       <aside class="workspace" :style="{ width: `${layout.rightWidth}px` }">
-        <div class="placeholder">WorkspacePanel</div>
+        <WorkspacePanel />
       </aside>
     </template>
   </div>
@@ -52,6 +52,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useResizePanel } from '@/composables/useResizePanel'
 import { useLayoutStore } from '@/stores/layout'
 import SessionSidebar from '@/components/shell/SessionSidebar.vue'
+import WorkspacePanel from '@/components/shell/WorkspacePanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -147,11 +148,5 @@ function onNewChat() {
   overflow: hidden;
   border-left: 1px solid var(--border-subtle);
   background: var(--surface-app);
-}
-
-.placeholder {
-  padding: 16px;
-  color: var(--text-faint);
-  font-size: 13px;
 }
 </style>
