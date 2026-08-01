@@ -51,6 +51,36 @@ src/
 `WorkspacePanel` 的详情视图渲染的是同一份工具调用数据，抽出来是为了不让两处各写一套格式化
 逻辑、日后改一处漏一处。
 
+### 已完成：中栏沿用 v0.4 的对话视觉
+
+三栏 shell 落地后，中栏的消息与工具调用**改回 v0.4 那套外观**——用户消息是 `--main-50`
+底色的气泡、工具调用是带边框的卡片而不是一行灰字。同时把 v0.4 的
+`components/ToolCallingResult/*` 接进来，工具结果按形状渲染成对应卡片
+（Web 搜索、知识库检索、TodoList、计算器），而不是一律 `JSON.stringify`。
+
+**数据层没有为此妥协**：`useAgentStream.js` 与 `chat_api.js` 仍是一行未改，pi 的
+`AgentEvent` 归约逻辑原封不动。复用的只是渲染层，靠这组映射对接：
+
+| v0.4 字段 | pi 对应物 |
+| --- | --- |
+| `message.type: 'human' / 'ai'` | `message.role: 'user' / 'assistant'` |
+| `parsedData.reasoning_content` | content block `type: 'thinking'` |
+| `toolCall.status` | `detail.state`（`tool_execution_*` 归约而来） |
+| `toolCall.tool_call_result.content` | `extractToolResultText(detail.result)` |
+| `message.error_type` | `message.errorMessage` |
+
+接入 `ToolResultRenderer` 时改了它两处，都是为了斩断对 v0.4 后端的依赖：
+
+1. **移除知识图谱结果卡片**。它 `import GraphCanvas`，会把 1.16 MB 的图谱渲染依赖重新拉进
+   对话页的 chunk，而知识图谱已经从产品下线。`KnowledgeGraphResult.vue` 文件保留，
+   但不再从 `ToolCallingResult/index.js` 导出——否则 barrel 文件会把它一并打包。
+2. **判断知识库结果不再读 `agentStore` 里的工具 metadata**，改为纯数据结构判断
+   （数组且每项有 `content` / `score` / `metadata`）。原来那条路径要打 v0.4 的 Python 接口。
+
+注意富渲染现在还看不到效果：`agent-core` 内置工具只有 `get_current_time`，返回纯文本，
+走的是默认的 `<pre>` 分支。要等 HEU-13 的 `kb_search` / `web_search` 落地，那几张卡片才有
+数据可渲染——现在接进来是为了工具就位时不用再动渲染层。
+
 路由从 `/database` 改名为 `/knowledge` 时，顺带修了 8 处硬编码旧路径的引用
 （`stores/database.js`、`DataBaseView.vue`×2、`KnowledgeBaseCard.vue`、`HomeView.vue`×3、
 `LoginView.vue`）——不修的话左栏入口能跳过去，但页面内部的二次导航会 404。`HomeView.vue`

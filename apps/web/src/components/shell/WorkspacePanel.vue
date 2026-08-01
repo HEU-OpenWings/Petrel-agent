@@ -23,7 +23,8 @@
 
         <template v-if="resultText">
           <div class="block-title">结果</div>
-          <pre class="block">{{ resultText }}</pre>
+          <!-- 与中栏用同一个渲染器，右栏细读时不会看到和内联展开不一样的东西 -->
+          <ToolResultRenderer :tool-name="active.name" :result-content="resultText" />
         </template>
       </template>
     </section>
@@ -38,6 +39,7 @@
 <script setup>
 import { computed } from 'vue'
 import { PanelRightClose } from 'lucide-vue-next'
+import { ToolResultRenderer } from '@/components/ToolCallingResult'
 import { useLayoutStore } from '@/stores/layout'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { extractToolResultText, formatToolArgs, TOOL_STATE_TEXT } from '@/utils/toolCall'

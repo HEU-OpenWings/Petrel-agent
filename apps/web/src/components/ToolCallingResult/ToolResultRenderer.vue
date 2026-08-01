@@ -12,13 +12,6 @@
       :data="parsedData"
     />
 
-    <!-- 知识图谱查询结果 -->
-    <KnowledgeGraphResult
-      v-else-if="isKnowledgeGraphResult"
-      :data="parsedData"
-      ref="graphResultRef"
-    />
-
     <!-- 待办事项结果 -->
     <TodoListResult
       v-else-if="isTodoListResult"
@@ -49,16 +42,17 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { ToolOutlined } from '@ant-design/icons-vue'
+import { computed } from 'vue'
 import WebSearchResult from './WebSearchResult.vue'
 import KnowledgeBaseResult from './KnowledgeBaseResult.vue'
-import KnowledgeGraphResult from './KnowledgeGraphResult.vue'
 import CalculatorResult from './CalculatorResult.vue'
 import TodoListResult from './TodoListResult.vue'
-import { useAgentStore } from '@/stores/agent';
 
-const agentStore = useAgentStore()
+// v0.5 说明：
+// 1. 知识图谱结果卡片已移除——该功能已从产品下线，且它 import GraphCanvas
+//    会把 1.16 MB 的图谱渲染依赖重新拉进对话页的 chunk。
+// 2. 原来判断知识库结果时会读 agentStore 里的工具 metadata，那要打 v0.4 的
+//    Python 接口。改为纯数据结构判断，不依赖任何后端。
 
 const props = defineProps({
   toolName: {
@@ -70,11 +64,6 @@ const props = defineProps({
     required: true
   }
 })
-
-const tool = computed(() => {
-  return agentStore?.availableTools?.[props.toolName] || null
-})
-
 
 // 解析数据
 const parsedData = computed(() => {
@@ -159,30 +148,18 @@ const isWebSearchResult = computed(() => {
          'query' in data
 })
 
-// 判断是否为知识库检索结果
+// 判断是否为知识库检索结果：只看数据长什么样，不问后端这个工具是什么
 const isKnowledgeBaseResult = computed(() => {
-  // 首先检查工具的 metadata
-  const currentTool = tool.value
-  if (currentTool && currentTool.metadata) {
-    const metadata = currentTool.metadata
-    const hasKnowledgebaseTag = metadata.tag && metadata.tag.includes('knowledgebase')
-    const isNotLightrag = metadata.kb_type !== 'lightrag'
-
-    if (hasKnowledgebaseTag && isNotLightrag) {
-      const data = parsedData.value
-      return Array.isArray(data) &&
-             data.length > 0 &&
-             data.every(item =>
-               item &&
-               typeof item === 'object' &&
-               'content' in item &&
-               'score' in item &&
-               'metadata' in item
-             )
-    }
-  }
-
-  return false
+  const data = parsedData.value
+  return Array.isArray(data) &&
+         data.length > 0 &&
+         data.every(item =>
+           item &&
+           typeof item === 'object' &&
+           'content' in item &&
+           'score' in item &&
+           'metadata' in item
+         )
 })
 
 const isImageResult = computed(() => {
@@ -194,44 +171,6 @@ const isImageResult = computed(() => {
   if (!isImageTool) return false
 
   return data && typeof data === 'string' && data.startsWith('http')
-})
-
-// 判断是否为知识图谱查询结果
-const isKnowledgeGraphResult = computed(() => {
-  const toolNameLower = props.toolName.toLowerCase()
-
-  // 工具名称初步筛选 - 支持中英文关键词
-  const hasGraphKeyword = toolNameLower.includes('graph') ||
-                         toolNameLower.includes('图谱') ||
-                         toolNameLower.includes('kg')
-
-  const data = parsedData.value
-
-  // 数据格式验证 - 核心判断依据
-  const hasBasicStructure = data && typeof data === 'object'
-  const hasTriples = hasBasicStructure && 'triples' in data
-  const triplesIsArray = hasTriples && Array.isArray(data.triples)
-  const triplesHasContent = triplesIsArray && data.triples.length > 0
-
-  // 进一步验证triples数组的内容格式
-  let triplesHasValidFormat = false
-  if (triplesHasContent) {
-    // 检查是否至少有一个有效的三元组
-    triplesHasValidFormat = data.triples.some(triple => {
-      return Array.isArray(triple) &&
-             triple.length >= 3 &&
-             triple.every(item => typeof item === 'string' && item.trim() !== '')
-    })
-  }
-
-  // 最终判断：数据格式符合规范优先，工具名称作为辅助判断
-  // 1. 如果数据格式完全符合规范，直接认为是知识图谱结果
-  if (hasBasicStructure && triplesIsArray && triplesHasContent && triplesHasValidFormat) {
-    return true
-  }
-
-  // 2. 如果数据格式基本符合且有相关关键词，也认为是知识图谱结果
-  return hasTriples && triplesIsArray && hasGraphKeyword
 })
 
 // 判断是否为计算器结果
@@ -253,21 +192,6 @@ const formatData = (data) => {
   }
   return String(data)
 }
-
-// 图表结果的引用
-const graphResultRef = ref(null)
-
-// 提供给父组件调用的刷新方法
-const refreshGraph = () => {
-  if (graphResultRef.value && typeof graphResultRef.value.refreshGraph === 'function') {
-    graphResultRef.value.refreshGraph()
-  }
-}
-
-// 向父组件暴露方法
-defineExpose({
-  refreshGraph
-})
 </script>
 
 <style lang="less" scoped>

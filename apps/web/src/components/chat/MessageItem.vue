@@ -1,55 +1,77 @@
 <template>
   <!-- toolResult 消息不单独渲染，结果已并入对应的 ToolCallBlock -->
-  <div v-if="message.role !== 'toolResult'" class="message" :class="message.role">
-    <div class="body">
-      <template v-for="(block, index) in blocks" :key="index">
-        <div v-if="block.type === 'thinking'" class="thinking">
-          <button class="line-toggle" type="button" @click="showThinking = !showThinking">
-            <Brain :size="14" />
-            <span>思考过程</span>
-            <ChevronRight class="chevron" :class="{ open: showThinking }" :size="14" />
-          </button>
-          <pre v-if="showThinking" class="thinking-body">{{ block.thinking }}</pre>
+  <div v-if="message.role !== 'toolResult'" class="message-row" :class="message.role">
+    <div class="message-box" :class="message.role">
+      <!-- 用户消息 -->
+      <template v-if="message.role === 'user'">
+        <div
+          class="message-copy-btn human-copy"
+          :class="{ 'is-copied': copied }"
+          :title="copied ? '已复制' : '复制'"
+          @click="copy"
+        >
+          <Check v-if="copied" :size="14" />
+          <Copy v-else :size="14" />
         </div>
-
-        <ToolCallBlock
-          v-else-if="block.type === 'toolCall'"
-          :tool-call="block"
-          :detail="toolCalls[block.id] ?? {}"
-        />
-
-        <MdPreview
-          v-else-if="block.type === 'text' && block.text"
-          :editor-id="`msg-${editorId}-${index}`"
-          :model-value="block.text"
-          :theme="theme"
-          preview-theme="github"
-          :show-code-row-number="false"
-          class="markdown"
-        />
+        <p class="message-text">{{ plainText }}</p>
       </template>
 
-      <!-- 模型调用失败时 pi 不发 error 帧，而是把原因放在消息的 errorMessage 上 -->
-      <div v-if="message.errorMessage" class="message-error">
-        <TriangleAlert :size="14" />
-        <span>{{ message.errorMessage }}</span>
+      <!-- 助手消息 -->
+      <div v-else class="assistant-message">
+        <template v-for="(block, index) in blocks" :key="index">
+          <div v-if="block.type === 'thinking'" class="reasoning-box">
+            <div class="reasoning-header" @click="showThinking = !showThinking">
+              <CaretRightOutlined :rotate="showThinking ? 90 : 0" />
+              <span>{{ streaming ? '正在思考...' : '推理过程' }}</span>
+            </div>
+            <p v-show="showThinking" class="reasoning-content">{{ block.thinking }}</p>
+          </div>
+
+          <ToolCallBlock
+            v-else-if="block.type === 'toolCall'"
+            :tool-call="block"
+            :detail="toolCalls[block.id] ?? {}"
+          />
+
+          <MdPreview
+            v-else-if="block.type === 'text' && block.text"
+            :editor-id="`msg-${editorId}-${index}`"
+            :model-value="block.text"
+            :theme="theme"
+            preview-theme="github"
+            :show-code-row-number="false"
+            class="message-md"
+          />
+        </template>
+
+        <!-- 模型调用失败时 pi 不发 error 帧，而是把原因放在消息的 errorMessage 上 -->
+        <div v-if="message.errorMessage" class="err-msg">
+          <TriangleAlert :size="14" />
+          <span>{{ message.errorMessage }}</span>
+        </div>
+
+        <span v-if="streaming" class="cursor" />
+
+        <div v-if="!streaming && plainText" class="assistant-actions">
+          <div
+            class="message-copy-btn"
+            :class="{ 'is-copied': copied }"
+            :title="copied ? '已复制' : '复制'"
+            @click="copy"
+          >
+            <Check v-if="copied" :size="14" />
+            <Copy v-else :size="14" />
+          </div>
+        </div>
       </div>
-
-      <span v-if="streaming" class="cursor" />
-    </div>
-
-    <div v-if="message.role === 'assistant' && !streaming" class="actions">
-      <button class="icon-btn" type="button" :title="copied ? '已复制' : '复制'" @click="copy">
-        <Check v-if="copied" :size="14" />
-        <Copy v-else :size="14" />
-      </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, onUnmounted } from 'vue'
-import { Brain, Check, ChevronRight, Copy, TriangleAlert } from 'lucide-vue-next'
+import { computed, onUnmounted, ref } from 'vue'
+import { CaretRightOutlined } from '@ant-design/icons-vue'
+import { Check, Copy, TriangleAlert } from 'lucide-vue-next'
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
 import { useThemeStore } from '@/stores/theme'
@@ -65,7 +87,6 @@ const props = defineProps({
 
 const showThinking = ref(false)
 const copied = ref(false)
-const timeoutId = ref(null)
 const themeStore = useThemeStore()
 const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
@@ -76,6 +97,7 @@ const blocks = computed(() => {
   return Array.isArray(content) ? content : []
 })
 
+/** 只取文本块：复制时不该把工具调用的 JSON 和思考过程也带上 */
 const plainText = computed(() =>
   blocks.value
     .filter((block) => block.type === 'text')
@@ -83,99 +105,138 @@ const plainText = computed(() =>
     .join('\n')
 )
 
+let copyTimer = null
+
 async function copy() {
   try {
     await navigator.clipboard.writeText(plainText.value)
-    // 清除之前的定时器，避免多次点击时状态异常
-    if (timeoutId.value !== null) {
-      clearTimeout(timeoutId.value)
-    }
     copied.value = true
-    timeoutId.value = setTimeout(() => {
+    // 连点两次时重置上一个计时器，否则第二次的「已复制」会被前一个提前掐掉
+    clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => {
       copied.value = false
-      timeoutId.value = null
     }, 1500)
   } catch {
     // http 环境下 clipboard 不可用，静默失败好过弹一个用户无法处理的错误
   }
 }
 
-onUnmounted(() => {
-  // 组件卸载时清理定时器，避免定时器在已卸载组件上赋值
-  if (timeoutId.value !== null) {
-    clearTimeout(timeoutId.value)
-  }
-})
+onUnmounted(() => clearTimeout(copyTimer))
 </script>
 
 <style lang="less" scoped>
-.message {
-  padding: 12px 0;
-}
-
-// 用户消息右对齐成气泡，助手消息全宽无气泡——这是两者最直观的区分方式，
-// 比加角色标签更省视觉噪音
-.user {
+.message-row {
   display: flex;
-  justify-content: flex-end;
+  margin: 0.8rem 0;
 
-  .body {
-    max-width: 70%;
-    padding: 10px 14px;
-    border-radius: 18px;
-    background: var(--surface-subtle);
-    color: var(--text-strong);
-    white-space: pre-wrap;
-    word-break: break-word;
+  &.user {
+    justify-content: flex-end;
   }
 }
 
-.assistant .body {
-  color: var(--text-strong);
+.message-box {
+  position: relative;
+  max-width: 100%;
+  color: var(--gray-10000);
+  font-size: 15px;
+  line-height: 24px;
+  letter-spacing: 0.25px;
+  word-break: break-word;
+  user-select: text;
+
+  &.user {
+    max-width: 95%;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    background-color: var(--main-50);
+    color: var(--gray-1000);
+  }
+
+  &.assistant {
+    width: 100%;
+    padding: 0;
+    background-color: transparent;
+    text-align: left;
+  }
 }
 
-.thinking {
-  margin: 4px 0 8px;
+.message-text {
+  max-width: 100%;
+  margin-bottom: 0;
+  white-space: pre-line;
 }
 
-.line-toggle {
+.message-copy-btn {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  color: var(--text-muted);
-  font-size: 12px;
+  justify-content: center;
+  opacity: 0;
+  color: var(--gray-400);
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: color 0.2s ease, opacity 0.2s ease;
 
   &:hover {
-    background: var(--surface-hover);
-    color: var(--text-strong);
+    color: var(--main-color);
+  }
+
+  &.is-copied {
+    opacity: 1;
+    color: var(--color-success-500);
+  }
+
+  // 用户气泡贴着右边，复制按钮挂在气泡左外侧，避免压住文字
+  &.human-copy {
+    position: absolute;
+    bottom: 8px;
+    left: -28px;
   }
 }
 
-.chevron {
-  transition: transform 0.15s;
-
-  &.open {
-    transform: rotate(90deg);
-  }
+.message-box:hover .message-copy-btn {
+  opacity: 1;
 }
 
-.thinking-body {
-  margin: 4px 0 0;
-  padding: 8px;
+.assistant-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.reasoning-box {
+  margin: 10px 0 15px;
+  border: 1px solid var(--gray-150);
   border-radius: 8px;
-  background: var(--surface-subtle);
-  color: var(--text-muted);
-  font-size: 12px;
+  background-color: var(--gray-25);
+  overflow: hidden;
+}
+
+.reasoning-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--gray-700);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+
+  :deep(.anticon) {
+    color: var(--gray-400);
+  }
+}
+
+.reasoning-content {
+  margin: 0;
+  padding: 0 16px 16px;
+  color: var(--gray-800);
+  font-size: 13px;
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 
-.markdown {
+.message-md {
   background: transparent;
 
   :deep(.md-editor-preview-wrapper) {
@@ -183,22 +244,19 @@ onUnmounted(() => {
   }
 }
 
-.message-error {
+.err-msg {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 10px;
+  margin-bottom: 10px;
+  padding: 0.5rem 1rem;
+  border: 1px solid currentColor;
   border-radius: 8px;
   background: var(--color-error-50);
-  color: var(--color-error-700);
-  font-size: 13px;
+  color: var(--color-error-500);
+  font-size: 14px;
+  text-align: left;
   word-break: break-word;
-}
-
-.actions {
-  display: flex;
-  gap: 4px;
-  margin-top: 4px;
 }
 
 .cursor {
