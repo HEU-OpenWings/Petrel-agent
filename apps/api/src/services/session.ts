@@ -1,9 +1,11 @@
+import type { Agent } from "@petrel/agent-core";
 import {
   createMessageRepository,
   createSessionRepository,
   type Database,
   DEFAULT_USER_ID,
 } from "@petrel/database";
+import { logger } from "@petrel/logger";
 
 const TITLE_MAX_LENGTH = 30;
 const FALLBACK_TITLE = "新对话";
@@ -71,4 +73,73 @@ export function createSessionService(db: Database) {
       await sessionRepo.touch(sessionId);
     },
   };
+}
+
+type SessionService = ReturnType<typeof createSessionService>;
+
+/**
+ * 订阅 agent 事件并落库。
+ *
+ * 按 message_end 增量写而不在 agent_end 一次性写：agent_end 带的是整个 transcript，
+ * 包含恢复时回灌的历史，一次性写会重复；增量写还有个好处是中断时已完成的消息
+ * 本来就已落库，不需要特殊处理。
+ *
+ * 中断的半截消息（streamingMessage）的处理：
+ * - 实测 pi 0.83 里 agent_end 触发 listener 前 state.streamingMessage 已被清为 undefined，
+ *   所以不在 agent_end 里读它，而是由订阅闭包维护 partial，在 message_start /
+ *   message_update 时持续更新（单块响应可能只有 message_start 没有 update，两者都要记）；
+ * - 中断时 message_end 发出的是一条空内容、stopReason: "aborted" 的助手消息，
+ *   直接落库会写进一条空消息，所以 message_end 里跳过 aborted 的消息，
+ *   把它留给 agent_end 用 partial 落库。
+ * - 正常完成的一轮，message_end 已把全部消息落库，agent_end 时只有 interrupted 才写 partial。
+ *
+ * @param startSeq 本次运行的第一个序号，由调用方从已有历史算出
+ * @returns 取消订阅函数
+ */
+export function attachPersistence(
+  service: SessionService,
+  agent: Agent,
+  sessionId: string,
+  startSeq: number,
+): () => void {
+  let seq = startSeq;
+  let partial: unknown;
+
+  return agent.subscribe(async (event) => {
+    // listener 的 promise 会被 agent await 并计入 run 的 settlement，
+    // 异常泄漏出去会影响 agent 本身运行，所以这里必须全部吞掉
+    try {
+      if (event.type === "message_start" || event.type === "message_update") {
+        // 流式过程中的半截消息：中断时它不在 state.messages 里，只能从这里取
+        partial = event.message;
+        return;
+      }
+
+      if (event.type === "message_end") {
+        // 中断时 message_end 发出的是空内容的 aborted 消息，跳过它，
+        // 半截内容由 agent_end 用 partial 落库
+        const ended = event.message as { stopReason?: string } | undefined;
+        if (ended?.stopReason === "aborted") return;
+        await service.appendMessage(sessionId, seq, event.message);
+        seq += 1;
+        return;
+      }
+
+      if (event.type === "agent_end") {
+        // agent_end 触发前 state 已更新完毕，且 listener 里访问 state 是安全的
+        // （processEvents 先更新 state 再调 listener）
+        const last = agent.state.messages.at(-1) as { stopReason?: string } | undefined;
+        const interrupted = agent.state.errorMessage !== undefined || last?.stopReason === "aborted";
+        // 只有本轮确实中断了才补写半截消息；正常完成时 message_end 已写全，不能重复
+        if (interrupted && partial !== undefined) {
+          await service.appendMessage(sessionId, seq, partial, true);
+          seq += 1;
+        }
+        await service.touch(sessionId);
+      }
+    } catch (error) {
+      // 对话本身不该因为存不进数据库而崩掉
+      logger.error({ err: error, sessionId }, "failed to persist agent message");
+    }
+  });
 }

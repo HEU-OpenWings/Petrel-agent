@@ -15,5 +15,8 @@
     "@petrel/database": "workspace:*",
     "@petrel/logger": "workspace:*",
     "hono": "^4.12.32"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.83.0"
   }
 }

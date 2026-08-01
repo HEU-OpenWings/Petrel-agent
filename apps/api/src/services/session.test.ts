@@ -1,6 +1,8 @@
+import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
+import { createAgent } from "@petrel/agent-core";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { beforeEach, describe, expect, it } from "vitest";
-import { createSessionService } from "./session.ts";
+import { attachPersistence, createSessionService } from "./session.ts";
 
 let db: TestDb;
 let service: ReturnType<typeof createSessionService>;
@@ -106,5 +108,61 @@ describe("CRUD", () => {
 
     expect(await service.remove(SESSION_ID)).toBe(true);
     expect(await service.list()).toHaveLength(0);
+  });
+});
+
+/**
+ * 用 pi 自带的 faux provider 跑真实 agent loop，不需要模型凭据也不 mock 内部。
+ * 这个装配方式与 packages/agent-core/src/agent.test.ts 里的一致。
+ */
+function fauxAgent() {
+  const faux = fauxProvider({ tokensPerSecond: 10_000 });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const agent = createAgent({ models, model: faux.getModel() });
+  return { faux, agent };
+}
+
+describe("attachPersistence", () => {
+  it("用户消息与助手回复都会落库", async () => {
+    await service.ensureSession(SESSION_ID, "你好");
+
+    const { faux, agent } = fauxAgent();
+    faux.setResponses([fauxAssistantMessage([fauxText("你好，我是 Petrel")])]);
+    attachPersistence(service, agent, SESSION_ID, 1);
+
+    await agent.prompt("你好");
+    await agent.waitForIdle();
+
+    const history = await service.loadHistory(SESSION_ID);
+    // pi 的事件序列里用户消息同样走 message_end，所以订阅一处就能把两条都收下
+    expect(history.messages).toHaveLength(2);
+    expect((history.messages[0] as { role: string }).role).toBe("user");
+    expect((history.messages[1] as { role: string }).role).toBe("assistant");
+  });
+
+  it("seq 从传入的起点连续递增", async () => {
+    await service.ensureSession(SESSION_ID, "你好");
+    await service.appendMessage(SESSION_ID, 1, { role: "user", content: "上一轮" });
+
+    const { faux, agent } = fauxAgent();
+    faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
+    attachPersistence(service, agent, SESSION_ID, 2);
+
+    await agent.prompt("这一轮");
+    await agent.waitForIdle();
+
+    const history = await service.loadHistory(SESSION_ID);
+    // 1 是上一轮已有的，2 是本轮用户消息，3 是助手回复
+    expect(history.nextSeq).toBe(4);
+  });
+
+  it("落库失败不会让 agent 运行抛异常", async () => {
+    const { faux, agent } = fauxAgent();
+    faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
+    // 不建 session，外键约束必然让每次写入都失败
+    attachPersistence(service, agent, "44444444-4444-4444-4444-444444444444", 1);
+
+    await expect(agent.prompt("你好")).resolves.toBeUndefined();
   });
 });
