@@ -10,6 +10,70 @@
 
 设计文档：[2026-08-01-session-persistence-design.md](../specs/2026-08-01-session-persistence-design.md)
 
+---
+
+## 完成情况（截至 2026-08-01，7/12）
+
+| # | 任务 | 状态 | commit |
+| --- | --- | --- | --- |
+| 1 | database 包骨架与 schema | ✅ | `21e16be` |
+| 2 | sessions repository | ✅ | `269f9dc` |
+| 3 | messages repository | ✅ | `c01b132` |
+| 4 | 生产连接、migration 与 Postgres 服务 | ✅ | `62ee5b1` |
+| 5 | 会话服务 | ✅ | `66bc640` |
+| 6 | agent 事件订阅落库 | ✅ | `8dcc488` |
+| 7 | 会话 CRUD 路由 | ❌ 未做 | — |
+| 8 | `/api/chat` 接入持久化 | ❌ 未做 | — |
+| 9 | 前端会话 API 与 store | ✅ | `5ad3656` |
+| 10 | useAgentStream 与 chat_api 接入 sessionId | ❌ 未做 | — |
+| 11 | 左栏接真实数据与 ChatView 整合 | ❌ 未做 | — |
+| 12 | 全量验收与文档 | ❌ 未做 | — |
+
+计划外还有一个 `7bb2f73`「修复 lint 与测试稳定性」。
+
+**当前链路尚未打通**：数据层能存，但没有接口把它暴露出去（Task 7 缺），`/api/chat`
+也还没接上持久化（Task 8 缺），前端 store 写好了却没有页面在用（Task 10 · 11 缺）。
+从用户视角看，左栏仍然是静态骨架，对话依然不会被保存。
+
+接手时从 **Task 7** 开始，顺序往下做即可。
+
+### Task 6 的实现修正了本计划的一个错误
+
+计划原文让在 `agent_end` 里读 `agent.state.streamingMessage` 取中断的半截消息。
+**实测 pi 0.83 在触发 `agent_end` listener 之前已经把 `streamingMessage` 清成
+`undefined`**，照计划写永远拿不到。
+
+实际实现改为：用订阅闭包里的 `partial` 变量在 `message_start` / `message_update` 时
+持续记录，`agent_end` 时用它。另外还发现中断时 `message_end` 会发出一条空内容、
+`stopReason: "aborted"` 的助手消息，直接落库会写进一条空消息，所以要跳过它。
+
+这段修正是对的，以实现为准，不要按计划原文改回去。
+
+### 三个已知问题
+
+1. **测试 flaky（需要修）**。`pnpm test` 全量跑时有 2 个用例因 `beforeEach` 超时失败，
+   单独跑 `pnpm vitest run packages/database apps/api` 则 39 个全通过。
+   直接原因是 `7bb2f73` 只给 `schema.test.ts` 补了 30 秒超时，**漏了
+   `repositories/sessions.test.ts` 与 `repositories/messages.test.ts`**。
+   根本原因是本计划里「PGlite 毫秒级启动」的假设不成立——实测每个实例要数秒，
+   全量并行时竞争 CPU 就超时。**治本做法是每个测试文件共用一个实例**
+   （`beforeAll` 建库、`beforeEach` truncate 各表），而不是继续加大超时。
+
+2. **最微妙的逻辑没有测试覆盖**。`attachPersistence` 只有 3 个用例，
+   而上面那段中断路径（`partial` 闭包、跳过 aborted 消息）——正是计划写错、
+   靠实测才修对的部分——**一个测试都没有**。补 Task 7 之前应该先补这个测试。
+
+3. **lint 有 2 个 warning**（`!` 非空断言，位于 `repositories/sessions.test.ts`），
+   来自本计划给出的测试代码，非阻塞。
+
+### 已验证
+
+- `pnpm run typecheck` 全部包通过
+- `pnpm vitest run packages/database apps/api` 39 个用例通过
+- 容器未验证（Task 4 Step 8 的 `docker compose up -d` 与建表检查未留下记录）
+
+---
+
 ## Global Constraints
 
 每个任务的要求都隐含包含本节。
