@@ -148,15 +148,20 @@ migration 里插入一条固定 UUID 的记录（`username: 'default'`），常�
   包含恢复时回灌的历史，一次性写会重复
 - `state.streamingMessage` 是流式中的半截消息，**不在** `state.messages` 里
 - `state.errorMessage` 的注释明确覆盖 "failed or **aborted**" 两种情况
+- **用户消息也走 `message_start` / `message_end`**。`agent-core` 现有测试实测的单轮序列：
+  `agent_start → turn_start → message_start/message_end`（用户消息）
+  `→ message_start/message_end`（助手消息）`→ turn_end → agent_end`
 
 ### 写入点
 
 | 时机 | 动作 |
 | --- | --- |
 | 请求进入 | upsert session；首次创建时用首条消息生成标题 |
-| 用户消息 | 立即 append（不等模型响应，保证用户输入不丢） |
-| `message_end` | append 一条完整消息，`seq` 递增 |
+| `message_end` | append 一条完整消息，`seq` 递增。**用户消息与助手消息都走这里** |
 | `agent_end` | 收尾：`state.streamingMessage` 若存在则标记 `interrupted` 落库；更新 `updated_at` |
+
+**不要在请求入口手动存用户消息**。它同样会触发 `message_end`，订阅一处就收下了，
+手动再存一遍会产生重复行。回灌的历史消息不经过事件流，不会被重复写入。
 
 **为什么增量写而不在 `agent_end` 一次性写**：一是 `agent_end.messages` 含回灌的历史会重复；
 二是增量写下中断时已完成的消息本来就已落库，不需要特殊处理。
