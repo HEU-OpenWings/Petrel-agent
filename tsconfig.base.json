@@ -20,6 +20,7 @@
       "@petrel/agent-core": ["packages/agent-core/src/index.ts"],
       "@petrel/ai": ["packages/ai/src/index.ts"],
       "@petrel/config": ["packages/config/src/index.ts"],
+      "@petrel/database/testing": ["packages/database/src/testing.ts"],
       "@petrel/database": ["packages/database/src/index.ts"],
       "@petrel/logger": ["packages/logger/src/index.ts"]
     }
