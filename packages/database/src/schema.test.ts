@@ -9,7 +9,7 @@ let close: () => Promise<void>;
 beforeEach(async () => {
   ({ db, close } = await createTestDb());
   return () => close();
-});
+}, 30_000);
 
 /** 造一个会话，返回它的 id */
 async function seedSession(id = "11111111-1111-1111-1111-111111111111") {

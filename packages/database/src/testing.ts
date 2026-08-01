@@ -2,8 +2,8 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
-import { DEFAULT_USER_ID, DEFAULT_USERNAME, users } from "./schema.ts";
 import * as schema from "./schema.ts";
+import { DEFAULT_USER_ID, DEFAULT_USERNAME, users } from "./schema.ts";
 
 /** migration 目录是包内的相对位置，测试从仓库根跑，所以要解析成绝对路径 */
 const MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
