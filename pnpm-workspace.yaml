@@ -21,3 +21,4 @@ minimumReleaseAgeExclude:
   - '@biomejs/cli-win32-x64@2.5.6'
   - '@earendil-works/pi-agent-core@0.83.0'
   - '@earendil-works/pi-ai@0.83.0'
+  - '@types/pg@8.20.2'
