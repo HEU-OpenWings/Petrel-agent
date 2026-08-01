@@ -127,14 +127,17 @@ function onInput() {
   }
 }
 
-// 草稿非空时不允许唤起命令面板，否则会静默覆盖用户已输入但未发送的内容
-const canUseCommands = computed(() => !draft.value.trim())
+// 面板开着时要能点它关闭；只有「面板没开且已有草稿」才禁用，
+// 否则点一下会把用户没发出去的内容冲掉
+const canUseCommands = computed(() => palette.open.value || !draft.value.trim())
 
 function toggleCommands() {
   if (palette.open.value) {
     palette.close()
     return
   }
+  // 走到这里说明面板没开，canUseCommands 此时等价于「草稿是否为空」，
+  // 非空则拒绝打开面板，避免覆盖草稿
   if (!canUseCommands.value) return
   draft.value = '/'
   palette.openWith('')
