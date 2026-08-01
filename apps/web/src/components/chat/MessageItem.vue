@@ -48,7 +48,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import { Brain, Check, ChevronRight, Copy, TriangleAlert } from 'lucide-vue-next'
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
@@ -65,6 +65,7 @@ const props = defineProps({
 
 const showThinking = ref(false)
 const copied = ref(false)
+const timeoutId = ref(null)
 const themeStore = useThemeStore()
 const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
@@ -85,14 +86,26 @@ const plainText = computed(() =>
 async function copy() {
   try {
     await navigator.clipboard.writeText(plainText.value)
+    // 清除之前的定时器，避免多次点击时状态异常
+    if (timeoutId.value !== null) {
+      clearTimeout(timeoutId.value)
+    }
     copied.value = true
-    setTimeout(() => {
+    timeoutId.value = setTimeout(() => {
       copied.value = false
+      timeoutId.value = null
     }, 1500)
   } catch {
     // http 环境下 clipboard 不可用，静默失败好过弹一个用户无法处理的错误
   }
 }
+
+onUnmounted(() => {
+  // 组件卸载时清理定时器，避免定时器在已卸载组件上赋值
+  if (timeoutId.value !== null) {
+    clearTimeout(timeoutId.value)
+  }
+})
 </script>
 
 <style lang="less" scoped>
