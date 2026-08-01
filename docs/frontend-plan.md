@@ -81,6 +81,18 @@ src/
 走的是默认的 `<pre>` 分支。要等 HEU-13 的 `kb_search` / `web_search` 落地，那几张卡片才有
 数据可渲染——现在接进来是为了工具就位时不用再动渲染层。
 
+输入框同样换回 v0.4 的 `MessageInputComponent`：grid 布局、单行/多行自动切换、青蓝色圆形
+发送按钮（加载中变暂停图标）。它是个零后端依赖的纯 UI 组件，`ChatView` 直接用，不经过
+`AgentInputArea`——那一层包的是 `threadApi` 附件上传，依赖 v0.4 后端。因此 `+` 附件按钮
+不会出现：该组件在没有 `options-left` 插槽时就不渲染它，正好符合当前没有附件能力的事实。
+`/` 命令按钮与模型标识放在它的 `actions-right` 插槽里。
+
+**这两处让中栏偏离了三栏 shell 的视觉约定**，是有意接受的代价，不是疏漏：
+
+- 中栏用 `--main-50` / `--gray-*` 这套**冷青灰**变量，左右两栏是 shell 的**暖中性**变量
+  （`--surface-sunken` 等），两者有色差
+- 输入框带 `box-shadow`，而 shell 的约定是「除命令面板浮层外零阴影」
+
 路由从 `/database` 改名为 `/knowledge` 时，顺带修了 8 处硬编码旧路径的引用
 （`stores/database.js`、`DataBaseView.vue`×2、`KnowledgeBaseCard.vue`、`HomeView.vue`×3、
 `LoginView.vue`）——不修的话左栏入口能跳过去，但页面内部的二次导航会 404。`HomeView.vue`

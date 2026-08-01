@@ -22,7 +22,7 @@
 
     <footer class="composer-wrap">
       <div class="inner">
-        <div class="composer">
+        <div class="composer-shell">
           <CommandPalette
             v-if="palette.open.value"
             :commands="palette.filtered.value"
@@ -31,46 +31,30 @@
             @hover="palette.activeIndex.value = $event"
           />
 
-          <textarea
+          <MessageInputComponent
             ref="input"
-            v-model="draft"
-            class="input"
-            rows="1"
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行，/ 唤起命令"
-            @input="onInput"
+            :model-value="draft"
+            :is-loading="running"
+            :send-button-disabled="!running && !draft.trim()"
+            placeholder="输入问题，Enter 发送，Shift+Enter 换行，/ 唤起命令"
+            @update:model-value="onDraftChange"
+            @send="onSendOrStop"
             @keydown="onKeydown"
-          />
-
-          <div class="actions">
-            <button class="icon-btn" type="button" disabled title="附件上传待后端接口">
-              <Plus :size="16" />
-            </button>
-            <button
-              class="icon-btn"
-              type="button"
-              :disabled="!canUseCommands"
-              :title="canUseCommands ? '命令' : '清空输入后可使用命令'"
-              @click="toggleCommands"
-            >
-              <Slash :size="16" />
-            </button>
-
-            <span class="model">{{ MODEL_NAME }}</span>
-
-            <button v-if="running" class="send stop" type="button" title="停止" @click="abort">
-              <Square :size="14" />
-            </button>
-            <button
-              v-else
-              class="send"
-              type="button"
-              title="发送"
-              :disabled="!draft.trim()"
-              @click="submit"
-            >
-              <ArrowUp :size="16" />
-            </button>
-          </div>
+          >
+            <template #actions-right>
+              <span class="model">{{ MODEL_NAME }}</span>
+              <a-tooltip :title="canUseCommands ? '命令' : '清空输入后可使用命令'">
+                <a-button
+                  type="text"
+                  class="command-btn"
+                  :disabled="!canUseCommands"
+                  @click="toggleCommands"
+                >
+                  <template #icon><Slash :size="15" /></template>
+                </a-button>
+              </a-tooltip>
+            </template>
+          </MessageInputComponent>
         </div>
       </div>
     </footer>
@@ -79,9 +63,10 @@
 
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { ArrowUp, Plus, Slash, Square } from 'lucide-vue-next'
+import { Slash } from 'lucide-vue-next'
 import CommandPalette from '@/components/chat/CommandPalette.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
+import MessageInputComponent from '@/components/MessageInputComponent.vue'
 import { useAgentStream } from '@/composables/useAgentStream'
 import { useCommandPalette } from '@/composables/useCommandPalette'
 import { useLayoutStore } from '@/stores/layout'
@@ -119,12 +104,22 @@ const palette = useCommandPalette([
 ])
 
 /** 只在整段输入以 / 开头时唤起面板，避免正文里的斜杠误触发 */
-function onInput() {
-  if (draft.value.startsWith('/')) {
-    palette.openWith(draft.value.slice(1))
+function onDraftChange(value) {
+  draft.value = value
+  if (value.startsWith('/')) {
+    palette.openWith(value.slice(1))
   } else if (palette.open.value) {
     palette.close()
   }
+}
+
+// 输入框在加载中会把发送按钮换成停止图标，两种点击都走这里
+function onSendOrStop() {
+  if (running.value) {
+    abort()
+    return
+  }
+  submit()
 }
 
 // 面板开着时要能点它关闭；只有「面板没开且已有草稿」才禁用，
@@ -245,75 +240,35 @@ watch(
   padding: 8px 0 20px;
 }
 
-.composer {
+// 输入框本体是 v0.4 的 MessageInputComponent，这里只负责给命令面板一个定位参照
+.composer-shell {
   position: relative;
-  padding: 10px 12px 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 24px;
-  background: var(--surface-app);
-  transition: border-color 0.15s ease;
-
-  &:focus-within {
-    border-color: var(--text-faint);
-  }
 }
 
-.input {
-  display: block;
-  width: 100%;
-  max-height: 200px;
-  border: none;
-  background: transparent;
-  color: var(--text-strong);
-  font-family: inherit;
-  font-size: 15px;
-  line-height: 1.5;
-  resize: none;
-
-  &:focus {
-    outline: none;
-  }
-
-  &::placeholder {
-    color: var(--text-faint);
-  }
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-}
-
+// packages/ai 只注册了一个模型，这里是静态标识而不是可点的下拉
 .model {
-  margin-left: auto;
-  margin-right: 8px;
-  color: var(--text-faint);
+  margin-right: 4px;
+  color: var(--gray-500);
   font-size: 12px;
 }
 
-.send {
-  display: inline-flex;
+.command-btn {
+  display: flex;
+  width: 28px;
+  height: 28px;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: 50%;
-  background: var(--text-strong);
-  color: var(--surface-app);
-  cursor: pointer;
-  transition: background-color 0.15s ease;
+  margin-right: 6px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--gray-600);
 
-  &:disabled {
-    background: var(--surface-hover);
-    color: var(--text-faint);
-    cursor: not-allowed;
+  &:hover:not(:disabled) {
+    color: var(--main-color);
   }
 
-  &.stop {
-    background: var(--text-muted);
+  &:disabled {
+    color: var(--gray-300);
   }
 }
 </style>
