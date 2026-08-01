@@ -39,6 +39,31 @@ src/
 
 已端到端验证：真实模型 + 真实工具循环，2 轮 turn、25 个流式增量、零错误。
 
+### 已完成：三栏 Shell（2026-07-31）
+
+`AppShell.vue` 三栏骨架 + `stores/layout.js`（折叠与宽度持久化）+ `stores/workspace.js`
+（右栏内容）+ `apis/http.js`（JWT 注入与 401 处理）。非对话功能作为独立路由页挂进同一 shell，
+入口在左栏底部。设计与验收清单见
+[specs/2026-07-31-web-three-column-shell-design.md](superpowers/specs/2026-07-31-web-three-column-shell-design.md)。
+
+`utils/toolCall.js` 是本次新抽出的共享模块（`TOOL_STATE_TEXT` 状态文案、`formatToolArgs`
+参数格式化、`extractToolResultText` 结果取文本）：中栏 `ToolCallBlock` 的内联展开与右栏
+`WorkspacePanel` 的详情视图渲染的是同一份工具调用数据，抽出来是为了不让两处各写一套格式化
+逻辑、日后改一处漏一处。
+
+路由从 `/database` 改名为 `/knowledge` 时，顺带修了 8 处硬编码旧路径的引用
+（`stores/database.js`、`DataBaseView.vue`×2、`KnowledgeBaseCard.vue`、`HomeView.vue`×3、
+`LoginView.vue`）——不修的话左栏入口能跳过去，但页面内部的二次导航会 404。`HomeView.vue`
+里指向 `/graph` 的入口是直接删除而不是改名，因为图谱功能已经从产品里摘掉，改名没有意义；
+`LoginView.vue` 与 `HomeView.vue` 里的 `/agent/:id` 改成了 `/agent`（新对话入口不再按 id
+区分）。**孤儿文件里的旧路径引用没有一并清**：`AppLayout.vue`、`AgentSingleView.vue`、
+`GraphView.vue`、`DatabaseHeader.vue`、`AgentView.vue`（见 §5 待删除列表）还留着
+`/database`、`/graph`、`/agent/:id` 的引用，留给以后做死代码清理的人删文件时一并处理，
+现在单独修没有意义。
+
+本次仍是 JS，未做 TS 化；会话列表是静态骨架，等 HEU-10；`@` 引用与模型切换未做。
+`/graph` 与 `/agent/:agent_id` 路由已摘除，文件保留待死代码清理时一并删除。
+
 ### 迁入基线的现状
 
 - **大部分接口不可用**：基线调用的是 v0.4 的 Python API，而 agent-server 目前只提供
@@ -79,8 +104,8 @@ event: error   data: { message }
   连同 `@antv/g6` · `sigma` · `graphology` · `d3` · `markmap-*` 依赖一并移除。
   收益明显：`GraphCanvas` 单个 chunk 就有 1.16 MB
 - **修 lint**：迁到 `eslint.config.js`，或直接换 Biome 与 agent-server 统一
-- **Composer 增强（HEU-25）**：`/` 命令面板（切 agent / 切模型 / 清上下文）、附件上传。
-  `@` 引用知识库要等后端 kb 接口
+- **Composer 增强（HEU-25）剩余部分**：`/` 命令面板已完成（`/new` · `/workspace` · `/sidebar`）；
+  `@` 引用知识库等后端 kb 接口，模型切换等 HEU-12，附件上传等文件服务
 
 ### 依赖后端
 | 前端能力 | 依赖后端 issue |
