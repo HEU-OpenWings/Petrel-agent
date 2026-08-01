@@ -35,6 +35,8 @@ export const env = {
   nodeEnv: oneOf("NODE_ENV", process.env.NODE_ENV, NODE_ENVS, "development"),
   port: port("PORT", process.env.PORT, 5050),
   logLevel: oneOf("LOG_LEVEL", process.env.LOG_LEVEL, LOG_LEVELS, "info"),
+  // compose 内用服务名 db，宿主机直连用 localhost
+  databaseUrl: process.env.DATABASE_URL ?? "postgres://petrel:petrel@localhost:5432/petrel",
 } as const;
 
 export const isProduction = env.nodeEnv === "production";

@@ -41,6 +41,9 @@ importers:
       '@petrel/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@petrel/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@petrel/logger':
         specifier: workspace:*
         version: link:../../packages/logger

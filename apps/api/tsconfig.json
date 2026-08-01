@@ -9,6 +9,7 @@
   "references": [
     { "path": "../../packages/agent-core" },
     { "path": "../../packages/config" },
+    { "path": "../../packages/database" },
     { "path": "../../packages/logger" }
   ]
 }
