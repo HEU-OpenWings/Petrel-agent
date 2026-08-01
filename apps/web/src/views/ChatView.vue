@@ -45,7 +45,13 @@
             <button class="icon-btn" type="button" disabled title="附件上传待后端接口">
               <Plus :size="16" />
             </button>
-            <button class="icon-btn" type="button" title="命令" @click="toggleCommands">
+            <button
+              class="icon-btn"
+              type="button"
+              :disabled="!canUseCommands"
+              :title="canUseCommands ? '命令' : '清空输入后可使用命令'"
+              @click="toggleCommands"
+            >
               <Slash :size="16" />
             </button>
 
@@ -72,7 +78,7 @@
 </template>
 
 <script setup>
-import { nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { ArrowUp, Plus, Slash, Square } from 'lucide-vue-next'
 import CommandPalette from '@/components/chat/CommandPalette.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
@@ -98,6 +104,9 @@ const scrollArea = ref(null)
 const input = ref(null)
 
 function newChat() {
+  // 必须先 abort 再 reset：reset() 不会碰 running/controller，
+  // 旧流后续到达的事件会继续写回刚清空的 messages，且 running 会卡在 true 挡住新消息
+  abort()
   reset()
   workspace.clear()
   draft.value = ''
@@ -118,11 +127,15 @@ function onInput() {
   }
 }
 
+// 草稿非空时不允许唤起命令面板，否则会静默覆盖用户已输入但未发送的内容
+const canUseCommands = computed(() => !draft.value.trim())
+
 function toggleCommands() {
   if (palette.open.value) {
     palette.close()
     return
   }
+  if (!canUseCommands.value) return
   draft.value = '/'
   palette.openWith('')
   input.value?.focus()
