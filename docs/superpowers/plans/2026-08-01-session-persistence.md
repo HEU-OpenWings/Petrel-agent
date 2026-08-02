@@ -109,8 +109,12 @@ tie 用的，生产不需要。
   约 5s；带 `DATABASE_URL` 连真实 Postgres：**18 files / 173 tests 全部通过**
 - 数据层并发正确性：真实 Postgres 上 12 路并发 append 同一会话，seq 连续无洞一条不丢；
   把 `messages.append()` 里的 `FOR UPDATE` 删掉后集成测试立刻变红（PGlite 用例不会红，见下）
-- **migration 链路已验证**：在一个空库上启动 api，日志输出 `database migrations applied` 与
-  `agent-server listening`，`users` / `sessions` / `messages` 三张表被自动建出、默认用户被播种
+- **migration 链路已验证，但只在宿主机上**：新建空库 `petrel_migtest`，用
+  `DATABASE_URL=…/petrel_migtest tsx apps/api/src/index.ts` 起 api，日志输出
+  `database migrations applied` 与 `agent-server listening`，`users` / `sessions` / `messages`
+  三张表被自动建出、默认用户被播种。**这不等于 Task 4 Step 8 通过**——那一步要的是
+  `docker compose up -d` 之后看 `docker logs petrel-api-dev`，镜像构建、compose 的环境变量注入、
+  `depends_on: service_healthy` 这几段仍然没跑过
 - 容器：`docker compose up -d db` 起得来 `petrel-db-dev`（pgvector/pg17），集成测试就是连它跑的
 
 ### 未验证 / 阻塞

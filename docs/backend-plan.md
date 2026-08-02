@@ -157,8 +157,12 @@ insert + touch 会让刚 touch 过的会话**排到后面**，正好打在「在
   带 `DATABASE_URL` 连真实 Postgres：18 files / 173 tests 全部通过
 - 数据层并发正确性：真实 Postgres 上 12 路并发 append 同一会话，seq 连续无洞一条不丢；
   把 `FOR UPDATE` 删掉后集成测试立刻变红
-- **migration 链路已验证**：在一个空库上启动 api，日志输出 `database migrations applied` 与
-  `agent-server listening`，三张表被自动建出、默认用户被播种
+- **migration 链路已验证，但只在宿主机上**：新建一个空库 `petrel_migtest`，用
+  `DATABASE_URL=…/petrel_migtest tsx apps/api/src/index.ts` 直接起 api，日志输出
+  `database migrations applied` 与 `agent-server listening`，三张表被自动建出、默认用户被播种。
+  **这不等于容器内验证通过**——计划 Task 4 Step 8 要求的是 `docker compose up -d` 之后看
+  `docker logs petrel-api-dev`，那一步因为下面的构建失败仍然没做。两者的差别在于镜像构建、
+  compose 的环境变量注入、`depends_on: service_healthy` 这几段都还没跑过
 
 **未验证 / 阻塞：**
 
