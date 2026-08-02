@@ -1,11 +1,14 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { createAgent } from "@petrel/agent-core";
+import { createMessageRepository, DEFAULT_USER_ID, DEFAULT_USERNAME, users } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { logger } from "@petrel/logger";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachPersistence, createSessionService } from "./session.ts";
 
 let db: TestDb;
 let service: ReturnType<typeof createSessionService>;
+let messageRepo: ReturnType<typeof createMessageRepository>;
 let reset: () => Promise<void>;
 let close: () => Promise<void>;
 
@@ -15,7 +18,23 @@ const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 beforeAll(async () => {
   ({ db, reset, close } = await createTestDb());
   service = createSessionService(db);
+  // seq 已经不由 service 暴露了，要断言它只能下探到 repository
+  messageRepo = createMessageRepository(db);
 });
+
+async function seqsOf(sessionId: string): Promise<number[]> {
+  return (await messageRepo.listBySession(sessionId)).map((row) => row.seq);
+}
+
+/** 拿一个真实的驱动错误对象，用来验证错误分类读的是真实形状而不是手搓的 */
+async function captureError(run: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected the query to fail");
+}
 
 beforeEach(() => reset());
 
@@ -64,27 +83,28 @@ describe("ensureSession", () => {
 });
 
 describe("loadHistory 与 appendMessage", () => {
-  it("空会话返回空历史，下一个序号是 1", async () => {
+  it("空会话返回空历史", async () => {
     const history = await service.loadHistory(SESSION_ID);
 
     expect(history.messages).toEqual([]);
-    expect(history.nextSeq).toBe(1);
   });
 
-  it("按写入顺序读回消息，nextSeq 递增", async () => {
+  it("按写入顺序读回消息", async () => {
     await service.ensureSession(SESSION_ID, "你好");
-    await service.appendMessage(SESSION_ID, 1, { role: "user", content: "你好" });
-    await service.appendMessage(SESSION_ID, 2, { role: "assistant", content: "你也好" });
+    await service.appendMessage(SESSION_ID, { role: "user", content: "你好" });
+    await service.appendMessage(SESSION_ID, { role: "assistant", content: "你也好" });
 
     const history = await service.loadHistory(SESSION_ID);
 
-    expect(history.messages).toHaveLength(2);
-    expect(history.nextSeq).toBe(3);
+    expect(history.messages).toEqual([
+      { role: "user", content: "你好" },
+      { role: "assistant", content: "你也好" },
+    ]);
   });
 
   it("role 从 message 里自动取出", async () => {
     await service.ensureSession(SESSION_ID, "你好");
-    await service.appendMessage(SESSION_ID, 1, { role: "toolResult", content: [] });
+    await service.appendMessage(SESSION_ID, { role: "toolResult", content: [] });
 
     const history = await service.loadHistory(SESSION_ID);
     expect((history.messages[0] as { role: string }).role).toBe("toolResult");
@@ -92,8 +112,8 @@ describe("loadHistory 与 appendMessage", () => {
 
   it("中断的消息在 interruptedSeqs 里", async () => {
     await service.ensureSession(SESSION_ID, "你好");
-    await service.appendMessage(SESSION_ID, 1, { role: "user", content: "你好" });
-    await service.appendMessage(SESSION_ID, 2, { role: "assistant", content: "半截" }, true);
+    await service.appendMessage(SESSION_ID, { role: "user", content: "你好" });
+    await service.appendMessage(SESSION_ID, { role: "assistant", content: "半截" }, true);
 
     const history = await service.loadHistory(SESSION_ID);
     expect(history.interruptedSeqs).toEqual([2]);
@@ -110,7 +130,7 @@ describe("CRUD", () => {
 
   it("remove 删掉会话及其消息", async () => {
     await service.ensureSession(SESSION_ID, "会话");
-    await service.appendMessage(SESSION_ID, 1, { role: "user", content: "你好" });
+    await service.appendMessage(SESSION_ID, { role: "user", content: "你好" });
 
     expect(await service.remove(SESSION_ID)).toBe(true);
     expect(await service.list()).toHaveLength(0);
@@ -174,7 +194,7 @@ describe("attachPersistence", () => {
 
     const { faux, agent } = fauxAgent();
     faux.setResponses([fauxAssistantMessage([fauxText("你好，我是 Petrel")])]);
-    attachPersistence(service, agent, SESSION_ID, 1);
+    attachPersistence(service, agent, SESSION_ID);
 
     await agent.prompt("你好");
     await agent.waitForIdle();
@@ -186,29 +206,86 @@ describe("attachPersistence", () => {
     expect((history.messages[1] as { role: string }).role).toBe("assistant");
   });
 
-  it("seq 从传入的起点连续递增", async () => {
+  it("seq 接在已有历史之后，不从 1 重来", async () => {
     await service.ensureSession(SESSION_ID, "你好");
-    await service.appendMessage(SESSION_ID, 1, { role: "user", content: "上一轮" });
+    await service.appendMessage(SESSION_ID, { role: "user", content: "上一轮" });
 
     const { faux, agent } = fauxAgent();
     faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
-    attachPersistence(service, agent, SESSION_ID, 2);
+    attachPersistence(service, agent, SESSION_ID);
 
     await agent.prompt("这一轮");
     await agent.waitForIdle();
 
-    const history = await service.loadHistory(SESSION_ID);
     // 1 是上一轮已有的，2 是本轮用户消息，3 是助手回复
-    expect(history.nextSeq).toBe(4);
+    expect(await seqsOf(SESSION_ID)).toEqual([1, 2, 3]);
+  });
+
+  /**
+   * 这一条守的是 startSeq 时代的 bug：调用方在请求开始时算出下一个序号，
+   * 而上一轮的落库可能还没结束，两轮就会撞在同一个号上，后一轮整轮丢失。
+   * 现在 seq 由数据库分配，两个 attachPersistence 交错跑也不该丢消息。
+   */
+  it("两轮交错跑（并发同一会话）时两轮都完整落库，seq 连续无洞", async () => {
+    await service.ensureSession(SESSION_ID, "你好");
+
+    const first = fauxAgent();
+    first.faux.setResponses([fauxAssistantMessage([fauxText("回答 A")])]);
+    attachPersistence(service, first.agent, SESSION_ID);
+
+    const second = fauxAgent();
+    second.faux.setResponses([fauxAssistantMessage([fauxText("回答 B")])]);
+    attachPersistence(service, second.agent, SESSION_ID);
+
+    await Promise.all([first.agent.prompt("并发 A"), second.agent.prompt("并发 B")]);
+    await Promise.all([first.agent.waitForIdle(), second.agent.waitForIdle()]);
+
+    const history = await service.loadHistory(SESSION_ID);
+    expect(await seqsOf(SESSION_ID)).toEqual([1, 2, 3, 4]);
+    // 两轮的四条消息一条不少（顺序取决于调度，所以两边都排序后再比）
+    expect(history.messages.map(textOf).sort()).toEqual(["并发 A", "并发 B", "回答 A", "回答 B"].sort());
   });
 
   it("落库失败不会让 agent 运行抛异常", async () => {
     const { faux, agent } = fauxAgent();
     faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
     // 不建 session，外键约束必然让每次写入都失败
-    attachPersistence(service, agent, "44444444-4444-4444-4444-444444444444", 1);
+    attachPersistence(service, agent, "44444444-4444-4444-4444-444444444444");
 
     await expect(agent.prompt("你好")).resolves.toBeUndefined();
+  });
+
+  /**
+   * seq 撞车是「服务看着健康、数据却在丢」，和数据库整体挂掉必须在日志里分得开。
+   *
+   * 这里用真实驱动造一个 23505（重复插默认用户），而不是手搓一个假错误对象：
+   * 判定读的是 drizzle 包装后的 cause.code，手搓的形状一旦和实际脱节就白测了。
+   */
+  it("唯一约束冲突单独打一条日志，与普通落库失败区分开", async () => {
+    const uniqueViolation = await captureError(() =>
+      db.insert(users).values({ id: DEFAULT_USER_ID, username: DEFAULT_USERNAME }),
+    );
+    const errors = vi.spyOn(logger, "error").mockImplementation(() => {});
+
+    try {
+      for (const failure of [uniqueViolation, new Error("connection terminated")]) {
+        const { faux, agent } = fauxAgent();
+        faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
+        const broken = {
+          ...service,
+          appendMessage: () => Promise.reject(failure),
+        };
+        attachPersistence(broken, agent, SESSION_ID);
+        await agent.prompt("你好");
+        await agent.waitForIdle();
+      }
+
+      const logged = errors.mock.calls.map((call) => call[1]);
+      expect(logged).toContain("message seq collision, message dropped");
+      expect(logged).toContain("failed to persist agent message");
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   it("中断后半截助手消息落库并标记 interrupted", async () => {
@@ -216,7 +293,7 @@ describe("attachPersistence", () => {
 
     const { faux, agent } = interruptingAgent();
     faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
-    attachPersistence(service, agent, SESSION_ID, 1);
+    attachPersistence(service, agent, SESSION_ID);
 
     await agent.prompt("你好");
     await agent.waitForIdle();
@@ -237,7 +314,7 @@ describe("attachPersistence", () => {
 
     const { faux, agent } = interruptingAgent();
     faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
-    attachPersistence(service, agent, SESSION_ID, 1);
+    attachPersistence(service, agent, SESSION_ID);
 
     await agent.prompt("你好");
     await agent.waitForIdle();
@@ -261,7 +338,7 @@ describe("attachPersistence", () => {
     // 而这一轮不中断，agent_end 就不该拿它再补一条
     const { faux, agent } = fauxAgent(CHUNKED);
     faux.setResponses([fauxAssistantMessage([fauxText("一二三四")])]);
-    attachPersistence(service, agent, SESSION_ID, 1);
+    attachPersistence(service, agent, SESSION_ID);
 
     await agent.prompt("你好");
     await agent.waitForIdle();

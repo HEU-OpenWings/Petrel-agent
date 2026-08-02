@@ -19,6 +19,8 @@ describe("chat routes", () => {
     });
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { message: "message 不能为空" } });
+    await expect(response.json()).resolves.toMatchObject({
+      error: { message: "message 必须是非空字符串" },
+    });
   });
 });

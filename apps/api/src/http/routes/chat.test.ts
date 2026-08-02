@@ -1,5 +1,6 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import type { CreateAgentOptions } from "@petrel/agent-core";
+import { type CreateAgentOptions, DEFAULT_SYSTEM_PROMPT } from "@petrel/agent-core";
+import { createMessageRepository } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService } from "../../services/session.ts";
@@ -53,10 +54,27 @@ vi.mock("@petrel/agent-core", async (importOriginal) => {
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 
+/**
+ * 分块由 tokenSize 决定：faux 每块吐 tokenSize * 4 个字符，min/max 都取 1 就是每块 4 字。
+ * 中断用例要靠这个把回答切成多块，才有「流到一半」这个时刻。
+ *(同 services/session.test.ts)
+ */
+const CHUNKED = { tokensPerSecond: 20, tokenSize: { min: 1, max: 1 } };
+const LONG_ANSWER = "一".repeat(40);
+
 let service: ReturnType<typeof createSessionService>;
+let messageRepo: ReturnType<typeof createMessageRepository>;
 let faux: ReturnType<typeof fauxProvider>;
 let reset: () => Promise<void>;
 let close: () => Promise<void>;
+
+/** 换一套 faux provider 并让后续请求的 createAgent 用它；默认是不分块的快回答 */
+function useFaux(options: Parameters<typeof fauxProvider>[0] = { tokensPerSecond: 10_000 }) {
+  faux = fauxProvider(options);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  state.agentOptions = { models, model: faux.getModel() };
+}
 
 // 建库慢，整个文件复用一个实例，用例之间靠清表隔离
 beforeAll(async () => {
@@ -65,26 +83,25 @@ beforeAll(async () => {
   reset = testDb.reset;
   close = testDb.close;
   service = createSessionService(testDb.db);
-
-  faux = fauxProvider({ tokensPerSecond: 10_000 });
-  const models = createModels();
-  models.setProvider(faux.provider);
-  state.agentOptions = { models, model: faux.getModel() };
+  // seq 不由 service 暴露，要断言它只能下探到 repository
+  messageRepo = createMessageRepository(testDb.db);
 });
 
 beforeEach(async () => {
   state.dbBroken = false;
+  useFaux();
   await reset();
 });
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
 
-function post(body: string) {
+function post(body: string, init: RequestInit = {}) {
   return app.request("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body,
+    ...init,
   });
 }
 
@@ -118,6 +135,54 @@ function roleOf(message: unknown): string {
   return (message as { role?: string }).role ?? "";
 }
 
+async function seqsOf(sessionId: string): Promise<number[]> {
+  return (await messageRepo.listBySession(sessionId)).map((row) => row.seq);
+}
+
+/** 中断之后的落库发生在 HTTP 响应之外，只能轮询等它落定 */
+async function waitFor(label: string, check: () => Promise<boolean>) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`等待超时：${label}`);
+}
+
+/** 这一帧是不是「助手已经吐出至少一个字」 */
+function hasAssistantText(event: unknown): boolean {
+  const frame = event as { type?: string; message?: { role?: string; content?: { text?: string }[] } };
+  if (frame.type !== "message_update" || frame.message?.role !== "assistant") return false;
+  return (frame.message.content ?? []).some((block) => (block.text ?? "").length > 0);
+}
+
+/**
+ * 等助手吐出第一段文本再中断，模拟用户点「停止」——
+ * ChatView 的 onSendOrStop() 走的就是 useAgentStream.abort() → AbortController.abort()。
+ *
+ * 不能只读固定帧数就断：前几帧是 agent_start / turn_start / 用户消息，
+ * 那时候断掉的半截消息是空的，「存下来的比完整回答短且非空」这个断言就没了区分力。
+ */
+async function abortMidStream(response: Response, controller: AbortController) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("SSE 响应没有 body");
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let streaming = false;
+
+  while (!streaming) {
+    const { done, value } = await reader.read();
+    if (done) throw new Error("流已经结束，没能在中途中断");
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split("\n\n");
+    // 最后一段可能只收了一半，留到下一轮再拼
+    buffer = blocks.pop() ?? "";
+    streaming = parseSse(blocks.join("\n\n")).some((entry) => hasAssistantText(entry.data));
+  }
+
+  controller.abort();
+  await reader.cancel().catch(() => undefined);
+}
+
 describe("POST /api/chat 请求体校验", () => {
   // 这些请求体都能让「先当成 { message: string } 用」的写法抛 TypeError，
   // 被 error 中间件兜成 500——客户端错误却报服务端错误，还白打一条 stack 日志
@@ -136,7 +201,9 @@ describe("POST /api/chat 请求体校验", () => {
     const response = await post(body);
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: { message: "message 不能为空" } });
+    await expect(response.json()).resolves.toEqual({
+      error: { message: "message 必须是非空字符串" },
+    });
   });
 
   it("请求体不是 JSON 返回 400", async () => {
@@ -173,8 +240,7 @@ describe("POST /api/chat 会话持久化", () => {
     expect(history.messages.map(roleOf)).toEqual(["user", "assistant"]);
     expect(textOf(history.messages[0])).toBe("你好");
     expect(textOf(history.messages[1])).toBe("你好，我是 Petrel");
-    // nextSeq = 3 说明这两条占的是 1 和 2
-    expect(history.nextSeq).toBe(3);
+    expect(await seqsOf(SESSION_ID)).toEqual([1, 2]);
     expect(history.interruptedSeqs).toEqual([]);
   });
 
@@ -213,7 +279,90 @@ describe("POST /api/chat 会话持久化", () => {
     const history = await service.loadHistory(SESSION_ID);
     // 1、2 是上一轮，3、4 是这一轮：没有从 1 重来，也没有把回灌的历史重复写一遍
     expect(history.messages).toHaveLength(4);
-    expect(history.nextSeq).toBe(5);
+    expect(await seqsOf(SESSION_ID)).toEqual([1, 2, 3, 4]);
+  });
+
+  /**
+   * Critical 回归之一：两个客户端（多标签页 / 多设备）同时往一个会话发消息。
+   * seq 曾经由路由在请求开始时算出，两个请求会算出同一个起点，后一轮整轮被吞掉。
+   */
+  it("并发打同一个 sessionId，两轮都完整落库且 seq 连续无洞", async () => {
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("回答 A")]),
+      fauxAssistantMessage([fauxText("回答 B")]),
+    ]);
+
+    const [first, second] = await Promise.all([
+      chatTurn({ message: "并发 A", sessionId: SESSION_ID }),
+      chatTurn({ message: "并发 B", sessionId: SESSION_ID }),
+    ]);
+
+    expect([first.response.status, second.response.status]).toEqual([200, 200]);
+
+    const history = await service.loadHistory(SESSION_ID);
+    expect(await seqsOf(SESSION_ID)).toEqual([1, 2, 3, 4]);
+    // 四条一条不少（落库顺序取决于调度，所以两边都排序后再比）
+    expect(history.messages.map(textOf).sort()).toEqual(["并发 A", "并发 B", "回答 A", "回答 B"].sort());
+  });
+
+  /**
+   * Critical 回归之二，也是真正会天天发生的那个：中断后立刻重发。
+   *
+   * ChatView 的 onSendOrStop() 是一键停止，useAgentStream 的 finally 让 running 立刻变 false，
+   * 用户马上就能再发。但上一轮 agent_end 的半截消息落库发生在 HTTP 响应关闭之后，
+   * 第二个请求这时读到的序号是过期的——第二轮曾经整轮消失。
+   */
+  it("中断后立刻重发，两轮消息都在，seq 连续无洞", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText(LONG_ANSWER)]),
+      fauxAssistantMessage([fauxText("第二次回答")]),
+    ]);
+
+    const controller = new AbortController();
+    const aborted = await post(JSON.stringify({ message: "第一次提问", sessionId: SESSION_ID }), {
+      signal: controller.signal,
+    });
+    await abortMidStream(aborted, controller);
+
+    // 不等上一轮落库，立刻重发——这正是竞态窗口
+    await chatTurn({ message: "第二次提问", sessionId: SESSION_ID });
+
+    await waitFor("两轮消息全部落库", async () => (await seqsOf(SESSION_ID)).length === 4);
+
+    const history = await service.loadHistory(SESSION_ID);
+    expect(await seqsOf(SESSION_ID)).toEqual([1, 2, 3, 4]);
+    // 第二轮的提问与回答都还在（曾经整轮丢失）
+    const texts = history.messages.map(textOf);
+    expect(texts).toContain("第二次提问");
+    expect(texts).toContain("第二次回答");
+    // 被打断的那条半截助手消息也在，且带了中断标记
+    expect(history.interruptedSeqs).toHaveLength(1);
+  });
+
+  /**
+   * 客户端断开连接 → streamSSE 的 onAbort → agent.abort()。
+   * 没有这条接线，模型会在客户端已经走了之后继续把整段生成完，白烧 token。
+   */
+  it("客户端中断时 agent 跟着停，落库的是半截回答", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+
+    const controller = new AbortController();
+    const response = await post(JSON.stringify({ message: "你好", sessionId: SESSION_ID }), {
+      signal: controller.signal,
+    });
+    await abortMidStream(response, controller);
+
+    await waitFor("半截消息落库", async () => (await seqsOf(SESSION_ID)).length === 2);
+
+    const history = await service.loadHistory(SESSION_ID);
+    expect(history.messages.map(roleOf)).toEqual(["user", "assistant"]);
+    expect(history.interruptedSeqs).toEqual([2]);
+    // 存下来的是中断瞬间已经出的那部分：非空，但短于完整回答
+    const persisted = textOf(history.messages[1]);
+    expect(persisted.length).toBeGreaterThan(0);
+    expect(persisted.length).toBeLessThan(LONG_ANSWER.length);
   });
 
   it("数据库不可用时照常流式输出，只是这一轮不落库", async () => {
@@ -228,6 +377,41 @@ describe("POST /api/chat 会话持久化", () => {
     state.dbBroken = false;
     expect(await service.list()).toEqual([]);
     expect((await service.loadHistory(SESSION_ID)).messages).toEqual([]);
+  });
+});
+
+describe("POST /api/chat systemPrompt", () => {
+  /** 录下 provider 实际收到的 systemPrompt */
+  function recordSystemPrompt() {
+    const seen: (string | undefined)[] = [];
+    faux.setResponses([
+      (context) => {
+        seen.push(context.systemPrompt);
+        return fauxAssistantMessage([fauxText("回答")]);
+      },
+    ]);
+    return seen;
+  }
+
+  it("合法的 systemPrompt 会传给模型", async () => {
+    const seen = recordSystemPrompt();
+
+    await chatTurn({ message: "你好", sessionId: SESSION_ID, systemPrompt: "你是测试助手" });
+
+    expect(seen).toEqual(["你是测试助手"]);
+  });
+
+  // 断言式泛型时代这些值会被原样塞进 initialState.systemPrompt 发给模型
+  it.each([
+    { name: "数字", value: 123 },
+    { name: "对象", value: {} },
+    { name: "null", value: null },
+  ])("systemPrompt 是$name 时被丢弃，回落到默认提示词", async ({ value }) => {
+    const seen = recordSystemPrompt();
+
+    await chatTurn({ message: "你好", sessionId: SESSION_ID, systemPrompt: value });
+
+    expect(seen).toEqual([DEFAULT_SYSTEM_PROMPT]);
   });
 });
 

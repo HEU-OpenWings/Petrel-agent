@@ -87,13 +87,13 @@ describe("GET /api/sessions", () => {
 describe("GET /api/sessions/:id/messages", () => {
   it("按序返回消息，并单独给出被中断的序号", async () => {
     await service.ensureSession(SESSION_ID, "有历史的会话");
-    await service.appendMessage(SESSION_ID, 1, { role: "user", content: "你好" });
-    await service.appendMessage(SESSION_ID, 2, { role: "assistant", content: "半截" }, true);
+    await service.appendMessage(SESSION_ID, { role: "user", content: "你好" });
+    await service.appendMessage(SESSION_ID, { role: "assistant", content: "半截" }, true);
 
     const response = await app.request(`/api/sessions/${SESSION_ID}/messages`);
 
     expect(response.status).toBe(200);
-    // 全等断言：顺带确认 loadHistory 的 nextSeq 没有漏给前端
+    // 全等断言：确认没有多余的内部字段漏给前端
     await expect(response.json()).resolves.toEqual({
       messages: [
         { role: "user", content: "你好" },
@@ -196,7 +196,7 @@ describe("PATCH /api/sessions/:id", () => {
 describe("DELETE /api/sessions/:id", () => {
   it("删掉会话，消息一并级联删除", async () => {
     await service.ensureSession(SESSION_ID, "待删的会话");
-    await service.appendMessage(SESSION_ID, 1, { role: "user", content: "你好" });
+    await service.appendMessage(SESSION_ID, { role: "user", content: "你好" });
 
     const response = await app.request(`/api/sessions/${SESSION_ID}`, { method: "DELETE" });
 

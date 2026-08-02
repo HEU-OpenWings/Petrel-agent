@@ -22,7 +22,9 @@ function parseChatRequest(body: unknown) {
 
   const message = typeof fields?.message === "string" ? fields.message.trim() : "";
   if (!message) {
-    throw new HTTPException(400, { message: "message 不能为空" });
+    // 文案要同时覆盖「类型不对」和「trim 完是空」两种情况：
+    // 发了 { message: 123 } 却被告知「不能为空」，客户端会往错的方向排查
+    throw new HTTPException(400, { message: "message 必须是非空字符串" });
   }
 
   // id 由前端生成，进数据库前先挡掉明显非法的，避免让 Postgres 报类型错
@@ -53,8 +55,11 @@ async function prepareSession(sessionId: string, message: string) {
     await service.ensureSession(sessionId, message);
 
     const history = await service.loadHistory(sessionId);
-    // 落库的就是 pi 的 AgentMessage，读回来是 jsonb 的 unknown，原样回灌不做转换
-    return { service, history: history.messages as AgentMessage[], nextSeq: history.nextSeq };
+    // 落库的就是 pi 的 AgentMessage，读回来是 jsonb 的 unknown，原样回灌不做转换。
+    // 不加 runtime schema 校验：这张表的唯一写入者是 attachPersistence，
+    // 内容直接来自 pi 的事件；校验就等于把 pi 的消息结构再固化一遍，
+    // 正是 schema.ts 存 jsonb 时要避免的事（pi 一改就要同步改两处）。
+    return { service, history: history.messages as AgentMessage[] };
   } catch (error) {
     logger.error({ err: error, sessionId }, "session unavailable, continuing without persistence");
     return undefined;
@@ -84,7 +89,7 @@ export const chat = new Hono().post("/", async (c) => {
     });
 
     if (prepared) {
-      attachPersistence(prepared.service, agent, sessionId, prepared.nextSeq);
+      attachPersistence(prepared.service, agent, sessionId);
     }
 
     stream.onAbort(() => agent.abort());

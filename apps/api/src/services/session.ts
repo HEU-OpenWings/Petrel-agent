@@ -42,19 +42,14 @@ export function createSessionService(db: Database) {
       return {
         messages: stored.map((row) => row.message),
         interruptedSeqs: stored.filter((row) => row.interrupted).map((row) => row.seq),
-        nextSeq: (stored.at(-1)?.seq ?? 0) + 1,
       };
     },
 
-    async appendMessage(
-      sessionId: string,
-      seq: number,
-      message: unknown,
-      interrupted = false,
-    ): Promise<void> {
+    /** seq 不在这一层出现：由数据库在插入时分配，见 messageRepo.append 的说明 */
+    async appendMessage(sessionId: string, message: unknown, interrupted = false): Promise<void> {
       // role 冗余存一列，让「找首条 user 消息」这类查询不必写 JSONB 表达式
       const role = (message as { role?: string }).role ?? "unknown";
-      await messageRepo.append({ sessionId, seq, role, message, interrupted });
+      await messageRepo.append({ sessionId, role, message, interrupted });
     },
 
     async list() {
@@ -78,6 +73,14 @@ export function createSessionService(db: Database) {
 type SessionService = ReturnType<typeof createSessionService>;
 
 /**
+ * drizzle 把驱动抛的错误包一层，原始错误在 cause 上；node-postgres 与 PGlite
+ * 的 cause 都是 pg 风格的对象，唯一约束冲突是 SQLSTATE 23505。
+ */
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { cause?: { code?: string } } | null)?.cause?.code === "23505";
+}
+
+/**
  * 订阅 agent 事件并落库。
  *
  * 按 message_end 增量写而不在 agent_end 一次性写：agent_end 带的是整个 transcript，
@@ -94,16 +97,13 @@ type SessionService = ReturnType<typeof createSessionService>;
  *   统一留给 agent_end 用 partial 落库，避免写进两条重复的助手消息。
  * - 正常完成的一轮，message_end 已把全部消息落库，agent_end 时只有 interrupted 才写 partial。
  *
- * @param startSeq 本次运行的第一个序号，由调用方从已有历史算出
+ * 这里不持有序号：seq 由数据库在每次插入时分配。曾经的 startSeq 参数要求调用方
+ * 在请求开始时从历史算出下一个序号，那个值在并发写同一会话时（多标签页、
+ * 中断后立即重发）到写入时已经过期，见 messageRepo.append 的说明。
+ *
  * @returns 取消订阅函数
  */
-export function attachPersistence(
-  service: SessionService,
-  agent: Agent,
-  sessionId: string,
-  startSeq: number,
-): () => void {
-  let seq = startSeq;
+export function attachPersistence(service: SessionService, agent: Agent, sessionId: string): () => void {
   let partial: unknown;
 
   return agent.subscribe(async (event) => {
@@ -121,8 +121,7 @@ export function attachPersistence(
         // 半截内容统一由 agent_end 用 partial 落库
         const ended = event.message as { stopReason?: string } | undefined;
         if (ended?.stopReason === "aborted") return;
-        await service.appendMessage(sessionId, seq, event.message);
-        seq += 1;
+        await service.appendMessage(sessionId, event.message);
         return;
       }
 
@@ -133,14 +132,19 @@ export function attachPersistence(
         const interrupted = agent.state.errorMessage !== undefined || last?.stopReason === "aborted";
         // 只有本轮确实中断了才补写半截消息；正常完成时 message_end 已写全，不能重复
         if (interrupted && partial !== undefined) {
-          await service.appendMessage(sessionId, seq, partial, true);
-          seq += 1;
+          await service.appendMessage(sessionId, partial, true);
         }
         await service.touch(sessionId);
       }
     } catch (error) {
       // 对话本身不该因为存不进数据库而崩掉
-      logger.error({ err: error, sessionId }, "failed to persist agent message");
+      if (isUniqueViolation(error)) {
+        // 序号撞车意味着这条消息永久丢了，但服务看上去完全健康——
+        // 跟「数据库整体挂掉」是两种处置，日志必须分得开，否则线上没人会发现
+        logger.error({ err: error, sessionId }, "message seq collision, message dropped");
+      } else {
+        logger.error({ err: error, sessionId }, "failed to persist agent message");
+      }
     }
   });
 }

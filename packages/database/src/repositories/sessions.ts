@@ -20,10 +20,11 @@ export interface SessionSummary {
  * 而 new Date() 只有毫秒精度；两者混用时，同一毫秒内被 touch 过的会话
  * 时间戳可能反而小于刚插入的会话，导致左栏「最近更新在最上面」的排序翻转。
  *
- * 注意 now() 是 transaction_timestamp()，同一个事务里恒定。目前全仓没有
- * db.transaction()，每条语句各自成事务，所以互不影响；将来若把一批 touch()
- * 包进同一个事务，它们会拿到并列的时间戳。（不要为此换成 clock_timestamp()，
- * 那会让写入与 defaultNow() 不再是同一个时钟源，正是这里要避免的。）
+ * 注意 now() 是 transaction_timestamp()，同一个事务里恒定。本文件的每条语句都各自
+ * 成事务，所以互不影响（全仓唯一的 db.transaction() 在 messages.append 里，
+ * 它只写 messages）；将来若把一批 touch() 包进同一个事务，它们会拿到并列的时间戳。
+ *（不要为此换成 clock_timestamp()，那会让写入与 defaultNow() 不再是同一个时钟源，
+ * 正是这里要避免的。）
  */
 const NOW = sql`now()`;
 
