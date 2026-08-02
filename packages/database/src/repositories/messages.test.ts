@@ -55,17 +55,6 @@ describe("messageRepository", () => {
     expect(list.map((item) => item.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
-  it("空会话的 maxSeq 是 0", async () => {
-    expect(await repo.maxSeq(SESSION_ID)).toBe(0);
-  });
-
-  it("maxSeq 返回当前最大序号", async () => {
-    await db.insert(messages).values({ sessionId: SESSION_ID, seq: 1, role: "user", message: {} });
-    await db.insert(messages).values({ sessionId: SESSION_ID, seq: 7, role: "assistant", message: {} });
-
-    expect(await repo.maxSeq(SESSION_ID)).toBe(7);
-  });
-
   it("interrupted 默认 false，可显式置 true", async () => {
     await repo.append({ sessionId: SESSION_ID, role: "assistant", message: {} });
     await repo.append({ sessionId: SESSION_ID, role: "assistant", message: {}, interrupted: true });

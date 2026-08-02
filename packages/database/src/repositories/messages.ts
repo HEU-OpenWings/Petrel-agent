@@ -1,4 +1,4 @@
-import { asc, eq, max, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { messages, sessions } from "../schema.ts";
 import type { Database } from "./sessions.ts";
 
@@ -25,6 +25,12 @@ export function createMessageRepository(db: Database) {
      * 时两个事务仍会算出同一个 seq。锁的是会话行，所以只有同一会话的写入被串行化。
      *
      * 会话不存在时锁不到任何行，随后的 INSERT 照旧撞外键约束报错，行为不变。
+     *
+     * 不变式（不死锁的结构性理由，改数据层时请守住）：**所有写路径都先锁会话行，
+     * 且只拿这一把锁**。append 是 FOR UPDATE(sessions) → INSERT(messages)，
+     * INSERT 的外键检查要的 KEY SHARE 已被同事务更强的锁覆盖；
+     * touch / rename / upsert 都是单语句只碰 sessions；remove 先锁 sessions 再级联删 messages。
+     * 于是全局锁序一致。不要引入「先碰 messages 再碰 sessions」的事务，那会造出环。
      */
     async append(input: {
       sessionId: string;
@@ -55,15 +61,6 @@ export function createMessageRepository(db: Database) {
         .from(messages)
         .where(eq(messages.sessionId, sessionId))
         .orderBy(asc(messages.seq));
-    },
-
-    /** 空会话返回 0，这样调用方统一用 maxSeq + 1 作为下一个序号 */
-    async maxSeq(sessionId: string): Promise<number> {
-      const rows = await db
-        .select({ value: max(messages.seq) })
-        .from(messages)
-        .where(eq(messages.sessionId, sessionId));
-      return rows[0]?.value ?? 0;
     },
   };
 }

@@ -341,6 +341,67 @@ describe("POST /api/chat 会话持久化", () => {
   });
 
   /**
+   * 已知问题（I1）：中断后重发会让 transcript 的顺序与对话的逻辑顺序不一致。
+   *
+   * seq 反映的是「写入时刻」，而对话的逻辑顺序是「轮次」。被打断的半截助手消息
+   * 在 agent_end 才落库，那时 HTTP 响应早就关了，于是它必然排到下一轮用户消息**后面**：
+   * 落库顺序变成 user → user → assistant(半截) → assistant，出现两条连续的 user。
+   *
+   * 这不是 seq 改由数据库分配带来的退化——改之前这一轮是整个丢掉的，比顺序错更糟。
+   * 但它是修好丢消息之后才浮出来的，所以这条用例把当前（错误的）行为钉住：
+   * 谁改动了半截消息的落库时机，这里会立刻变红，逼着人正面处理顺序问题。
+   *
+   * 为什么现在不修：可行的修法是把半截消息的落库从 agent_end 提前到 message_end 里
+   * 那条 aborted 消息，但这要先在**真实模型**上确认 aborted 消息的内容确实等于 partial。
+   * 仓库里没有 SILICONFLOW_API_KEY，faux 的行为不能直接外推到真实 provider。
+   *
+   * 影响面：SiliconFlow 走 OpenAI 兼容接口，容忍连续同角色消息，所以今天不炸；
+   * 但 Anthropic Messages API 严格要求 user/assistant 交替，换 provider 会直接 400。
+   */
+  it("【已知问题】中断后重发，半截消息排到了下一轮用户消息之后", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText(LONG_ANSWER)]),
+      fauxAssistantMessage([fauxText("第二次回答")]),
+    ]);
+
+    const controller = new AbortController();
+    const aborted = await post(JSON.stringify({ message: "第一次提问", sessionId: SESSION_ID }), {
+      signal: controller.signal,
+    });
+    await abortMidStream(aborted, controller);
+    await chatTurn({ message: "第二次提问", sessionId: SESSION_ID });
+    await waitFor("两轮消息全部落库", async () => (await seqsOf(SESSION_ID)).length === 4);
+
+    // 落库顺序：两条 user 连在一起，半截回答被挤到了第三位
+    const stored = await messageRepo.listBySession(SESSION_ID);
+    expect(stored.map((row) => [row.seq, row.role, row.interrupted])).toEqual([
+      [1, "user", false],
+      [2, "user", false],
+      [3, "assistant", true],
+      [4, "assistant", false],
+    ]);
+    expect(stored.map((row) => textOf(row.message))).toEqual([
+      "第一次提问",
+      "第二次提问",
+      expect.stringMatching(/^一+$/),
+      "第二次回答",
+    ]);
+
+    // 而回灌给模型的就是这个顺序：第三轮开头是两条连续的 user
+    const seen: string[][] = [];
+    faux.setResponses([
+      (context) => {
+        seen.push(context.messages.map((item) => `${roleOf(item)}:${textOf(item)}`));
+        return fauxAssistantMessage([fauxText("第三次回答")]);
+      },
+    ]);
+    await chatTurn({ message: "第三次提问", sessionId: SESSION_ID });
+
+    expect(seen[0]?.slice(0, 2)).toEqual(["user:第一次提问", "user:第二次提问"]);
+  });
+
+  /**
    * 客户端断开连接 → streamSSE 的 onAbort → agent.abort()。
    * 没有这条接线，模型会在客户端已经走了之后继续把整段生成完，白烧 token。
    */
