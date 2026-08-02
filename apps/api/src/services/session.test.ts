@@ -120,12 +120,44 @@ describe("CRUD", () => {
  * 用 pi 自带的 faux provider 跑真实 agent loop，不需要模型凭据也不 mock 内部。
  * 这个装配方式与 packages/agent-core/src/agent.test.ts 里的一致。
  */
-function fauxAgent() {
-  const faux = fauxProvider({ tokensPerSecond: 10_000 });
+function fauxAgent(fauxOptions: Parameters<typeof fauxProvider>[0] = { tokensPerSecond: 10_000 }) {
+  const faux = fauxProvider(fauxOptions);
   const models = createModels();
   models.setProvider(faux.provider);
   const agent = createAgent({ models, model: faux.getModel() });
   return { faux, agent };
+}
+
+/** faux 每块吐 4 个字符，配上低 tokensPerSecond 就能让一段回答分成多块流出来 */
+const CHUNKED = { tokensPerSecond: 20, tokenSize: { min: 1, max: 1 } };
+/** 一次中断只保留前几块，所以回答要够长，才能断言「存下来的比完整回答短」 */
+const LONG_ANSWER = "一".repeat(40);
+
+/**
+ * 造一个必定在流式中途被打断的 agent：收到第一块非空内容就 abort。
+ * 出字快时整段会在一次 message_update 里到齐，abort 就只能打在流结束之后，
+ * 所以这里必须用分块出字，中断点才稳定落在 message_end 之前。
+ */
+function interruptingAgent() {
+  const { faux, agent } = fauxAgent(CHUNKED);
+  let requested = false;
+
+  agent.subscribe((event) => {
+    if (requested || event.type !== "message_update" || event.message.role !== "assistant") return;
+    if (!event.message.content.some((block) => block.type === "text" && block.text.length > 0)) {
+      return;
+    }
+    requested = true;
+    agent.abort();
+  });
+
+  return { faux, agent };
+}
+
+/** 取一条落库消息里的纯文本，用来判断存的是半截还是全文 */
+function textOf(message: unknown): string {
+  const content = (message as { content?: { text?: string }[] }).content ?? [];
+  return content.map((block) => block.text ?? "").join("");
 }
 
 describe("attachPersistence", () => {
@@ -169,5 +201,60 @@ describe("attachPersistence", () => {
     attachPersistence(service, agent, "44444444-4444-4444-4444-444444444444", 1);
 
     await expect(agent.prompt("你好")).resolves.toBeUndefined();
+  });
+
+  it("中断后半截助手消息落库并标记 interrupted", async () => {
+    await service.ensureSession(SESSION_ID, "你好");
+
+    const { faux, agent } = interruptingAgent();
+    faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+    attachPersistence(service, agent, SESSION_ID, 1);
+
+    await agent.prompt("你好");
+    await agent.waitForIdle();
+
+    const history = await service.loadHistory(SESSION_ID);
+    // 1 是用户消息，2 是被打断的半截助手消息
+    expect(history.interruptedSeqs).toEqual([2]);
+    expect((history.messages[1] as { role: string }).role).toBe("assistant");
+
+    // 存的是中断瞬间已经出的那部分：非空，但短于完整回答
+    const persisted = textOf(history.messages[1]);
+    expect(persisted.length).toBeGreaterThan(0);
+    expect(persisted.length).toBeLessThan(LONG_ANSWER.length);
+  });
+
+  it("中断时那条 aborted 空消息不会被额外写进去", async () => {
+    await service.ensureSession(SESSION_ID, "你好");
+
+    const { faux, agent } = interruptingAgent();
+    faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+    attachPersistence(service, agent, SESSION_ID, 1);
+
+    await agent.prompt("你好");
+    await agent.waitForIdle();
+
+    const history = await service.loadHistory(SESSION_ID);
+    // 只有用户消息 + 半截助手消息；aborted 的空 message_end 被跳过了
+    expect(history.messages).toHaveLength(2);
+    expect(history.messages.map(textOf).filter((text) => text === "")).toEqual([]);
+  });
+
+  it("正常完成的一轮不会被 agent_end 重复补写", async () => {
+    await service.ensureSession(SESSION_ID, "你好");
+
+    // 同样分块出字，确保 partial 确实被 message_update 记下过，
+    // 但这一轮不中断，agent_end 就不该拿它再补一条
+    const { faux, agent } = fauxAgent(CHUNKED);
+    faux.setResponses([fauxAssistantMessage([fauxText("一二三四")])]);
+    attachPersistence(service, agent, SESSION_ID, 1);
+
+    await agent.prompt("你好");
+    await agent.waitForIdle();
+
+    const history = await service.loadHistory(SESSION_ID);
+    expect(history.messages).toHaveLength(2);
+    expect(history.interruptedSeqs).toEqual([]);
+    expect(textOf(history.messages[1])).toBe("一二三四");
   });
 });
