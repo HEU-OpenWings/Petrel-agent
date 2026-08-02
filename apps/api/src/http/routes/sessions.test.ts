@@ -1,0 +1,215 @@
+import { createTestDb, type TestDb } from "@petrel/database/testing";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSessionService } from "../../services/session.ts";
+import { app } from "../app.ts";
+
+/**
+ * 路由里的 getDb() 建的是 node-postgres 连接池，连不到 PGlite，
+ * 所以整个模块替身一次，把它换成测试库。
+ *
+ * 没有改成依赖注入：那要在生产代码（Hono context 或工厂函数）上开一个
+ * 只为测试存在的口子，覆盖面一样、成本更高。
+ * repository 收的 Database 本来就是 NodePgDatabase | PgliteDatabase 的联合，
+ * PGlite 实例能原样喂进去。
+ *
+ * state 用 vi.hoisted：vi.mock 会被提升到 import 之上，
+ * 工厂里不能引用普通的顶层变量。
+ */
+const state = vi.hoisted(() => ({ db: undefined as TestDb | undefined }));
+
+vi.mock("@petrel/database", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@petrel/database")>();
+  // getDb 的签名只认 NodePgDatabase，断言一次把 PGlite 实例塞进去
+  return { ...actual, getDb: () => state.db as unknown as ReturnType<typeof actual.getDb> };
+});
+
+/** 源码里不放不可见控制字符：写成字面量会让 diff 和 grep 都读不出来 */
+const NUL = String.fromCharCode(0);
+
+const SESSION_ID = "11111111-1111-1111-1111-111111111111";
+const OTHER_SESSION_ID = "22222222-2222-2222-2222-222222222222";
+const ABSENT_SESSION_ID = "33333333-3333-3333-3333-333333333333";
+
+let service: ReturnType<typeof createSessionService>;
+let reset: () => Promise<void>;
+let close: () => Promise<void>;
+
+// 建库慢，整个文件复用一个实例，用例之间靠清表隔离
+beforeAll(async () => {
+  const testDb = await createTestDb();
+  state.db = testDb.db;
+  reset = testDb.reset;
+  close = testDb.close;
+  service = createSessionService(testDb.db);
+});
+
+beforeEach(() => reset());
+
+// beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
+afterAll(() => close?.());
+
+function patch(id: string, body: string) {
+  return app.request(`/api/sessions/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+}
+
+describe("GET /api/sessions", () => {
+  it("空库返回空数组", async () => {
+    const response = await app.request("/api/sessions");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ sessions: [] });
+  });
+
+  it("返回会话的 id 与标题，最近更新的在前", async () => {
+    await service.ensureSession(SESSION_ID, "先建的会话");
+    await service.ensureSession(OTHER_SESSION_ID, "后建的会话");
+
+    const response = await app.request("/api/sessions");
+    const body = (await response.json()) as { sessions: { id: string; title: string }[] };
+
+    expect(response.status).toBe(200);
+    expect(body.sessions.map((session) => [session.id, session.title])).toEqual([
+      [OTHER_SESSION_ID, "后建的会话"],
+      [SESSION_ID, "先建的会话"],
+    ]);
+  });
+});
+
+describe("GET /api/sessions/:id/messages", () => {
+  it("按序返回消息，并单独给出被中断的序号", async () => {
+    await service.ensureSession(SESSION_ID, "有历史的会话");
+    await service.appendMessage(SESSION_ID, 1, { role: "user", content: "你好" });
+    await service.appendMessage(SESSION_ID, 2, { role: "assistant", content: "半截" }, true);
+
+    const response = await app.request(`/api/sessions/${SESSION_ID}/messages`);
+
+    expect(response.status).toBe(200);
+    // 全等断言：顺带确认 loadHistory 的 nextSeq 没有漏给前端
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        { role: "user", content: "你好" },
+        { role: "assistant", content: "半截" },
+      ],
+      interruptedSeqs: [2],
+    });
+  });
+
+  it("会话不存在时返回空数组而不是 404", async () => {
+    const response = await app.request(`/api/sessions/${ABSENT_SESSION_ID}/messages`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ messages: [], interruptedSeqs: [] });
+  });
+
+  it("非法 UUID 返回 400", async () => {
+    const response = await app.request("/api/sessions/not-a-uuid/messages");
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: { message: "会话 id 必须是 UUID" } });
+  });
+});
+
+describe("PATCH /api/sessions/:id", () => {
+  it("改名后列表里是新标题", async () => {
+    await service.ensureSession(SESSION_ID, "原标题");
+
+    const response = await patch(SESSION_ID, JSON.stringify({ title: "  新标题  " }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect((await service.list())[0]?.title).toBe("新标题");
+  });
+
+  it("标题里的 NUL 被清掉后照常改名", async () => {
+    await service.ensureSession(SESSION_ID, "原标题");
+
+    const response = await patch(SESSION_ID, JSON.stringify({ title: `新${NUL}标题` }));
+
+    expect(response.status).toBe(200);
+    expect((await service.list())[0]?.title).toBe("新标题");
+  });
+
+  it("会话不存在返回 404", async () => {
+    const response = await patch(ABSENT_SESSION_ID, JSON.stringify({ title: "新标题" }));
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: { message: "会话不存在" } });
+  });
+
+  it("非法 UUID 返回 400", async () => {
+    const response = await patch("not-a-uuid", JSON.stringify({ title: "新标题" }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: { message: "会话 id 必须是 UUID" } });
+  });
+
+  it("请求体不是 JSON 返回 400", async () => {
+    const response = await patch(SESSION_ID, "not json");
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: { message: "请求体必须是 JSON" } });
+  });
+
+  // 这些请求体都能让「先当成 { title: string } 用」的写法抛 TypeError，
+  // 被 error 中间件兜成 500——客户端错误却报服务端错误，还白打一条 stack 日志
+  it.each([
+    { name: "body 是 null", body: "null" },
+    { name: "body 是数组", body: "[]" },
+    { name: "body 是字符串", body: '"abc"' },
+    { name: "没有 title", body: "{}" },
+    { name: "title 是 null", body: '{"title":null}' },
+    { name: "title 是数字", body: '{"title":123}' },
+    { name: "title 是布尔", body: '{"title":true}' },
+    { name: "title 是对象", body: '{"title":{}}' },
+    { name: "title 是数组", body: '{"title":[]}' },
+    { name: "title 只有空白", body: '{"title":"   "}' },
+    { name: "title 只有 NUL", body: JSON.stringify({ title: `${NUL} ${NUL}` }) },
+  ])("$name 返回 400 而不是 500", async ({ body }) => {
+    const response = await patch(SESSION_ID, body);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: { message: "title 不能为空" } });
+  });
+
+  it("超长 title 返回 400，不让它落库", async () => {
+    await service.ensureSession(SESSION_ID, "原标题");
+
+    const response = await patch(SESSION_ID, JSON.stringify({ title: "长".repeat(201) }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: { message: "title 不能超过 200 字" } });
+    expect((await service.list())[0]?.title).toBe("原标题");
+  });
+});
+
+describe("DELETE /api/sessions/:id", () => {
+  it("删掉会话，消息一并级联删除", async () => {
+    await service.ensureSession(SESSION_ID, "待删的会话");
+    await service.appendMessage(SESSION_ID, 1, { role: "user", content: "你好" });
+
+    const response = await app.request(`/api/sessions/${SESSION_ID}`, { method: "DELETE" });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(await service.list()).toEqual([]);
+    expect((await service.loadHistory(SESSION_ID)).messages).toEqual([]);
+  });
+
+  it("会话不存在返回 404", async () => {
+    const response = await app.request(`/api/sessions/${ABSENT_SESSION_ID}`, { method: "DELETE" });
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: { message: "会话不存在" } });
+  });
+
+  it("非法 UUID 返回 400", async () => {
+    const response = await app.request("/api/sessions/not-a-uuid", { method: "DELETE" });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: { message: "会话 id 必须是 UUID" } });
+  });
+});
