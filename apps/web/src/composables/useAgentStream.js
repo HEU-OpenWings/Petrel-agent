@@ -30,6 +30,9 @@ export function useAgentStream() {
 
   /** 切换会话时把历史消息灌进来。归约逻辑不参与，直接覆盖整个数组。 */
   function loadHistory(history) {
+    // 先掐掉上一轮：用户常在等回答时就切走，不中断的话旧流的消息、工具调用、
+    // 错误文案会继续写进新会话的界面，running 也会一直卡在 true 让输入框禁用
+    abort()
     messages.value = Array.isArray(history) ? [...history] : []
     toolCalls.value = {}
     error.value = ''
