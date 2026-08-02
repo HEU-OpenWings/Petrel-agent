@@ -7,7 +7,25 @@
 
     <div class="sessions">
       <div class="group-title">会话</div>
-      <div class="empty">暂无历史会话</div>
+
+      <div v-if="sessionStore.loading" class="empty">加载中…</div>
+      <div v-else-if="sessionStore.list.length === 0" class="empty">暂无历史会话</div>
+
+      <div
+        v-for="item in sessionStore.list"
+        :key="item.id"
+        class="session-item"
+        :class="{ active: item.id === sessionStore.currentId }"
+        @click="emit('select', item.id)"
+      >
+        <span class="session-title">{{ item.title }}</span>
+        <button class="icon-btn" type="button" title="重命名" @click.stop="onRename(item)">
+          <Pencil :size="14" />
+        </button>
+        <button class="icon-btn" type="button" title="删除" @click.stop="onRemove(item)">
+          <Trash2 :size="14" />
+        </button>
+      </div>
     </div>
 
     <div class="bottom">
@@ -32,14 +50,26 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { BarChart3, CircleCheck, LibraryBig, LogIn, SquarePen } from 'lucide-vue-next'
+import { computed, onMounted } from 'vue'
+import {
+  BarChart3,
+  CircleCheck,
+  LibraryBig,
+  LogIn,
+  Pencil,
+  SquarePen,
+  Trash2
+} from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
+import { useSessionStore } from '@/stores/session'
 import { useUserStore } from '@/stores/user'
 
-const emit = defineEmits(['new-chat'])
+const emit = defineEmits(['new-chat', 'select'])
 
+const sessionStore = useSessionStore()
 const userStore = useUserStore()
+
+onMounted(() => sessionStore.refresh())
 
 const navItems = [
   { label: '知识库', path: '/knowledge', icon: LibraryBig },
@@ -51,6 +81,21 @@ const initial = computed(() => (userStore.username || '?').slice(0, 1).toUpperCa
 
 function onNewChat() {
   emit('new-chat')
+}
+
+async function onRename(item) {
+  const title = window.prompt('重命名会话', item.title)?.trim()
+  if (!title || title === item.title) return
+  await sessionStore.rename(item.id, title)
+}
+
+async function onRemove(item) {
+  if (!window.confirm(`删除会话「${item.title}」？`)) return
+  // 要在 remove 之前判断：remove() 删掉的正是当前会话时会把 currentId 置空，
+  // 删完再比就永远不相等，删掉当前会话后界面会停在一个已经不存在的对话上
+  const wasCurrent = item.id === sessionStore.currentId
+  await sessionStore.remove(item.id)
+  if (wasCurrent) emit('new-chat')
 }
 </script>
 
@@ -100,6 +145,47 @@ function onNewChat() {
   padding: 8px 10px;
   color: var(--text-faint);
   font-size: 13px;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+
+  // 重命名/删除平时藏起来，避免二十条会话堆一列图标
+  .icon-btn {
+    opacity: 0;
+  }
+
+  &:hover {
+    background: var(--surface-hover);
+    color: var(--text-strong);
+
+    .icon-btn {
+      opacity: 1;
+    }
+  }
+
+  &.active {
+    background: var(--surface-hover);
+    color: var(--text-strong);
+  }
+}
+
+.session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 14px;
 }
 
 .bottom {

@@ -1,7 +1,7 @@
 <template>
   <div class="app-shell">
     <aside v-if="!layout.leftCollapsed" class="sidebar">
-      <SessionSidebar @new-chat="onNewChat" />
+      <SessionSidebar @new-chat="onNewChat" @select="onSelectSession" />
     </aside>
 
     <div class="main">
@@ -51,12 +51,14 @@ import { PanelLeft, PanelRight } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { useResizePanel } from '@/composables/useResizePanel'
 import { useLayoutStore } from '@/stores/layout'
+import { useSessionStore } from '@/stores/session'
 import SessionSidebar from '@/components/shell/SessionSidebar.vue'
 import WorkspacePanel from '@/components/shell/WorkspacePanel.vue'
 
 const route = useRoute()
 const router = useRouter()
 const layout = useLayoutStore()
+const sessionStore = useSessionStore()
 
 // 右栏只属于对话页，由路由 meta 决定，非对话页自动只剩两栏
 const hasWorkspace = computed(() => route.meta.workspace === true)
@@ -74,11 +76,19 @@ const chatKey = ref(0)
 const viewKey = computed(() => (route.path === '/agent' ? `agent#${chatKey.value}` : route.path))
 
 function onNewChat() {
+  sessionStore.startNew()
   if (route.path === '/agent') {
     chatKey.value += 1
   } else {
     router.push('/agent')
   }
+}
+
+// 选中会话只改 store，由 ChatView 监听 currentId 去拉历史：
+// AppShell 拿不到 ChatView 内部的 useAgentStream 实例，没法直接灌消息
+function onSelectSession(id) {
+  sessionStore.select(id)
+  if (route.path !== '/agent') router.push('/agent')
 }
 </script>
 

@@ -62,27 +62,59 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Slash } from 'lucide-vue-next'
 import CommandPalette from '@/components/chat/CommandPalette.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
+import { fetchMessages } from '@/apis/session_api'
 import { useAgentStream } from '@/composables/useAgentStream'
 import { useCommandPalette } from '@/composables/useCommandPalette'
 import { useLayoutStore } from '@/stores/layout'
+import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 /** packages/ai 目前只注册了这一个模型，所以这里是静态文字而不是下拉 */
 const MODEL_NAME = 'DeepSeek-V3'
 
-const { messages, toolCalls, running, error, send, abort, reset } = useAgentStream()
+const { messages, toolCalls, running, error, send, abort, reset, loadHistory } = useAgentStream()
 
 const layout = useLayoutStore()
+const sessionStore = useSessionStore()
 const workspace = useWorkspaceStore()
 
 // AppShell 用 key 强制重挂载来实现「新对话」，卸载时必须掐断在飞的请求，
 // 否则旧对话的 SSE 会继续跑到没有组件接收它为止
 onUnmounted(abort)
+
+// 进对话页时没有当前会话就开一个新的；已经有了（从左栏点进来、或从别的页面切回来）就拉历史。
+// startNew() 也会改 currentId，从而触发下面的 watch 去拉一个后端还不存在的会话——
+// 该接口对不存在的会话刻意返回 200 + 空数组（见 routes/sessions.ts），多打一次而已，
+// 换来的是「新建」和「切换」共用同一条加载路径，不用在两处各维护一套清空逻辑
+onMounted(() => {
+  if (!sessionStore.currentId) sessionStore.startNew()
+  else void loadSession(sessionStore.currentId)
+})
+
+async function loadSession(id) {
+  let history = []
+  try {
+    const data = await fetchMessages(id)
+    history = data.messages ?? []
+  } catch {
+    // 历史拉不到就当空会话继续，不阻塞用户提问
+  }
+  // 连着点两个会话时响应可能乱序到达，晚到的旧响应会把当前会话的内容盖掉
+  if (sessionStore.currentId !== id) return
+  loadHistory(history)
+}
+
+watch(
+  () => sessionStore.currentId,
+  (id) => {
+    if (id) void loadSession(id)
+  }
+)
 
 const draft = ref('')
 const scrollArea = ref(null)
@@ -95,6 +127,7 @@ function newChat() {
   reset()
   workspace.clear()
   draft.value = ''
+  sessionStore.startNew()
 }
 
 const palette = useCommandPalette([
@@ -178,8 +211,16 @@ function onKeydown(event) {
 async function submit() {
   const text = draft.value.trim()
   if (!text || running.value) return
+
+  // onMounted 保证了 currentId 非空，?? 只是不让 null 漏进请求体（后端会 400）
+  const sessionId = sessionStore.currentId ?? sessionStore.startNew()
+
   draft.value = ''
-  await send(text)
+  await send(text, { sessionId })
+
+  // 首条消息会让后端 upsert 出这个会话，刷新列表才能把它显示出来；
+  // 后续消息只改 updatedAt，同样要刷新，否则左栏的时间倒序是旧的
+  await sessionStore.refresh()
 }
 
 watch(
