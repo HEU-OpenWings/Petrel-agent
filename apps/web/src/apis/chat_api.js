@@ -28,14 +28,14 @@ function parseFrame(frame) {
 /**
  * 发起一次对话并逐帧回调。
  *
- * @param {{ message: string, systemPrompt?: string, signal?: AbortSignal }} params
+ * @param {{ message: string, sessionId: string, systemPrompt?: string, signal?: AbortSignal }} params
  * @param {(frame: { event: string, data: any }) => void} onFrame
  */
-export async function streamChat({ message, systemPrompt, signal }, onFrame) {
+export async function streamChat({ message, sessionId, systemPrompt, signal }, onFrame) {
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, systemPrompt }),
+    body: JSON.stringify({ message, sessionId, systemPrompt }),
     signal
   })
 
