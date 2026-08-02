@@ -224,7 +224,7 @@ describe("attachPersistence", () => {
     expect(persisted.length).toBeLessThan(LONG_ANSWER.length);
   });
 
-  it("中断时那条 aborted 空消息不会被额外写进去", async () => {
+  it("中断时那条 aborted 消息不会被额外写进去", async () => {
     await service.ensureSession(SESSION_ID, "你好");
 
     const { faux, agent } = interruptingAgent();
@@ -235,9 +235,14 @@ describe("attachPersistence", () => {
     await agent.waitForIdle();
 
     const history = await service.loadHistory(SESSION_ID);
-    // 只有用户消息 + 半截助手消息；aborted 的空 message_end 被跳过了
+    // 只有用户消息 + 半截助手消息：message_end 那条 aborted 消息被跳过了。
+    // 它的内容与 partial 相同（faux 的 aborted 消息是 partial 加个 stopReason，
+    // 不是空消息），所以真落进去会是一条内容重复的助手消息
     expect(history.messages).toHaveLength(2);
-    expect(history.messages.map(textOf).filter((text) => text === "")).toEqual([]);
+    // partial 是从 message_update 抓的，stopReason 停在 "pending"；
+    // 只有走漏了 message_end 那条，库里才会出现 "aborted"
+    const stopReasons = history.messages.map((m) => (m as { stopReason?: string }).stopReason);
+    expect(stopReasons).not.toContain("aborted");
   });
 
   it("正常完成的一轮不会被 agent_end 重复补写", async () => {

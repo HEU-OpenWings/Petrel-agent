@@ -45,9 +45,10 @@ describe("sessionRepository", () => {
   it("列表按 updatedAt 倒序", async () => {
     await repo.upsert({ id: ID_A, userId: DEFAULT_USER_ID, title: "旧会话" });
     await repo.upsert({ id: ID_B, userId: DEFAULT_USER_ID, title: "新会话" });
-    // 显式 touch 一次，避免两条记录的 defaultNow() 落在同一时刻。
-    // 但 touch 写的是 JS 的毫秒时间戳，insert 用的是 Postgres 微秒级 now()，
-    // 两句挤在同一毫秒里时 touch 反而更早，所以先等时钟跨过一毫秒
+    // 显式 touch 一次把 A 顶上去。sleep 是给 PGlite 用的：它的 now() 只有毫秒
+    // 分辨率，insert B 和 touch A 挤在同一毫秒里会拿到完全相同的时间戳，
+    // 此时 ORDER BY updated_at DESC 的顺序不定（实测 30 次里 19 次撞上）。
+    // 真实 Postgres 的 now() 是微秒精度，不需要这个等待。
     await new Promise((resolve) => setTimeout(resolve, 2));
     await repo.touch(ID_A);
 

@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type * as schema from "../schema.ts";
@@ -13,6 +13,14 @@ export interface SessionSummary {
   createdAt: Date;
   updatedAt: Date;
 }
+
+/**
+ * 更新 updatedAt 一律用数据库时钟，不用 JS 的 new Date()。
+ * INSERT 走 schema 的 defaultNow()（即 Postgres now()，微秒精度），
+ * 而 new Date() 只有毫秒精度；两者混用时，同一毫秒内被 touch 过的会话
+ * 时间戳可能反而小于刚插入的会话，导致左栏「最近更新在最上面」的排序翻转。
+ */
+const NOW = sql`now()`;
 
 export function createSessionRepository(db: Database) {
   return {
@@ -44,7 +52,7 @@ export function createSessionRepository(db: Database) {
         .values(input)
         .onConflictDoUpdate({
           target: sessions.id,
-          set: { updatedAt: new Date() },
+          set: { updatedAt: NOW },
         });
     },
 
@@ -55,7 +63,7 @@ export function createSessionRepository(db: Database) {
     async rename(id: string, title: string): Promise<boolean> {
       const updated = await db
         .update(sessions)
-        .set({ title, updatedAt: new Date() })
+        .set({ title, updatedAt: NOW })
         .where(eq(sessions.id, id))
         .returning();
       return updated.length > 0;
@@ -67,7 +75,7 @@ export function createSessionRepository(db: Database) {
     },
 
     async touch(id: string): Promise<void> {
-      await db.update(sessions).set({ updatedAt: new Date() }).where(eq(sessions.id, id));
+      await db.update(sessions).set({ updatedAt: NOW }).where(eq(sessions.id, id));
     },
   };
 }

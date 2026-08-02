@@ -39,7 +39,9 @@ export async function createTestDb(): Promise<{
   return {
     db,
     async reset() {
-      // RESTART IDENTITY 顺带复位序列，让用例之间的自增值也互不影响
+      // CASCADE 是必需的：三张表之间有外键，单独 TRUNCATE users 会被拒绝。
+      // RESTART IDENTITY 当前是空操作（本 schema 没有 serial/identity 列），
+      // 留着是为了以后真加了自增列时不会漏掉复位
       await db.execute(sql`TRUNCATE ${users}, ${sessions}, ${messages} RESTART IDENTITY CASCADE`);
       await seedDefaultUser();
     },

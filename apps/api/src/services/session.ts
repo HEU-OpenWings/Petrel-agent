@@ -88,9 +88,10 @@ type SessionService = ReturnType<typeof createSessionService>;
  * - 实测 pi 0.83 里 agent_end 触发 listener 前 state.streamingMessage 已被清为 undefined，
  *   所以不在 agent_end 里读它，而是由订阅闭包维护 partial，在 message_start /
  *   message_update 时持续更新（单块响应可能只有 message_start 没有 update，两者都要记）；
- * - 中断时 message_end 发出的是一条空内容、stopReason: "aborted" 的助手消息，
- *   直接落库会写进一条空消息，所以 message_end 里跳过 aborted 的消息，
- *   把它留给 agent_end 用 partial 落库。
+ * - 中断时 message_end 还会补发一条 stopReason: "aborted" 的助手消息，内容是中断
+ *   瞬间已出的那部分（与 partial 相同，不一定为空）。它和 agent_end 要写的 partial
+ *   是同一条消息的两个副本，所以 message_end 里跳过 aborted 的消息，
+ *   统一留给 agent_end 用 partial 落库，避免写进两条重复的助手消息。
  * - 正常完成的一轮，message_end 已把全部消息落库，agent_end 时只有 interrupted 才写 partial。
  *
  * @param startSeq 本次运行的第一个序号，由调用方从已有历史算出
@@ -116,8 +117,8 @@ export function attachPersistence(
       }
 
       if (event.type === "message_end") {
-        // 中断时 message_end 发出的是空内容的 aborted 消息，跳过它，
-        // 半截内容由 agent_end 用 partial 落库
+        // 中断时这条 aborted 消息与 agent_end 要写的 partial 是同一条，跳过它，
+        // 半截内容统一由 agent_end 用 partial 落库
         const ended = event.message as { stopReason?: string } | undefined;
         if (ended?.stopReason === "aborted") return;
         await service.appendMessage(sessionId, seq, event.message);
