@@ -38,19 +38,20 @@ petrel-agent/
 │  ├─ agent-core/              # pi Agent 装配与内置工具
 │  ├─ ai/                      # 模型 provider 注册（SiliconFlow，OpenAI 兼容）
 │  ├─ config/                  # 环境配置；全仓唯一读取 process.env
+│  ├─ database/                # Drizzle schema 与 repository；测试用 PGlite
 │  └─ logger/                  # pino 日志与 HTTP 请求日志
 ├─ pnpm-workspace.yaml
 └─ tsconfig.base.json
 ```
 
 依赖方向固定为 `apps → packages`，package 之间只允许指向更底层的 package。当前是
-`api → agent-core → ai → config` 与 `api → logger → config`。
+`api → agent-core → ai → config`、`api → database → config` 与 `api → logger → config`。
 
 **pi 的接线只出现在 `agent-core` 与 `ai` 两个 package**，上层只依赖 `createAgent()` 与 Agent 的
 事件流。这层薄封装是有意为之：pi 仍在快速演进（包名近期从 `@mariozechner/*` 迁到
 `@earendil-works/*`），将来换内核时改动范围可控。
 
-后续 package（`knowledge` · `database` 等）在对应业务首次落地时创建，不提前维护空 package。
+后续 package（`knowledge` 等）在对应业务首次落地时创建，不提前维护空 package。
 异步任务成为独立进程时再增加 `apps/worker`。
 
 ## 3. 已完成
@@ -71,18 +72,140 @@ pnpm + TS(ESM) + Hono + pino + Biome + vitest + 多阶段 Dockerfile + compose�
 端到端实测（真实模型 + 真实工具循环）：2 轮 turn、25 个 `message_update`、
 `tool_execution_start/end` 正常，零错误。
 
+### M1 数据层 + M2 会话持久化（HEU-6 / HEU-10 主体，2026-08-02 交付）
+
+**`packages/database`**：Drizzle schema（`users` · `sessions` · `messages`）+ 进程级连接池单例 +
+启动时执行的 migration + 两个 repository。compose 增加 `pgvector/pgvector:pg17` 服务——本轮用不到
+向量，但知识库那轮要，现在用普通 postgres 镜像到时候换镜像得重建数据卷。
+
+**`POST /api/chat`** 请求体变为 `{ message, sessionId, systemPrompt? }`，SSE 响应格式不变。
+进流之前先 upsert 会话、把已存的历史原样回灌进 `initialState.messages`，然后订阅 agent 事件
+按 `message_end` 增量落库。**用户消息不需要手动存**：pi 的事件序列里它同样走 `message_end`，
+订阅一处就收下了，手动再存一遍会写重复。数据库不可用时整段降级——对话照常流式输出，
+只是这一轮不落库、多轮上下文退化成单轮，能用但记不住好过直接不能用。
+
+**`/api/sessions`** 四个接口：`GET /`（列表）· `GET /:id/messages`（历史）·
+`PATCH /:id`（重命名）· `DELETE /:id`。
+
+三个与下文 §4 原计划不同的设计决定，都是有意的：
+
+1. **没建 `tool_calls` 表**。pi 的工具结果是一条独立的 `toolResult` 类型 `AgentMessage`，
+   存进 `messages` 已经完整。单独的表是给 Dashboard 统计做的反范式，等 HEU-28 再加。
+2. **没做 `persisted` 事件**。它是断线重连的幂等去重手段，而断线重连需要前端重连状态机，
+   是另一个量级的复杂度，单独一轮做。
+3. **session id 由前端生成**（对照 Vercel ai-chatbot 的做法），因此 SSE 不必新增事件类型回传 id。
+
+**`GET /:id/messages` 对不存在的会话返回 200 + 空数组**，与 `PATCH` / `DELETE` 的 404 有意不一致：
+新会话的 id 是前端 `crypto.randomUUID()` 本地生成的，用户切进去时后端还没有这一行，
+这里返回 404 会让刚新建的会话直接打不开。
+
+**消息排序用整数 `seq` 而不是 `created_at`**：agent 一轮会连续产出 assistant 与 toolResult
+多条消息，插入时间戳可能落在同一毫秒。OpenAI Agents SDK 的 SQLAlchemySession 用 `created_at` 主 +
+`id` 次排序，本质是在打这个补丁；`seq` 一步到位。
+
+**但 `seq` 必须由数据库在事务内分配，不能由应用层维护**——这是本轮返工过的地方。
+最初路由在请求开始时从历史算出 `startSeq` 交给订阅闭包自增，实测会在并发下**静默丢掉整轮消息**，
+而且「点停止 → 立即重发」一键可达：上一轮 `agent_end` 的落库发生在 HTTP 响应关闭之后，
+下一个请求此刻读到的最大序号已经过期；撞上 `messages_session_seq_unique` 之后写入失败被
+listener 的 catch 吞掉，而闭包里的计数器不前进，于是本轮后面每一条都撞同一个号。
+现在 `append()` 在一个事务里先 `SELECT ... FOR UPDATE` 锁住会话行，再
+`INSERT ... (SELECT COALESCE(MAX(seq), 0) + 1 ...)`。**那条 `FOR UPDATE` 既不能省，也不能与
+INSERT 合成一条语句**：READ COMMITTED 下每条语句各取一次快照，必须先锁住行、再让下一条语句
+重新取快照去算 `MAX(seq)`，才看得到并发事务刚提交的消息。真实 Postgres 上 12 路并发实测——
+带锁 12/12 全部成功且 seq 连续无洞，把锁删掉只活下来 2~3 条。
+
+**中断的半截回答不能从 `state.streamingMessage` 取**（原计划是这么写的）。实测 pi 0.83 在触发
+`agent_end` listener 之前已经把它清成了 `undefined`。实际做法是订阅闭包用一个 `partial` 变量在
+`message_start` / `message_update` 时持续记录，`agent_end` 时判断本轮确实中断了才把它标记
+`interrupted` 写下。另外中断时 `message_end` 还会补发一条 `stopReason: "aborted"` 的助手消息，
+**它的内容不为空**——就是中断瞬间已经吐出的那部分，与 `partial` 是同一条消息的两个副本。
+所以 `message_end` 里要跳过它，理由是**重复**而不是「它是空的」；依赖「空」这个前提写断言
+会写出一条永远通过的假测试。
+
+**数据层测试用 PGlite（Node 内的 WASM Postgres）而不是 testcontainers**：CI 不需要 Docker，
+而外键、级联、唯一约束、事务这些语义都是真的。但它有两个坑，本轮都踩到了：
+
+1. **它不是「毫秒级启动」**。实例化空载就要约 1 秒，CPU 被打满时超线性劣化到十几秒。
+   所以实例按测试文件复用（`beforeAll` 建、`beforeEach` 用 `TRUNCATE ... RESTART IDENTITY CASCADE`
+   清表隔离、`afterAll` 关），并在 `vitest.config.ts` 配 `hookTimeout: 30_000`，给这个已知昂贵的
+   一次性 hook 一个有依据的预算。
+2. **它结构性地测不出并发问题**。PGlite 是单后端 WASM Postgres，JS 侧并行发出去的语句会被排队
+   串行执行——把 `append()` 里那条 `FOR UPDATE` 删掉，全部 PGlite 用例照样全绿。一行锁被误删、
+   CI 毫无反应、线上开始静默丢消息，是这个仓库里最坏的一类缺口。为此补了
+   `messages.integration.test.ts` 连真实 Postgres，`describe.skipIf(!process.env.DATABASE_URL)`，
+   默认跳过：
+
+   ```bash
+   docker compose up -d db
+   pnpm --filter @petrel/database exec drizzle-kit migrate   # 首次建表
+   DATABASE_URL=postgres://petrel:petrel@localhost:5432/petrel pnpm test
+   ```
+
+**顺带修掉一个排序 bug**：`sessions` 的 `upsert` / `rename` / `touch` 原本用 JS 的 `new Date()`
+（毫秒精度），而 INSERT 走 schema 的 `defaultNow()`（真实 Postgres 是微秒）。同一毫秒内
+insert + touch 会让刚 touch 过的会话**排到后面**，正好打在「在旧会话里发消息后它跳到顶部」
+这条验收上。三处已统一成 SQL 侧的 `now()`。PGlite 的 `now()` 只有毫秒分辨率，这个 bug 在测试
+环境里表现为时间戳相等而不是翻转，所以守卫是断言生成的 SQL 里出现 `now()` 而不是参数占位符。
+
+### 会话持久化的验收状态（2026-08-02）
+
+**已验证：**
+
+- `pnpm run build`（后端 tsc + 前端 vite）全部通过
+- `pnpm run typecheck` 零 error；`pnpm run lint`（Biome，51 个文件）零 error 零 warning
+- `pnpm test` 不带 `DATABASE_URL`：17 passed | 1 skipped（18 个文件）/ 171 passed | 2 skipped；
+  带 `DATABASE_URL` 连真实 Postgres：18 files / 173 tests 全部通过
+- 数据层并发正确性：真实 Postgres 上 12 路并发 append 同一会话，seq 连续无洞一条不丢；
+  把 `FOR UPDATE` 删掉后集成测试立刻变红
+- **migration 链路已验证**：在一个空库上启动 api，日志输出 `database migrations applied` 与
+  `agent-server listening`，三张表被自动建出、默认用户被播种
+
+**未验证 / 阻塞：**
+
+- **计划里 11 项人工验收基本没做**。仓库没有 `SILICONFLOW_API_KEY`，11 项里有 8 项需要真实对话，
+  实际只验了第 1 项（自动建表）。刷新恢复对话、两个会话来回切不串、中断后半截回答可见、
+  工具卡片重建、旧会话发消息跳顶、停掉 db 后仍能流式输出——这些目前**只有自动化测试覆盖，
+  没有人在浏览器里看过**。
+- **api 容器仍未起来**。`docker compose build` 在 `corepack` 拉 pnpm 11.15.1 时 TLS 连接断开
+  （`Client network socket disconnected before secure TLS connection was established`），
+  是网络问题不是代码问题。db 服务单独起得来，集成测试就是连它跑的。
+- 浏览器 UI 观感未验收：hover 才出现的重命名/删除图标、`prompt` / `confirm` / `alert`
+  三个原生弹窗、active 高亮、切换会话的实际手感。
+
+### 会话持久化的已知问题
+
+> 都是有意留下的，不是疏漏。写在这里是为了接手的人不必重新踩一遍。
+
+1. **中断后重发会让 transcript 的顺序错乱**——本轮最需要注意的一条。`seq` 反映的是「写入时刻」，
+   而对话的逻辑顺序是「轮次」。被打断的半截助手消息在 `agent_end` 才落库，那时 HTTP 响应早就关了，
+   于是它必然排到**下一轮用户消息之后**，回灌给模型的序列变成 `user, user, assistant, assistant`。
+   这不是「seq 改由数据库分配」带来的退化——改之前这一轮是整个丢掉的，比顺序错更糟；
+   它是修好丢消息之后才浮出来的。**影响面**：SiliconFlow 走 OpenAI 兼容接口，容忍连续同角色消息，
+   所以今天不炸；但 Anthropic Messages API 严格要求 user / assistant 交替，**换 provider 会直接 400**。
+   `chat.test.ts` 里有一条 `【已知问题】` 用例把当前（错误的）行为钉住，谁改动半截消息的落库时机
+   都会立刻变红。可行的修法是把半截消息的落库从 `agent_end` 提前到 `message_end` 里那条 aborted 消息，
+   但要先在**真实模型**上确认 aborted 消息的内容确实等于 `partial`——faux provider 的行为不能直接外推。
+2. **`prepareSession` 只做了半降级**。`ensureSession` 成功、`loadHistory` 失败时，会话行已经提交
+   （`updatedAt` 被顶起；如果是新会话，还会带着标题被建出来），但本轮 0 条消息落库——
+   左栏会出现一个排在最上面的空会话。当前有意推迟：这需要把两步包进一个事务，或者失败时回滚
+   刚建出的会话行，两种都比现在这段代码复杂。
+3. **认证完全没做（HEU-7），而且现在就埋着一个现成的 IDOR**。四个会话路由没有任何认证；
+   更要紧的是 `rename` / `remove` / `loadHistory` **不按 `userId` 收窄**，只按 id 定位。
+   今天所有会话都挂在同一个默认用户下所以看不出问题，认证一落地就是「换个 id 就能改删别人的会话」。
+   修点在 repository 的方法签名上，届时要同时动 repository / service / route 三层。
+
 ## 4. 待办
 
 ### M1 剩余
-- **HEU-6 Drizzle schema 与首个 migration**：`users` · `conversations` · `messages`(AgentMessage
-  JSONB + seq) · `tool_calls` · `kb_*` · `eval_*` · `jobs`；`kb_chunks.embedding vector(1024)` + HNSW
+- **HEU-6 Drizzle schema 剩余的表**：会话相关的 `users` · `sessions` · `messages` 已交付（见 §3；
+  表名是 `sessions` 而不是原计划的 `conversations`，`tool_calls` 决定不建）。
+  `kb_*` · `eval_*` · `jobs` 与 `kb_chunks.embedding vector(1024)` + HNSW 随各自业务落地时再加
 - **HEU-7 最小认证**：登录 + JWT 中间件 + 超管初始化（范围取决于 HEU-2 的决策）
 - **HEU-2 / HEU-3 决策**：认证范围（最小 JWT vs 纯单用户）、被删除能力清单确认
 
 ### M2 剩余
-- **HEU-10 会话持久化**：`agent.subscribe()` → 消息落 Postgres，会话恢复时回灌
-  `initialState.messages`；SSE 增加 `persisted` 事件供前端幂等去重。**这是当前前端做
-  会话列表与断线重连的前置依赖**
+- **HEU-10 会话持久化剩余部分**：落库与历史回灌已交付（见 §3），前端会话列表因此解锁。
+  剩下的是 SSE 的 `persisted` 事件与前端断线重连——两者要一起做，单独加事件没有消费方
 - **HEU-12 agent 注册表**：从 v0.4 的「目录扫描 + metadata.toml」改为显式 TS 注册表，
   配置 schema 用 TypeBox 直接生成前端表单
 - **HEU-13 工具与 MCP**：`kb_search`、`web_search`、`sql`，以及 MCP server → `AgentTool` 适配

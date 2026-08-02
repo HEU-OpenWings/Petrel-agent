@@ -12,7 +12,7 @@
 
 ---
 
-## 完成情况（截至 2026-08-02，7/12）
+## 完成情况（截至 2026-08-02，11.5/12）
 
 | # | 任务 | 状态 | commit |
 | --- | --- | --- | --- |
@@ -22,21 +22,23 @@
 | 4 | 生产连接、migration 与 Postgres 服务 | ✅ | `62ee5b1` |
 | 5 | 会话服务 | ✅ | `66bc640` |
 | 6 | agent 事件订阅落库 | ✅ | `8dcc488` |
-| 7 | 会话 CRUD 路由 | ❌ 未做 | — |
-| 8 | `/api/chat` 接入持久化 | ❌ 未做 | — |
+| 7 | 会话 CRUD 路由 | ✅ | `1bb654c` · `48eb1e5` · `3cd8730` |
+| 8 | `/api/chat` 接入持久化 | ✅ | `c2db8ec` · `d8b957a` · `3de2d45` |
 | 9 | 前端会话 API 与 store | ✅ | `5ad3656` |
-| 10 | useAgentStream 与 chat_api 接入 sessionId | ❌ 未做 | — |
-| 11 | 左栏接真实数据与 ChatView 整合 | ❌ 未做 | — |
-| 12 | 全量验收与文档 | ❌ 未做 | — |
+| 10 | useAgentStream 与 chat_api 接入 sessionId | ✅ | `1a4d983` · `0e8c9ec` |
+| 11 | 左栏接真实数据与 ChatView 整合 | ✅ | `5e8ff74` · `603b0ef` |
+| 12 | 全量验收与文档 | 🟡 部分完成 | 文档已写；**人工验收阻塞**，见下 |
 
-计划外的 commit：`7bb2f73`「修复 lint 与测试稳定性」，以及 2026-08-02 的三笔技术债清理
-（见下方「已还的技术债」）。
+计划外的 commit：`7bb2f73`「修复 lint 与测试稳定性」，2026-08-02 的四笔技术债清理
+（见下方「已还的技术债」），以及 Task 8 里返工 seq 分配方式的 `d8b957a`。
 
-**当前链路尚未打通**：数据层能存，但没有接口把它暴露出去（Task 7 缺），`/api/chat`
-也还没接上持久化（Task 8 缺），前端 store 写好了却没有页面在用（Task 10 · 11 缺）。
-从用户视角看，左栏仍然是静态骨架，对话依然不会被保存。
+**链路已打通**：前端生成 session id → `POST /api/chat` upsert 会话、回灌历史、按 `message_end`
+增量落库 → 左栏从 `GET /api/sessions` 拉真实列表，支持切换 / 重命名 / 删除。
+自动化测试覆盖到刷新恢复、中断落半截、并发同一会话不丢消息、断库降级这些路径。
 
-接手时从 **Task 7** 开始，顺序往下做即可。
+**但从用户视角看还没有人真正用过**：仓库里没有 `SILICONFLOW_API_KEY`，发不出真实对话；
+`docker compose build` 又卡在 corepack 拉 pnpm 时的 TLS 断连。所以 Task 12 Step 3 的 11 项
+人工验收里只完成了第 1 项。接手的人第一件事应该是**补做那 11 项**，而不是往下加功能。
 
 ### Task 6 的实现修正了本计划的一个错误
 
@@ -58,13 +60,14 @@
 
 ### 已还的技术债（2026-08-02，Task 7 之前）
 
-上一版记的「三个已知问题」全部处理完，三笔 commit：
+上一版记的「三个已知问题」全部处理完，四笔 commit：
 
 | commit | 内容 |
 | --- | --- |
 | `17bc9ae` | PGlite 实例按测试文件复用，修掉超时 flaky；顺带清 2 个 `!` lint warning |
 | `f98d157` | 补 `attachPersistence` 中断路径的 3 个用例 |
 | `20dd5fa` | `updatedAt` 统一走 Postgres 时钟源；修正 4 处写错的注释 |
+| `673eca3` | 在 `vitest.config.ts` 落 `hookTimeout: 30_000`；`updatedAt` 加 SQL 层守卫 |
 
 **1. 测试 flaky —— 治本做法生效，但需要配一个诚实的超时预算。**
 `createTestDb()` 返回值加了 `reset()`（`TRUNCATE ... RESTART IDENTITY CASCADE` + 重播默认用户），
@@ -98,13 +101,78 @@ PGlite 的 `now()` 只有毫秒分辨率，所以这个 bug 在测试环境里�
 `sessions.test.ts` 里「列表按 updatedAt 倒序」保留的 `await setTimeout(2)` 就是给 PGlite 的
 tie 用的，生产不需要。
 
-### 已验证
+### 已验证（截至 Task 12 文档提交时）
 
-- `pnpm test` 空载连跑 5 次全绿，12 files / 88 tests，约 4.2s
-- `pnpm run typecheck` 6 个包全通过；`pnpm run lint` 无 error 无 warning
-- 容器：`docker compose up -d db` 起了 `petrel-db-dev`（pgvector/pg17），
-  `drizzle-kit migrate` 建出 `users` / `sessions` / `messages` 三张表。
-  **api 容器仍未验证**（Task 4 Step 8 的 `docker logs petrel-api-dev` 检查未留下记录）
+- `pnpm run build`（后端 tsc + 前端 vite）全部通过
+- `pnpm run typecheck` 零 error；`pnpm run lint`（Biome，51 个文件）零 error 零 warning
+- `pnpm test` 不带 `DATABASE_URL`：**17 passed | 1 skipped（18 个文件）/ 171 passed | 2 skipped**，
+  约 5s；带 `DATABASE_URL` 连真实 Postgres：**18 files / 173 tests 全部通过**
+- 数据层并发正确性：真实 Postgres 上 12 路并发 append 同一会话，seq 连续无洞一条不丢；
+  把 `messages.append()` 里的 `FOR UPDATE` 删掉后集成测试立刻变红（PGlite 用例不会红，见下）
+- **migration 链路已验证**：在一个空库上启动 api，日志输出 `database migrations applied` 与
+  `agent-server listening`，`users` / `sessions` / `messages` 三张表被自动建出、默认用户被播种
+- 容器：`docker compose up -d db` 起得来 `petrel-db-dev`（pgvector/pg17），集成测试就是连它跑的
+
+### 未验证 / 阻塞
+
+- **Task 12 Step 3 的 11 项人工验收只做了第 1 项**（自动建表）。仓库没有 `SILICONFLOW_API_KEY`，
+  11 项里有 8 项需要真实对话。刷新恢复、两个会话来回切不串、中断后半截回答可见、
+  工具卡片重建、旧会话发消息跳顶、停掉 db 后仍能流式输出——目前**只有自动化测试覆盖，
+  没有人在浏览器里看过**。
+- **api 容器仍未起来**。`docker compose build` 在 `corepack` 拉 pnpm 11.15.1 时 TLS 连接断开
+  （`Client network socket disconnected before secure TLS connection was established`），
+  是网络问题不是代码问题。
+- 浏览器 UI 观感未验收：hover 才出现的重命名/删除图标、`prompt` / `confirm` / `alert`
+  三个原生弹窗、active 高亮、切换会话的实际手感。
+
+### 实施中改掉的两处计划设计
+
+这两处是实测推翻计划原文的，**以实现为准，不要按计划正文改回去**：
+
+1. **seq 由数据库分配，`messageRepo.append()` 不再收 `seq` 参数，
+   `attachPersistence()` 不再收 `startSeq`**（`d8b957a`）。计划的做法是路由在请求开始时算出
+   起始序号交给订阅闭包自增，实测在并发下**静默丢整轮消息**——「点停止 → 立即重发」一键可达：
+   上一轮 `agent_end` 的落库发生在 HTTP 响应关闭之后，下一个请求读到的最大序号已过期，
+   撞唯一约束后失败被 catch 吞掉、计数器又不前进，本轮后面每条都撞同一个号。
+   现在 `append()` 在事务里先 `SELECT ... FOR UPDATE` 锁会话行，再
+   `INSERT ... (SELECT COALESCE(MAX(seq),0)+1 ...)`。**`FOR UPDATE` 不能省，也不能与 INSERT
+   合成一条语句**：READ COMMITTED 下每条语句各取一次快照，得先锁行、再让下一条语句重新取
+   快照算 `MAX(seq)`，才看得见并发事务刚提交的消息。
+   连带地 `loadHistory()` 不再返回 `nextSeq`、`service.appendMessage()` 不再收 `seq`。
+2. **`ChatView.submit()` 里没有计划草案的 `sessionStore.select(sessionId)`**。
+   流跑一半用户切走时，它会在 `send` 返回后把 `currentId` 拽回旧会话并重新加载历史。
+
+### 实施中新增的技术债与已知问题
+
+> 接手前先读完这一节。前三条是行为缺陷，后三条是基建缺口。
+
+1. **中断后重发会让 transcript 顺序错乱**（最需要注意的一条）。`seq` 反映「写入时刻」，
+   而对话的逻辑顺序是「轮次」；被打断的半截助手消息在 `agent_end` 才落库，必然排到下一轮
+   用户消息之后，回灌给模型的序列变成 `user, user, assistant, assistant`。
+   **今天不炸**——SiliconFlow 走 OpenAI 兼容接口，容忍连续同角色；但 **Anthropic Messages API
+   严格要求交替，换 provider 会直接 400**。`chat.test.ts` 里有一条 `【已知问题】` 用例把当前
+   （错误的）行为钉住，谁改动半截消息的落库时机都会立刻变红。
+   可行的修法是把落库从 `agent_end` 提前到 `message_end` 里那条 aborted 消息，
+   但要**先在真实模型上确认 pi 的 aborted 消息内容确实等于 partial**，faux 的行为不能直接外推。
+2. **`prepareSession` 只做了半降级**。`ensureSession` 成功但 `loadHistory` 失败时，会话行已经
+   提交（`updatedAt` 被顶起，新会话还会带标题建出来），而本轮 0 条消息落库——左栏会出现一个
+   排在最上面的空会话。有意推迟：要修得把两步包进一个事务，或失败时回滚刚建的行。
+3. **认证未做（HEU-7），而且现在就埋着现成的 IDOR**。四个会话路由无任何认证；
+   `rename` / `remove` / `loadHistory` **不按 `userId` 收窄**，只按 id 定位。
+   今天所有会话都挂在同一个默认用户下所以看不出来，认证一落地就是「换个 id 就能改删别人的会话」。
+   修点在 repository 的方法签名上，届时 repository / service / route 三层都要动。
+4. **PGlite 结构性地测不出并发问题**。它是单后端 WASM Postgres，会把并发语句排队串行——
+   删掉 `FOR UPDATE` 后全量 PGlite 测试照样全绿。所以有一份
+   `messages.integration.test.ts` 连真实 Postgres，`describe.skipIf(!process.env.DATABASE_URL)`
+   默认跳过。**CI 若不给 `DATABASE_URL`，这条防线就是关着的。**
+5. **前端零 lint 覆盖**，两头都断：根 `biome.json` 的 `files.includes` 有 `"!apps/web"`，
+   `pnpm run lint` 不看前端；`apps/web` 自己的 `lint` 脚本是 `eslint . --fix`，装的是 ESLint 9
+   却只有 ESLint 8 时代的 `.eslintrc.cjs`，直接报找不到配置。本轮新增的前端代码没经过任何静态检查。
+6. **组件层（`.vue`）无自动化测试**。原因是根 `vitest.config.ts` 没挂 `@vitejs/plugin-vue`
+   （插件已装在 `apps/web`），**不是缺 `@vue/test-utils`**。`.js` 的 composable / store / api
+   已有测试并跟着 `pnpm test` 跑。挂插件属基建变更，单独任务。
+
+另有一条既存小问题，本轮未改：`stores/session.js` 的 `list.value = list.value ?? []` 是恒等式。
 
 ---
 
@@ -2368,10 +2436,19 @@ git commit -m "feat(web): 左栏接真实会话数据"
 
 ## Task 12: 全量验收与文档
 
+> **Step 4~6 的文档草案已作废，不要照抄。** 它写在实施之前，与最终交付出入很大：
+> 把「`agent_end` 时读 `state.streamingMessage`」「PGlite 毫秒级启动」当成事实，
+> 也没有 seq 由数据库分配、`FOR UPDATE`、真实 Postgres 集成测试这些后来才出现的东西。
+> 实际写进文档的是修正后的版本，见上方「完成情况」与 `docs/backend-plan.md` §3。
+>
+> 另外 **Step 6 要改的 `CLAUDE.md` 在本仓库不存在**（从未存在过）。它描述的
+> 「架构一节的 package 列表 / 依赖方向 / 对话链路请求体」三处内容实际都在 `README.md` 里，
+> 所以改的是 `README.md`。
+
 **Files:**
 - Modify: `docs/backend-plan.md`
 - Modify: `docs/frontend-plan.md`
-- Modify: `CLAUDE.md`
+- Modify: `README.md`（草案写的 `CLAUDE.md` 不存在）
 
 - [ ] **Step 1: 全量构建与测试**
 

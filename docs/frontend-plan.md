@@ -106,10 +106,71 @@ src/
 本次仍是 JS，未做 TS 化；会话列表是静态骨架，等 HEU-10；`@` 引用与模型切换未做。
 `/graph` 与 `/agent/:agent_id` 路由已摘除，文件保留待死代码清理时一并删除。
 
+### 已完成：会话列表接真实数据（2026-08-02）
+
+`apis/session_api.js` + `stores/session.js` 打通左栏：列表 / 新建 / 切换 / 重命名 / 删除，
+刷新页面后能恢复历史对话。后端契约见 [backend-plan.md](backend-plan.md) 的
+「M1 数据层 + M2 会话持久化」一节。
+
+**「新建会话」是纯前端操作**：点「新对话」只生成一个 `crypto.randomUUID()` 并清空当前对话，
+不调任何接口。这个会话要等用户发出第一条消息、后端 upsert 建出行之后才会出现在左栏。
+所以新建后立刻刷新页面，那个空会话会消失——这是预期行为，与 ChatGPT 一致，
+避免「开了新对话又没说话就切走」攒下一堆空会话。配套地，`GET /api/sessions/:id/messages`
+对后端还不存在的会话返回 200 + 空数组而不是 404，「新建」和「切换」才能共用同一条加载路径。
+
+`composables/useAgentStream.js` 这次改了（上一轮它是「一行不改」的红线）：新增
+`loadHistory(history)` 入口、`send` 接受 `sessionId` 并透传。**AgentEvent 的归约逻辑
+（`apply`）一行没动**，只加了加载入口。
+
+三处不显眼、但删掉就会出 bug 的地方，改动前先看代码里的注释：
+
+1. **`loadHistory()` 一进来先 `abort()`**。用户常在等回答时就切走会话，不掐掉上一轮的话，
+   旧流后续到达的消息、工具调用与错误文案会继续写进新会话的界面，`running` 也会一直卡在
+   `true` 让输入框禁用。
+2. **`ChatView` 里有一个 `sendSeq` 计数器**。历史 GET 慢时用户没等它回来就发了消息，
+   晚到的 `loadHistory()` 会先 `abort()` 掐死这条刚起的流、再把 `messages` 清空——
+   用户的消息凭空消失。这里不能用 `running` 判断：切会话时旧流也在 running，
+   分不出「别的会话的旧流」和「本会话的新流」，只有 send 的次数能。
+   `loadSession()` 里另有一道 `sessionStore.currentId !== id` 检查，防的是连点两个会话时
+   响应乱序到达、晚到的旧响应把当前会话的内容盖掉。
+3. **`submit()` 里没有 `sessionStore.select(sessionId)`**。计划草案里有这一行，实测必须删掉：
+   流跑一半时用户切到别的会话，它会在 `send` 返回后把 `currentId` 拽回旧会话并重新加载历史。
+
+左栏的「加载中…」只在列表还是空的时候显示。`v-for` 是独立的兄弟节点、不在那条 v-if 链里，
+光判 `loading` 的话，每发一条消息 `submit()` 都会 `refresh()` 一次，这行字就会插到完整列表
+上方闪一个网络往返。
+
+重命名 / 删除失败时用 `window.alert` 出声——不出声的话 Vue 会把 promise 的异常接进
+`errorHandler`，界面上什么都不会发生，用户看到的只是「标题没变」，分不清是自己点错了还是
+请求挂了。用原生弹窗而不是引一套 toast，是为了跟同一处的 `prompt` / `confirm` 保持一致。
+
+断线重连与 `persisted` 幂等去重仍未做，等后端的 `persisted` 事件。
+
+**这一轮的浏览器验收没做**：后端仓库没有 `SILICONFLOW_API_KEY`，发不出真实对话，
+所以刷新恢复、两个会话来回切、中断后半截回答、hover 出图标、三个原生弹窗、active 高亮
+都只有自动化测试和构建覆盖，**没有人在浏览器里看过**。
+
+### 已知问题：前端的两个基建缺口
+
+1. **前端目前零 lint 覆盖**，而且两头都断：根 `biome.json` 的 `files.includes` 里有
+   `"!apps/web"`，所以 `pnpm run lint` 根本不看前端；而 `apps/web` 自己的 `lint` 脚本是
+   `eslint . --fix`，装的是 ESLint 9 却只有 ESLint 8 时代的 `.eslintrc.cjs`，直接报找不到配置。
+   两条路都跑不通，意味着本轮新增的前端代码没有经过任何静态检查。
+   修法见 §4「修 lint」——迁到 `eslint.config.js`，或者直接把 `apps/web` 纳入 Biome。
+2. **组件层（`.vue`）没有自动化测试**。原因是根 `vitest.config.ts` 没挂 `@vitejs/plugin-vue`
+   （该插件已经装在 `apps/web` 里），vitest 解析不了 `.vue` 文件；**不是「缺 `@vue/test-utils`」**。
+   composable / store / api 这些 `.js` 已经有测试并跟着 `pnpm test` 一起跑（本轮新增
+   `apis/chat_api` · `composables/useAgentStream` · `stores/session` 三个测试文件）。
+   挂插件属于基建变更，单独一个任务做。
+
+另外 `stores/session.js` 的 `refresh()` 里那句 `list.value = list.value ?? []` 是恒等式
+（`list` 初始化为 `[]`，永远不会是 nullish），属既存代码，本轮未改。
+
 ### 迁入基线的现状
 
 - **大部分接口不可用**：基线调用的是 v0.4 的 Python API，而 agent-server 目前只提供
-  `GET /api/system/health` 与 `POST /api/chat`。登录、知识库、图谱、Dashboard 都会失败。
+  `GET /api/system/health` · `POST /api/chat` · `/api/sessions` 四个会话接口。
+  登录、知识库、图谱、Dashboard 都会失败。
 - **旧对话代码已无路由引用**但文件仍在：`AgentView` · `AgentSingleView` ·
   `AgentChatComponent` · `AgentMessageComponent` · `AgentInputArea` · `ChatSidebarComponent` ·
   `AgentConfigSidebar` · `ToolCallingResult/*`，合计约 8000 行。
@@ -118,7 +179,7 @@ src/
 
 ## 3. 与后端的契约
 
-`POST /api/chat`，请求体 `{ message, systemPrompt? }`，响应是 SSE：
+`POST /api/chat`，请求体 `{ message, sessionId, systemPrompt? }`，响应是 SSE：
 
 ```
 event: agent   data: <pi 的 AgentEvent JSON，原样透传>
@@ -126,6 +187,13 @@ event: error   data: { message }
 ```
 
 需要 POST 与自定义请求头，所以用 `fetch` + `ReadableStream` 读流，不用 `EventSource`。
+
+`sessionId` 是**必填**的 UUID，由前端 `crypto.randomUUID()` 生成，后端 upsert 建行，
+所以 SSE 不需要新增事件类型回传新会话 id。缺它或格式不对，后端返回 400 且不碰数据库。
+
+会话 CRUD 在 `/api/sessions`：`GET /`（列表，按 `updatedAt` 倒序）·
+`GET /:id/messages`（历史，**不存在的会话返回 200 + 空数组**）· `PATCH /:id`（`{ title }`，
+不存在返回 404）· `DELETE /:id`（不存在返回 404）。
 
 ### 消费 AgentEvent 的三条硬约束（已核对 pi 的 `types.d.ts`）
 
@@ -152,8 +220,8 @@ event: error   data: { message }
 ### 依赖后端
 | 前端能力 | 依赖后端 issue |
 | --- | --- |
-| 会话列表、多轮上下文、刷新恢复 | HEU-10 消息落库 |
-| 断线重连 + `persisted.seq` 幂等去重 | HEU-10 的 `persisted` 事件 |
+| ~~会话列表、多轮上下文、刷新恢复~~ | HEU-10 消息落库 —— **已解锁并交付**，见 §2 |
+| 断线重连 + `persisted.seq` 幂等去重 | HEU-10 的 `persisted` 事件（未做） |
 | 审批弹窗 `ApprovalDialog` | HEU-14 工具 preflight HITL |
 | Agent 选择与配置表单 | HEU-12 agent 注册表（TypeBox schema 生成表单） |
 | 引用角标与 refs 面板（HEU-26） | HEU-21 `kb_search` 真实检索 |
@@ -164,7 +232,8 @@ event: error   data: { message }
 ### later
 - **TS 化**：加 `typescript` + `vue-tsc`，`import type` 自 `@earendil-works/pi-agent-core`
   拿到端到端类型（pi 包只作为 devDependency，仅取类型、零运行时依赖）
-- **三栏布局**：会话列表（左）+ 工作区（右），等后端持久化与 kb 检索就绪
+- ~~**三栏布局**：会话列表（左）+ 工作区（右）~~ —— 已交付（shell 见 §2 2026-07-31，
+  会话列表见 §2 2026-08-02）；剩下的是右栏里等 kb 检索的引用面板，即下方 HEU-26
 - **pnpm 版本对齐**：当前 10.11.0，agent-server 是 11.15.1
 
 ## 5. 组件处置清单
