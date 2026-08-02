@@ -66,6 +66,11 @@ describe("GET /api/sessions", () => {
 
   it("返回会话的 id 与标题，最近更新的在前", async () => {
     await service.ensureSession(SESSION_ID, "先建的会话");
+    // sleep 是给 PGlite 用的：它的 now() 只有毫秒分辨率，两条 insert 挤在同一毫秒里
+    // 会拿到完全相同的 updatedAt，此时 ORDER BY updated_at DESC 的顺序不定。
+    // 真实 Postgres 的 now() 是微秒精度，不需要这个等待。
+    // （同 repositories/sessions.test.ts 里「列表按 updatedAt 倒序」的处理）
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await service.ensureSession(OTHER_SESSION_ID, "后建的会话");
 
     const response = await app.request("/api/sessions");
@@ -172,7 +177,9 @@ describe("PATCH /api/sessions/:id", () => {
     const response = await patch(SESSION_ID, body);
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: { message: "title 不能为空" } });
+    await expect(response.json()).resolves.toEqual({
+      error: { message: "title 必须是非空字符串" },
+    });
   });
 
   it("超长 title 返回 400，不让它落库", async () => {

@@ -42,7 +42,9 @@ function requireTitle(body: unknown): string {
   const raw = (body as { title?: unknown } | null)?.title;
   const title = typeof raw === "string" ? raw.replaceAll(NUL, "").trim() : "";
   if (!title) {
-    throw new HTTPException(400, { message: "title 不能为空" });
+    // 文案要同时覆盖「类型不对」和「清完是空」两种情况：
+    // 发了 { title: 123 } 却被告知「不能为空」，客户端会往错的方向排查
+    throw new HTTPException(400, { message: "title 必须是非空字符串" });
   }
   if (title.length > TITLE_LENGTH_LIMIT) {
     throw new HTTPException(400, { message: `title 不能超过 ${TITLE_LENGTH_LIMIT} 字` });
