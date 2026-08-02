@@ -1,15 +1,20 @@
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_USER_ID, messages, sessions, users } from "./schema.ts";
 import { createTestDb, type TestDb } from "./testing.ts";
 
 let db: TestDb;
+let reset: () => Promise<void>;
 let close: () => Promise<void>;
 
-beforeEach(async () => {
-  ({ db, close } = await createTestDb());
-  return () => close();
-}, 30_000);
+// 建库慢，整个文件复用一个实例，用例之间靠清表隔离
+beforeAll(async () => {
+  ({ db, reset, close } = await createTestDb());
+});
+
+beforeEach(() => reset());
+
+afterAll(() => close());
 
 /** 造一个会话，返回它的 id */
 async function seedSession(id = "11111111-1111-1111-1111-111111111111") {

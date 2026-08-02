@@ -1,20 +1,27 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_USER_ID, sessions } from "../schema.ts";
 import { createTestDb, type TestDb } from "../testing.ts";
 import { createMessageRepository } from "./messages.ts";
 
 let db: TestDb;
 let repo: ReturnType<typeof createMessageRepository>;
+let reset: () => Promise<void>;
+let close: () => Promise<void>;
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 
-beforeEach(async () => {
-  const created = await createTestDb();
-  db = created.db;
+// 建库慢，整个文件复用一个实例，用例之间靠清表隔离
+beforeAll(async () => {
+  ({ db, reset, close } = await createTestDb());
   repo = createMessageRepository(db);
-  await db.insert(sessions).values({ id: SESSION_ID, userId: DEFAULT_USER_ID, title: "测试会话" });
-  return () => created.close();
 });
+
+beforeEach(async () => {
+  await reset();
+  await db.insert(sessions).values({ id: SESSION_ID, userId: DEFAULT_USER_ID, title: "测试会话" });
+});
+
+afterAll(() => close());
 
 describe("messageRepository", () => {
   it("append 后能按 seq 升序读回", async () => {

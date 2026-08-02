@@ -1,20 +1,25 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { createAgent } from "@petrel/agent-core";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { attachPersistence, createSessionService } from "./session.ts";
 
 let db: TestDb;
 let service: ReturnType<typeof createSessionService>;
+let reset: () => Promise<void>;
+let close: () => Promise<void>;
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 
-beforeEach(async () => {
-  const created = await createTestDb();
-  db = created.db;
+// 建库慢，整个文件复用一个实例，用例之间靠清表隔离
+beforeAll(async () => {
+  ({ db, reset, close } = await createTestDb());
   service = createSessionService(db);
-  return () => created.close();
-}, 30_000);
+});
+
+beforeEach(() => reset());
+
+afterAll(() => close());
 
 describe("buildTitle", () => {
   it("短消息原样作标题", () => {

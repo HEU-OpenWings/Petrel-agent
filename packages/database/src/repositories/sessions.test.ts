@@ -1,20 +1,25 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_USER_ID } from "../schema.ts";
 import { createTestDb, type TestDb } from "../testing.ts";
 import { createSessionRepository } from "./sessions.ts";
 
 let db: TestDb;
 let repo: ReturnType<typeof createSessionRepository>;
+let reset: () => Promise<void>;
+let close: () => Promise<void>;
 
 const ID_A = "11111111-1111-1111-1111-111111111111";
 const ID_B = "22222222-2222-2222-2222-222222222222";
 
-beforeEach(async () => {
-  const created = await createTestDb();
-  db = created.db;
+// 建库慢，整个文件复用一个实例，用例之间靠清表隔离
+beforeAll(async () => {
+  ({ db, reset, close } = await createTestDb());
   repo = createSessionRepository(db);
-  return () => created.close();
 });
+
+beforeEach(() => reset());
+
+afterAll(() => close());
 
 describe("sessionRepository", () => {
   it("upsert 建出新会话", async () => {
@@ -40,7 +45,10 @@ describe("sessionRepository", () => {
   it("列表按 updatedAt 倒序", async () => {
     await repo.upsert({ id: ID_A, userId: DEFAULT_USER_ID, title: "旧会话" });
     await repo.upsert({ id: ID_B, userId: DEFAULT_USER_ID, title: "新会话" });
-    // 显式 touch 一次，避免两条记录的 defaultNow() 落在同一时刻
+    // 显式 touch 一次，避免两条记录的 defaultNow() 落在同一时刻。
+    // 但 touch 写的是 JS 的毫秒时间戳，insert 用的是 Postgres 微秒级 now()，
+    // 两句挤在同一毫秒里时 touch 反而更早，所以先等时钟跨过一毫秒
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await repo.touch(ID_A);
 
     const list = await repo.listByUser(DEFAULT_USER_ID);
@@ -76,6 +84,7 @@ describe("sessionRepository", () => {
     await repo.touch(ID_A);
     const after = (await repo.findById(ID_A))?.updatedAt;
 
-    expect(after!.getTime()).toBeGreaterThanOrEqual(before!.getTime());
+    expect(before).toBeInstanceOf(Date);
+    expect(after?.getTime()).toBeGreaterThanOrEqual(before?.getTime() ?? 0);
   });
 });
