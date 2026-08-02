@@ -12,7 +12,7 @@
 
 ---
 
-## 完成情况（截至 2026-08-01，7/12）
+## 完成情况（截至 2026-08-02，7/12）
 
 | # | 任务 | 状态 | commit |
 | --- | --- | --- | --- |
@@ -29,7 +29,8 @@
 | 11 | 左栏接真实数据与 ChatView 整合 | ❌ 未做 | — |
 | 12 | 全量验收与文档 | ❌ 未做 | — |
 
-计划外还有一个 `7bb2f73`「修复 lint 与测试稳定性」。
+计划外的 commit：`7bb2f73`「修复 lint 与测试稳定性」，以及 2026-08-02 的三笔技术债清理
+（见下方「已还的技术债」）。
 
 **当前链路尚未打通**：数据层能存，但没有接口把它暴露出去（Task 7 缺），`/api/chat`
 也还没接上持久化（Task 8 缺），前端 store 写好了却没有页面在用（Task 10 · 11 缺）。
@@ -44,33 +45,66 @@
 `undefined`**，照计划写永远拿不到。
 
 实际实现改为：用订阅闭包里的 `partial` 变量在 `message_start` / `message_update` 时
-持续记录，`agent_end` 时用它。另外还发现中断时 `message_end` 会发出一条空内容、
-`stopReason: "aborted"` 的助手消息，直接落库会写进一条空消息，所以要跳过它。
+持续记录，`agent_end` 时用它。另外还发现中断时 `message_end` 会发出一条
+`stopReason: "aborted"` 的助手消息，它与 `partial` 是同一条消息的两个副本，
+两者都落库会写重复，所以要跳过它。
+
+> 2026-08-02 更正：这里原先写的是「一条**空内容**的助手消息」，实测不成立——
+> faux 的 `createAbortedMessage(partial)` 返回 `{...partial, stopReason: "aborted"}`，
+> 内容就是中断瞬间已出的那部分，不为空。要跳过它的理由是**重复**而不是**空**。
+> 依赖「空」这个前提写断言会写出永远通过的假测试（当时确实写了一条，已换掉）。
 
 这段修正是对的，以实现为准，不要按计划原文改回去。
 
-### 三个已知问题
+### 已还的技术债（2026-08-02，Task 7 之前）
 
-1. **测试 flaky（需要修）**。`pnpm test` 全量跑时有 2 个用例因 `beforeEach` 超时失败，
-   单独跑 `pnpm vitest run packages/database apps/api` 则 39 个全通过。
-   直接原因是 `7bb2f73` 只给 `schema.test.ts` 补了 30 秒超时，**漏了
-   `repositories/sessions.test.ts` 与 `repositories/messages.test.ts`**。
-   根本原因是本计划里「PGlite 毫秒级启动」的假设不成立——实测每个实例要数秒，
-   全量并行时竞争 CPU 就超时。**治本做法是每个测试文件共用一个实例**
-   （`beforeAll` 建库、`beforeEach` truncate 各表），而不是继续加大超时。
+上一版记的「三个已知问题」全部处理完，三笔 commit：
 
-2. **最微妙的逻辑没有测试覆盖**。`attachPersistence` 只有 3 个用例，
-   而上面那段中断路径（`partial` 闭包、跳过 aborted 消息）——正是计划写错、
-   靠实测才修对的部分——**一个测试都没有**。补 Task 7 之前应该先补这个测试。
+| commit | 内容 |
+| --- | --- |
+| `17bc9ae` | PGlite 实例按测试文件复用，修掉超时 flaky；顺带清 2 个 `!` lint warning |
+| `f98d157` | 补 `attachPersistence` 中断路径的 3 个用例 |
+| `20dd5fa` | `updatedAt` 统一走 Postgres 时钟源；修正 4 处写错的注释 |
 
-3. **lint 有 2 个 warning**（`!` 非空断言，位于 `repositories/sessions.test.ts`），
-   来自本计划给出的测试代码，非阻塞。
+**1. 测试 flaky —— 治本做法生效，但需要配一个诚实的超时预算。**
+`createTestDb()` 返回值加了 `reset()`（`TRUNCATE ... RESTART IDENTITY CASCADE` + 重播默认用户），
+四个测试文件改成 `beforeAll` 建库 / `beforeEach(reset)` / `afterAll(close)`。
+全量测试 17.6s → 4.2s，慢 hook 从约 22 个降到 4 个。
+
+但**光删掉 `30_000` 补丁是不够的**：PGlite 的 WASM 实例化本身就是 ~1s 量级，
+且在 CPU 争用下超线性劣化（实测 64 个 spinner 打满 32 核时达 12.7s / 14.3s），
+落回 vitest 默认的 10s `hookTimeout` 后仍会 `Hook timed out`，而且现在是整个**文件**挂掉。
+所以要在 `vitest.config.ts` 里配 `hookTimeout: 30_000`——这与之前那个补丁性质不同：
+那时是用超时掩盖「每用例一个实例」的设计缺陷，现在是给一个已知昂贵的一次性 hook
+一个有依据的预算。
+
+**2. 中断路径已覆盖。** 3 个用例跑真实 agent loop（`createAgent` + `fauxProvider`，不 mock 内部）：
+半截消息落库且 `interrupted` 为 true / aborted 那条不被额外写入 / 正常完成的一轮不被重复补写。
+卡在流式中间的做法：`fauxProvider({ tokenSize: { min: 1, max: 1 } })` 把回答切成多块，
+订阅到第一块非空 `message_update` 时 `abort()`。**分块是 `tokenSize` 干的，不是
+`tokensPerSecond`**——后者只负责把块在时间上拉开、留时间余量。
+
+**3. lint warning 已清零。**
+
+### 顺带发现并修掉的一个真 bug
+
+`repositories/sessions.ts` 的 `upsert` / `rename` / `touch` 写的是 JS 的 `new Date()`（毫秒），
+而 INSERT 走 schema 的 `defaultNow()`（真实 Postgres 是微秒）。同一毫秒内 insert + touch
+会让刚 touch 过的会话**排到后面**——正好打在 Task 11 验收项第 9 条「在旧会话里发消息后
+它跳到顶部」上。三处已统一成 `sql\`now()\``。
+
+PGlite 的 `now()` 只有毫秒分辨率，所以这个 bug 在测试环境里表现为时间戳相等（tie）而非翻转，
+也因此**没法用行为测试守住**——守卫改成断言生成的 SQL 里出现 `now()` 而不是参数占位符。
+`sessions.test.ts` 里「列表按 updatedAt 倒序」保留的 `await setTimeout(2)` 就是给 PGlite 的
+tie 用的，生产不需要。
 
 ### 已验证
 
-- `pnpm run typecheck` 全部包通过
-- `pnpm vitest run packages/database apps/api` 39 个用例通过
-- 容器未验证（Task 4 Step 8 的 `docker compose up -d` 与建表检查未留下记录）
+- `pnpm test` 空载连跑 5 次全绿，12 files / 88 tests，约 4.2s
+- `pnpm run typecheck` 6 个包全通过；`pnpm run lint` 无 error 无 warning
+- 容器：`docker compose up -d db` 起了 `petrel-db-dev`（pgvector/pg17），
+  `drizzle-kit migrate` 建出 `users` / `sessions` / `messages` 三张表。
+  **api 容器仍未验证**（Task 4 Step 8 的 `docker logs petrel-api-dev` 检查未留下记录）
 
 ---
 
