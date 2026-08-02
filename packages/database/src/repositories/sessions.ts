@@ -19,6 +19,11 @@ export interface SessionSummary {
  * INSERT 走 schema 的 defaultNow()（即 Postgres now()，微秒精度），
  * 而 new Date() 只有毫秒精度；两者混用时，同一毫秒内被 touch 过的会话
  * 时间戳可能反而小于刚插入的会话，导致左栏「最近更新在最上面」的排序翻转。
+ *
+ * 注意 now() 是 transaction_timestamp()，同一个事务里恒定。目前全仓没有
+ * db.transaction()，每条语句各自成事务，所以互不影响；将来若把一批 touch()
+ * 包进同一个事务，它们会拿到并列的时间戳。（不要为此换成 clock_timestamp()，
+ * 那会让写入与 defaultNow() 不再是同一个时钟源，正是这里要避免的。）
  */
 const NOW = sql`now()`;
 

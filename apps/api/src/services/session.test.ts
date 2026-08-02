@@ -19,7 +19,8 @@ beforeAll(async () => {
 
 beforeEach(() => reset());
 
-afterAll(() => close());
+// beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
+afterAll(() => close?.());
 
 describe("buildTitle", () => {
   it("短消息原样作标题", () => {
@@ -128,15 +129,22 @@ function fauxAgent(fauxOptions: Parameters<typeof fauxProvider>[0] = { tokensPer
   return { faux, agent };
 }
 
-/** faux 每块吐 4 个字符，配上低 tokensPerSecond 就能让一段回答分成多块流出来 */
+/**
+ * 分块由 tokenSize 决定：faux 每块吐 tokenSize * 4 个字符，
+ * 所以 min/max 都取 1 就是每块 4 字，一段 40 字的回答会切成 10 块。
+ * tokensPerSecond 不影响怎么切，只决定块与块之间隔多久；取 20 是为了留时间余量
+ * （整段约 450ms，够 abort 从容落在中途），不是中断能成立的前提。
+ */
 const CHUNKED = { tokensPerSecond: 20, tokenSize: { min: 1, max: 1 } };
 /** 一次中断只保留前几块，所以回答要够长，才能断言「存下来的比完整回答短」 */
 const LONG_ANSWER = "一".repeat(40);
 
 /**
  * 造一个必定在流式中途被打断的 agent：收到第一块非空内容就 abort。
- * 出字快时整段会在一次 message_update 里到齐，abort 就只能打在流结束之后，
- * 所以这里必须用分块出字，中断点才稳定落在 message_end 之前。
+ *
+ * 之所以稳定：faux 每吐一块都会先 await 再检查 signal.aborted，一旦发现已中断
+ * 就立刻收尾，所以 abort() 之后最多再走到下一个块边界。只要回答被切成多块
+ * （见 CHUNKED），中断点就必然落在 message_end 之前。
  */
 function interruptingAgent() {
   const { faux, agent } = fauxAgent(CHUNKED);
@@ -248,8 +256,9 @@ describe("attachPersistence", () => {
   it("正常完成的一轮不会被 agent_end 重复补写", async () => {
     await service.ensureSession(SESSION_ID, "你好");
 
-    // 同样分块出字，确保 partial 确实被 message_update 记下过，
-    // 但这一轮不中断，agent_end 就不该拿它再补一条
+    // 走同一套流式配置，确保 partial 确实被 message_update 记下过
+    //（回答只有 4 字，正好一块，但 delta 照样会发出来），
+    // 而这一轮不中断，agent_end 就不该拿它再补一条
     const { faux, agent } = fauxAgent(CHUNKED);
     faux.setResponses([fauxAssistantMessage([fauxText("一二三四")])]);
     attachPersistence(service, agent, SESSION_ID, 1);

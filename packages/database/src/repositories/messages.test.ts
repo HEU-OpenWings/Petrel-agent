@@ -21,7 +21,8 @@ beforeEach(async () => {
   await db.insert(sessions).values({ id: SESSION_ID, userId: DEFAULT_USER_ID, title: "测试会话" });
 });
 
-afterAll(() => close());
+// beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
+afterAll(() => close?.());
 
 describe("messageRepository", () => {
   it("append 后能按 seq 升序读回", async () => {

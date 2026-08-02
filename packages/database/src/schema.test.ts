@@ -14,7 +14,8 @@ beforeAll(async () => {
 
 beforeEach(() => reset());
 
-afterAll(() => close());
+// beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
+afterAll(() => close?.());
 
 /** 造一个会话，返回它的 id */
 async function seedSession(id = "11111111-1111-1111-1111-111111111111") {
