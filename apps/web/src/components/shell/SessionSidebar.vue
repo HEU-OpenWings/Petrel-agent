@@ -8,7 +8,12 @@
     <div class="sessions">
       <div class="group-title">会话</div>
 
-      <div v-if="sessionStore.loading" class="empty">加载中…</div>
+      <!--
+        「加载中…」只在列表还是空的时候显示：下面的 v-for 是独立兄弟节点，不在这条
+        v-if 链里，光判 loading 的话，每发一条消息 submit() 都会 refresh() 一次，
+        这行字就会插到完整列表上方闪一个网络往返
+      -->
+      <div v-if="sessionStore.loading && sessionStore.list.length === 0" class="empty">加载中…</div>
       <div v-else-if="sessionStore.list.length === 0" class="empty">暂无历史会话</div>
 
       <div
@@ -86,7 +91,14 @@ function onNewChat() {
 async function onRename(item) {
   const title = window.prompt('重命名会话', item.title)?.trim()
   if (!title || title === item.title) return
-  await sessionStore.rename(item.id, title)
+  try {
+    await sessionStore.rename(item.id, title)
+  } catch {
+    // 失败必须出声：Vue 会把这里抛的 promise 接进 errorHandler，界面上什么都不会发生，
+    // 用户看到的只是「标题没变」，分不清是自己点错了还是请求挂了。
+    // 用 alert 而不是引一套 toast，跟上面的 prompt / 下面的 confirm 保持一致
+    window.alert('重命名失败，请重试')
+  }
 }
 
 async function onRemove(item) {
@@ -94,7 +106,12 @@ async function onRemove(item) {
   // 要在 remove 之前判断：remove() 删掉的正是当前会话时会把 currentId 置空，
   // 删完再比就永远不相等，删掉当前会话后界面会停在一个已经不存在的对话上
   const wasCurrent = item.id === sessionStore.currentId
-  await sessionStore.remove(item.id)
+  try {
+    await sessionStore.remove(item.id)
+  } catch {
+    window.alert('删除失败，请重试')
+    return
+  }
   if (wasCurrent) emit('new-chat')
 }
 </script>

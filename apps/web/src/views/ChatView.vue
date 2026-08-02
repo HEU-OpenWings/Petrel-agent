@@ -96,7 +96,17 @@ onMounted(() => {
   else void loadSession(sessionStore.currentId)
 })
 
+/**
+ * submit() 的自增计数。守的是这个场景：历史 GET 慢，用户没等它回来就发了消息，
+ * 等历史到达时 loadHistory() 会先 abort() 掐死这条刚起的流、再把 messages 清空
+ * ——用户的消息凭空消失。这里不能用 running 判断：切会话时旧流也在 running，
+ * 分不出「别的会话的旧流」和「本会话的新流」，只有 send 的次数能。
+ * 别因为看不出它在防什么就删掉。
+ */
+let sendSeq = 0
+
 async function loadSession(id) {
+  const seenSend = sendSeq
   let history = []
   try {
     const data = await fetchMessages(id)
@@ -104,6 +114,8 @@ async function loadSession(id) {
   } catch {
     // 历史拉不到就当空会话继续，不阻塞用户提问
   }
+  // 加载期间用户发了新消息，界面已经属于新一轮对话，这份历史作废
+  if (sendSeq !== seenSend) return
   // 连着点两个会话时响应可能乱序到达，晚到的旧响应会把当前会话的内容盖掉
   if (sessionStore.currentId !== id) return
   loadHistory(history)
@@ -216,6 +228,8 @@ async function submit() {
   const sessionId = sessionStore.currentId ?? sessionStore.startNew()
 
   draft.value = ''
+  // 必须在 send 之前自增：在飞的 loadSession 靠它判断「我拉的历史已经过期了」
+  sendSeq += 1
   await send(text, { sessionId })
 
   // 首条消息会让后端 upsert 出这个会话，刷新列表才能把它显示出来；
