@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type * as schema from "../schema.ts";
@@ -43,45 +43,66 @@ export function createSessionRepository(db: Database) {
         .orderBy(desc(sessions.updatedAt));
     },
 
-    async findById(id: string) {
-      const rows = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
+    /** 一律按 (id, userId) 收窄：只按 id 定位等于谁拿到 id 谁就能读 */
+    async findById(id: string, userId: string) {
+      const rows = await db
+        .select()
+        .from(sessions)
+        .where(and(eq(sessions.id, id), eq(sessions.userId, userId)))
+        .limit(1);
       return rows[0];
     },
 
     /**
      * 已存在时只更新 updatedAt，不碰 title——
      * 否则用户重命名过的会话会在下一条消息时被打回首句截断。
+     *
+     * setWhere 不能省：冲突目标是主键 id，而 id 由前端生成并随消息传上来。
+     * 不加这个条件，拿到别人的会话 id 就能让自己的消息落进对方的会话——
+     * 比改删别人的会话更严重，是往别人的会话里注入内容。
+     *
+     * @returns false 表示该 id 已存在且不属于这个用户，调用方应当拒绝本次请求
      */
-    async upsert(input: { id: string; userId: string; title: string }): Promise<void> {
-      await db
+    async upsert(input: { id: string; userId: string; title: string }): Promise<boolean> {
+      const rows = await db
         .insert(sessions)
         .values(input)
         .onConflictDoUpdate({
           target: sessions.id,
           set: { updatedAt: NOW },
-        });
+          setWhere: eq(sessions.userId, input.userId),
+        })
+        .returning();
+      // 冲突且 setWhere 不满足时 DO UPDATE 不执行，returning 拿到空数组
+      return rows.length > 0;
     },
 
     // 注意：这里用 0 参 returning() 而不是 returning({ id })。
     // TS 在「NodePgDatabase | PgliteDatabase」联合类型上调用带泛型的 returning(fields)
     // 会错误解析到 0 参重载而报 TS2554（select(fields) 无此问题）；
     // 返回全列与返回 { id } 对 length > 0 的判断等价，所以取前者。
-    async rename(id: string, title: string): Promise<boolean> {
+    async rename(id: string, userId: string, title: string): Promise<boolean> {
       const updated = await db
         .update(sessions)
         .set({ title, updatedAt: NOW })
-        .where(eq(sessions.id, id))
+        .where(and(eq(sessions.id, id), eq(sessions.userId, userId)))
         .returning();
       return updated.length > 0;
     },
 
-    async remove(id: string): Promise<boolean> {
-      const deleted = await db.delete(sessions).where(eq(sessions.id, id)).returning();
+    async remove(id: string, userId: string): Promise<boolean> {
+      const deleted = await db
+        .delete(sessions)
+        .where(and(eq(sessions.id, id), eq(sessions.userId, userId)))
+        .returning();
       return deleted.length > 0;
     },
 
-    async touch(id: string): Promise<void> {
-      await db.update(sessions).set({ updatedAt: NOW }).where(eq(sessions.id, id));
+    async touch(id: string, userId: string): Promise<void> {
+      await db
+        .update(sessions)
+        .set({ updatedAt: NOW })
+        .where(and(eq(sessions.id, id), eq(sessions.userId, userId)));
     },
   };
 }

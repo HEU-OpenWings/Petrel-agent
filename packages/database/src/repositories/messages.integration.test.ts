@@ -40,7 +40,7 @@ describe.skipIf(!process.env.DATABASE_URL)("messageRepository（真实 Postgres�
 
   // 跑完把库恢复原状：删会话，messages 靠外键级联一起走
   afterAll(async () => {
-    await createSessionRepository(getDb()).remove(SESSION_ID);
+    await createSessionRepository(getDb()).remove(SESSION_ID, DEFAULT_USER_ID);
     await closeDb();
   });
 
