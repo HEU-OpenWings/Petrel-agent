@@ -76,6 +76,25 @@ describe('request', () => {
     expect(userStore.user).toBeNull()
   })
 
+  it('skipUnauthorizedHandler 时 401 仍登出但不通知 handler', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ detail: '未登录' }, 401))
+      .mockResolvedValue(jsonResponse({ ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const userStore = useUserStore()
+    userStore.user = { id: '1', email: 'a@x.io', role: 'user' }
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+
+    await expect(get('/api/auth/me', { skipUnauthorizedHandler: true })).rejects.toThrow(
+      '登录已失效，请重新登录'
+    )
+    // 启动时恢复登录态失败不该抢在守卫前面跳转，否则 ?redirect= 会被覆盖成 START_LOCATION
+    expect(handler).not.toHaveBeenCalled()
+    expect(userStore.user).toBeNull()
+  })
+
   it('非 2xx 时抛出后端给的错误文案', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ detail: '知识库不存在' }, 404)))
 

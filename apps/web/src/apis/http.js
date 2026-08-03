@@ -14,6 +14,28 @@ export function setUnauthorizedHandler(handler) {
   unauthorizedHandler = handler
 }
 
+/**
+ * 401 的完整处理：登出 + 通知 handler + 给出错误。
+ *
+ * 三步是一个契约，只在这里定义一次。不走 request() 的链路（chat_api 的 SSE）
+ * 也调它，否则文案与副作用会各写一份、各自演进而不被测试发现。
+ * 返回 Error 而不是抛出，是为了让调用方的 throw 显式可见。
+ *
+ * skipUnauthorizedHandler 只给 /api/auth/me 用：启动时恢复登录态失败是「本来就
+ * 没登录」，不是「登录失效」，这时不该通知 handler（它注册的跳转会把守卫算好的
+ * ?redirect= 覆盖掉），去不去登录页交给路由守卫。
+ */
+export function handleUnauthorized({ skipUnauthorizedHandler = false } = {}) {
+  // 不 await：调用方（含 handler 里的跳转）必须立刻看到未登录态，
+  // logout() 是先同步清 user 再发请求的。
+  // 依赖 /api/auth/logout 是公开路由（挂在 requireAuth 之前）：它一旦会返 401，这里就会自我递归
+  useUserStore().logout()
+  if (!skipUnauthorizedHandler) {
+    unauthorizedHandler?.()
+  }
+  return new Error('登录已失效，请重新登录')
+}
+
 async function readErrorMessage(response) {
   try {
     const body = await response.json()
@@ -24,7 +46,14 @@ async function readErrorMessage(response) {
 }
 
 export async function request(url, options = {}) {
-  const { method = 'GET', body, headers = {}, signal, responseType = 'json' } = options
+  const {
+    method = 'GET',
+    body,
+    headers = {},
+    signal,
+    responseType = 'json',
+    skipUnauthorizedHandler = false
+  } = options
 
   const isFormData = body instanceof FormData
   const finalHeaders = { ...headers }
@@ -41,10 +70,7 @@ export async function request(url, options = {}) {
   const response = await fetch(url, { method, headers: finalHeaders, body: payload, signal })
 
   if (response.status === 401) {
-    // 依赖 /api/auth/logout 是公开路由（挂在 requireAuth 之前）：它一旦会返 401，这里就会自我递归
-    useUserStore().logout()
-    unauthorizedHandler?.()
-    throw new Error('登录已失效，请重新登录')
+    throw handleUnauthorized({ skipUnauthorizedHandler })
   }
 
   if (!response.ok) {

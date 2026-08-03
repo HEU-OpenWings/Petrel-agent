@@ -43,9 +43,9 @@ export const useUserStore = defineStore('user', () => {
    * 启动时恢复登录态。
    *
    * 注意副作用：未登录时 /api/auth/me 返 401，会被 http.js 的全局 401 分支拦截——
-   * 先触发一次 logout()（多打一次 logout 请求），再调 unauthorizedHandler()
-   * （通常是跳 /login），最后才把错误抛给调用方。调用方 catch 也拦不住跳转，
-   * 所以匿名可访问的页面不要裸调它。
+   * 先触发一次 logout()（多打一次 logout 请求，后端 logout 是公开路由，恒 200），
+   * 再把错误抛给调用方。meApi 带了 skipUnauthorizedHandler，所以这里不会触发跳转，
+   * 该不该跳登录页由路由守卫按 meta.requiresAuth 决定。
    */
   async function fetchMe() {
     const data = await meApi()

@@ -12,4 +12,5 @@ export const loginApi = (email, password) => post('/api/auth/login', { email, pa
 
 export const logoutApi = () => post('/api/auth/logout', {})
 
-export const meApi = () => get('/api/auth/me')
+/** skipUnauthorizedHandler：未登录时的 401 是预期结果，见 http.js 的 handleUnauthorized */
+export const meApi = () => get('/api/auth/me', { skipUnauthorizedHandler: true })
