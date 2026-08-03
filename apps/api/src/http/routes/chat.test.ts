@@ -12,8 +12,10 @@ import { app } from "../app.ts";
  */
 const state = vi.hoisted(() => ({
   db: undefined as TestDb | undefined,
-  /** 打开后 getDb() 直接抛，用来模拟数据库不可用 */
+  /** 打开后 getDb() 直接抛，用来模拟整库不可用（连鉴权都查不出身份） */
   dbBroken: false,
+  /** 打开后只有会话仓储的查询失败，鉴权用的用户查询照常，用来模拟「已登录但会话表读写不了」 */
+  sessionRepoBroken: false,
   agentOptions: undefined as CreateAgentOptions | undefined,
 }));
 
@@ -31,6 +33,17 @@ vi.mock("@petrel/database", async (importOriginal) => {
       }
       // getDb 的签名只认 NodePgDatabase，断言一次把 PGlite 实例塞进去
       return state.db as unknown as ReturnType<typeof actual.getDb>;
+    },
+    /**
+     * 故障粒度要比 getDb 更细：鉴权（createUserRepository）与会话/消息仓储走的是
+     * 同一个 db，整个 getDb 抛掉就只能覆盖「身份都验不出来」那条路径，
+     * prepareSession 的 catch-and-degrade 分支（已登录、但会话仓储查不动）就没人覆盖了。
+     * 这里只让会话仓储失败，且失败发生在查询时而不是建仓储时——真实故障就是这个形态。
+     */
+    createSessionRepository: (...args: Parameters<typeof actual.createSessionRepository>) => {
+      const repo = actual.createSessionRepository(...args);
+      if (!state.sessionRepoBroken) return repo;
+      return { ...repo, upsert: () => Promise.reject(new Error("database unavailable")) };
     },
   };
 });
@@ -100,6 +113,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   state.dbBroken = false;
+  state.sessionRepoBroken = false;
   useFaux();
   await reset();
   const user = await registerUser("a@x.io");
@@ -459,6 +473,24 @@ describe("POST /api/chat 会话持久化", () => {
     state.dbBroken = false;
     expect(await service.list()).toEqual([]);
     expect((await service.loadHistory(SESSION_ID)).messages).toEqual([]);
+  });
+
+  /**
+   * 上面那条覆盖的是「身份都验不出来」，这条才是 prepareSession 的降级分支：
+   * 用户已经登录（鉴权的用户查询正常），但会话仓储查不动。
+   * 这时对话必须照常进行，只是这一轮不落库——能用但记不住，好过直接不能用。
+   */
+  it("已登录但会话仓储查库失败时照常流式输出，只是这一轮不落库", async () => {
+    state.sessionRepoBroken = true;
+    faux.setResponses([fauxAssistantMessage([fauxText("照常回答")])]);
+
+    const { response, text } = await chatTurn({ message: "你好", sessionId: SESSION_ID });
+
+    expect(response.status).toBe(200);
+    expect(text).toContain("照常回答");
+
+    expect(await service.list()).toEqual([]);
+    expect(await seqsOf(SESSION_ID)).toEqual([]);
   });
 });
 
