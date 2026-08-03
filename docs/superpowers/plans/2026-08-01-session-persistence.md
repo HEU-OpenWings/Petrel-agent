@@ -12,7 +12,7 @@
 
 ---
 
-## 完成情况（截至 2026-08-02，11.5/12）
+## 完成情况（截至 2026-08-03，12/12，浏览器观感待人眼确认）
 
 | # | 任务 | 状态 | commit |
 | --- | --- | --- | --- |
@@ -27,7 +27,7 @@
 | 9 | 前端会话 API 与 store | ✅ | `5ad3656` |
 | 10 | useAgentStream 与 chat_api 接入 sessionId | ✅ | `1a4d983` · `0e8c9ec` |
 | 11 | 左栏接真实数据与 ChatView 整合 | ✅ | `5e8ff74` · `603b0ef` |
-| 12 | 全量验收与文档 | 🟡 部分完成 | 文档已写；**人工验收阻塞**，见下 |
+| 12 | 全量验收与文档 | ✅ | 文档已写；11 项验收 2026-08-03 在容器里补做完 |
 
 计划外的 commit：`7bb2f73`「修复 lint 与测试稳定性」，2026-08-02 的四笔技术债清理
 （见下方「已还的技术债」），以及 Task 8 里返工 seq 分配方式的 `d8b957a`。
@@ -36,9 +36,12 @@
 增量落库 → 左栏从 `GET /api/sessions` 拉真实列表，支持切换 / 重命名 / 删除。
 自动化测试覆盖到刷新恢复、中断落半截、并发同一会话不丢消息、断库降级这些路径。
 
-**但从用户视角看还没有人真正用过**：仓库里没有 `SILICONFLOW_API_KEY`，发不出真实对话；
-`docker compose build` 又卡在 corepack 拉 pnpm 时的 TLS 断连。所以 Task 12 Step 3 的 11 项
-人工验收里只完成了第 1 项。接手的人第一件事应该是**补做那 11 项**，而不是往下加功能。
+**2026-08-03 更新**：镜像构建通过、`SILICONFLOW_API_KEY` 已配置，Task 12 Step 3 的 11 项
+在容器里逐条跑完，**全部通过**（明细见 `docs/backend-plan.md` §3「2026-08-03 补做」）。
+验证方式是真实模型 + 真实 Postgres，走 HTTP 接口与 `psql` 查表，不是浏览器点击——
+所以左栏的 hover 图标、原生弹窗、active 高亮这些**观感项仍需人眼过一遍**。
+
+验收顺带逮到一个真 bug：**模型报错时同一条助手消息被落库两次**，见下方「已知问题」第 0 条。
 
 ### Task 6 的实现修正了本计划的一个错误
 
@@ -109,25 +112,24 @@ tie 用的，生产不需要。
   约 5s；带 `DATABASE_URL` 连真实 Postgres：**18 files / 173 tests 全部通过**
 - 数据层并发正确性：真实 Postgres 上 12 路并发 append 同一会话，seq 连续无洞一条不丢；
   把 `messages.append()` 里的 `FOR UPDATE` 删掉后集成测试立刻变红（PGlite 用例不会红，见下）
-- **migration 链路已验证，但只在宿主机上**：新建空库 `petrel_migtest`，用
-  `DATABASE_URL=…/petrel_migtest tsx apps/api/src/index.ts` 起 api，日志输出
-  `database migrations applied` 与 `agent-server listening`，`users` / `sessions` / `messages`
-  三张表被自动建出、默认用户被播种。**这不等于 Task 4 Step 8 通过**——那一步要的是
-  `docker compose up -d` 之后看 `docker logs petrel-api-dev`，镜像构建、compose 的环境变量注入、
-  `depends_on: service_healthy` 这几段仍然没跑过
-- 容器：`docker compose up -d db` 起得来 `petrel-db-dev`（pgvector/pg17），集成测试就是连它跑的
+- **容器内的 migration 与 Task 4 Step 8**（2026-08-03 补验）：`docker compose up -d` 后三个容器
+  都健康，api 日志有 `database migrations applied` 与 `agent-server listening`，
+  `psql -c "\dt"` 列出三张表。另建一个空库 `petrel_fresh` 单独起一次 api，确认**空库自动建表 +
+  播种默认用户**这条路径本身也成立（这样验不用动现有数据卷）
+- **Task 12 Step 3 的 11 项验收全部通过**（2026-08-03，真实模型 + 真实 Postgres，
+  走 HTTP 接口与 `psql` 查表）。逐条结果见 `docs/backend-plan.md` §3。
+  其中第 7 项确认了中断只落**一条**半截消息，没有重复写——Task 6 那段修正是对的
 
-### 未验证 / 阻塞
+### 未验证
 
-- **Task 12 Step 3 的 11 项人工验收只做了第 1 项**（自动建表）。仓库没有 `SILICONFLOW_API_KEY`，
-  11 项里有 8 项需要真实对话。刷新恢复、两个会话来回切不串、中断后半截回答可见、
-  工具卡片重建、旧会话发消息跳顶、停掉 db 后仍能流式输出——目前**只有自动化测试覆盖，
-  没有人在浏览器里看过**。
-- **api 容器仍未起来**。`docker compose build` 在 `corepack` 拉 pnpm 11.15.1 时 TLS 连接断开
-  （`Client network socket disconnected before secure TLS connection was established`），
-  是网络问题不是代码问题。
-- 浏览器 UI 观感未验收：hover 才出现的重命名/删除图标、`prompt` / `confirm` / `alert`
-  三个原生弹窗、active 高亮、切换会话的实际手感。
+- **浏览器 UI 观感**：hover 才出现的重命名/删除图标、`prompt` / `confirm` / `alert`
+  三个原生弹窗、active 高亮、切换会话的实际手感。上面 11 项验的是后端契约与数据落地，
+  前端把这些数据渲染成什么样仍然没有人看过。
+- **默认模型 `deepseek-ai/DeepSeek-V3` 当前被平台限流**（`code 50609 / System is too busy`，
+  连试 6 次全 429）。账号正常，`DeepSeek-V3.1` · `Qwen3-8B` · `GLM-4-9B` 都秒回。
+  上面的验收是临时把 `packages/ai/src/index.ts` 的 `DEFAULT_MODEL_ID` 换成 V3.1 跑的，跑完已改回。
+  **浏览器验收前要先解决这个**，否则每轮只会拿到一条 `stopReason: "error"` 的空回答
+  （而且会触发下方已知问题第 0 条的重复落库）。
 
 ### 实施中改掉的两处计划设计
 
@@ -148,7 +150,18 @@ tie 用的，生产不需要。
 
 ### 实施中新增的技术债与已知问题
 
-> 接手前先读完这一节。前三条是行为缺陷，后三条是基建缺口。
+> 接手前先读完这一节。第 0 条是验收时发现的真 bug（未修），1~3 条是行为缺陷，4~6 条是基建缺口。
+
+0. **模型报错时同一条助手消息落库两次**（2026-08-03 端到端验收发现，**未修**）。
+   实测 SiliconFlow 返回 429 时，`messages` 表里出现两行逐字节相同的助手消息（`timestamp` 都一样），
+   第二行还被标成 `interrupted = true`。根因在 `attachPersistence`：`message_end` 只跳过
+   `stopReason === "aborted"`，而报错那条是 `"error"`，先被写入一次；随后 `agent_end` 的判定
+   `agent.state.errorMessage !== undefined || last?.stopReason === "aborted"` **把模型报错也算成中断**，
+   于是 `partial` 又被补写一遍。
+   这正是 `CLAUDE.md` 那条「模型调用失败时 pi 不抛异常，把原因写进 `errorMessage`」的约束
+   在落库侧漏掉了。现有测试全走 `abort()` 路径，**错误路径一条用例都没有**。
+   修法：把 `agent_end` 的 `interrupted` 判定收窄成「本轮确实被 abort」，并补一条
+   faux provider 返回错误的用例。中断路径没有这个问题（验收第 7 项已确认）。
 
 1. **中断后重发会让 transcript 顺序错乱**（最需要注意的一条）。`seq` 反映「写入时刻」，
    而对话的逻辑顺序是「轮次」；被打断的半截助手消息在 `agent_end` 才落库，必然排到下一轮

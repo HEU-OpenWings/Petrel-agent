@@ -147,7 +147,11 @@ insert + touch 会让刚 touch 过的会话**排到后面**，正好打在「在
 这条验收上。三处已统一成 SQL 侧的 `now()`。PGlite 的 `now()` 只有毫秒分辨率，这个 bug 在测试
 环境里表现为时间戳相等而不是翻转，所以守卫是断言生成的 SQL 里出现 `now()` 而不是参数占位符。
 
-### 会话持久化的验收状态（2026-08-02）
+### 会话持久化的验收状态（2026-08-03 更新：容器与端到端验收已完成）
+
+计划 Task 12 的 11 项人工验收**已全部在容器里跑通**（下方「2026-08-03」小节），
+只剩浏览器观感那几项还需要人眼确认。原先阻塞的两件事都已解除：镜像构建成功、
+`SILICONFLOW_API_KEY` 已配置。
 
 **已验证：**
 
@@ -164,21 +168,64 @@ insert + touch 会让刚 touch 过的会话**排到后面**，正好打在「在
   `docker logs petrel-api-dev`，那一步因为下面的构建失败仍然没做。两者的差别在于镜像构建、
   compose 的环境变量注入、`depends_on: service_healthy` 这几段都还没跑过
 
-**未验证 / 阻塞：**
+**2026-08-03 补做：容器内 11 项端到端验收**
 
-- **计划里 11 项人工验收基本没做**。仓库没有 `SILICONFLOW_API_KEY`，11 项里有 8 项需要真实对话，
-  实际只验了第 1 项（自动建表）。刷新恢复对话、两个会话来回切不串、中断后半截回答可见、
-  工具卡片重建、旧会话发消息跳顶、停掉 db 后仍能流式输出——这些目前**只有自动化测试覆盖，
-  没有人在浏览器里看过**。
-- **api 容器仍未起来**。`docker compose build` 在 `corepack` 拉 pnpm 11.15.1 时 TLS 连接断开
-  （`Client network socket disconnected before secure TLS connection was established`），
-  是网络问题不是代码问题。db 服务单独起得来，集成测试就是连它跑的。
-- 浏览器 UI 观感未验收：hover 才出现的重命名/删除图标、`prompt` / `confirm` / `alert`
-  三个原生弹窗、active 高亮、切换会话的实际手感。
+三个容器（`petrel-db-dev` / `petrel-api-dev` / `petrel-web-dev`）都起来了，api 日志有
+`database migrations applied`。11 项逐条走的是真实模型 + 真实 Postgres，验证方式是
+HTTP 接口 + `psql` 查表（不是浏览器点击）：
+
+| # | 检查项 | 结果 |
+| --- | --- | --- |
+| 1 | 首次启动自动建表 | ✅ 另建空库 `petrel_fresh` 起 api，三张表建出、默认用户播种 |
+| 2 | 发消息后刷新对话还在 | ✅ `GET /:id/messages` 返回完整 transcript |
+| 3 | 左栏出现会话，标题取首句 | ✅ 标题 = `用一句话介绍你自己` |
+| 4 | 两个会话不串 | ✅ A / B 各 4 条，互不可见（后端层面） |
+| 5 | 重命名后保持 | ✅ 改名后再发消息，标题没被打回首句 |
+| 6 | 删除会话消息一并消失 | ✅ 6 → 0 行级联删除，重复删返回 404 |
+| 7 | 中途停止能看到半截回答 | ✅ 3 秒掐断连接，落库一条 `interrupted = true` 的半截散文，**没有重复写** |
+| 8 | 工具调用后刷新能重建 | ✅ `assistant(text+toolCall)` → `toolResult` → `assistant` 三条齐全 |
+| 9 | 旧会话发消息跳顶 | ✅ A 从第 2 位回到第 1 位 |
+| 10 | 新建不发消息不产生空会话 | ✅ 只 GET 一个陌生 id 不建行 |
+| 11 | 停掉 db 仍能流式输出 | ✅ 600 行 SSE 正常收完、有 `agent_end`、无 `event: error`，api 日志记下落库失败 |
+
+第 11 项还额外确认了一件事：`ensureSession` 本身失败时**不会**留下空会话行（下方已知问题 2
+说的是 `ensureSession` 成功而 `loadHistory` 失败那条路径，两者不是一回事）。
+
+**仍未验证：**
+
+- **浏览器 UI 观感**——hover 才出现的重命名/删除图标、`prompt` / `confirm` / `alert`
+  三个原生弹窗、active 高亮、切换会话的手感。上面 11 项验的是后端契约与数据落地，
+  前端把这些数据渲染成什么样，仍然**没有人在浏览器里看过**。
+- **默认模型 `deepseek-ai/DeepSeek-V3` 当前被 SiliconFlow 平台限流**
+  （`code 50609 / System is too busy now`，连续 6 次全部 429）。账号本身正常：
+  `DeepSeek-V3.1` · `Qwen3-8B` · `GLM-4-9B` 都秒回。上面的验收是临时把默认模型换成 V3.1 跑的，
+  跑完已改回。浏览器验收前需要先解决这个，否则每一轮都会得到一条 `stopReason: "error"` 的空回答。
 
 ### 会话持久化的已知问题
 
-> 都是有意留下的，不是疏漏。写在这里是为了接手的人不必重新踩一遍。
+> 除第 1 条外都是有意留下的。第 1 条是 2026-08-03 端到端验收时发现的真 bug，尚未修。
+
+0. **模型调用失败时，同一条助手消息会被落库两次**（验收时发现，未修）。
+   触发条件：模型返回错误（实测是 SiliconFlow 的 429）。现象是每一轮在 `messages` 表里留下
+   两行**逐字节相同**的助手消息（连 `timestamp` 都一样），其中第二行还被错误地标成
+   `interrupted = true`。
+
+   根因在 `services/session.ts` 的 `attachPersistence`：
+
+   - `message_end` 只跳过 `stopReason === "aborted"` 的消息，而模型报错那条的
+     `stopReason` 是 `"error"`，于是它被正常写入；
+   - `agent_end` 里 `interrupted` 的判定是
+     `agent.state.errorMessage !== undefined || last?.stopReason === "aborted"`，
+     **把「模型报错」也算成了中断**，于是闭包里的 `partial` 又被当成半截消息补写一遍。
+
+   这是 pi 的「模型失败不抛异常、把原因写进 `errorMessage`」这条约束（见 `CLAUDE.md`）
+   在落库侧的漏网。现有测试没覆盖：`chat.test.ts` 与 `session.test.ts` 的中断用例走的是
+   `abort()` 路径（`stopReason: "aborted"`），错误路径一条都没有。
+
+   影响：transcript 里多出重复消息，回灌给模型时也是重复的；`interrupted` 标记的语义被污染。
+   修法应是把 `agent_end` 的判定从「state 上有 errorMessage」收窄成「本轮确实是被 abort 的」，
+   并补一条 faux provider 返回错误的用例。**中断路径没有这个问题**——验收第 7 项确认了
+   掐断连接只落一条。
 
 1. **中断后重发会让 transcript 的顺序错乱**——本轮最需要注意的一条。`seq` 反映的是「写入时刻」，
    而对话的逻辑顺序是「轮次」。被打断的半截助手消息在 `agent_end` 才落库，那时 HTTP 响应早就关了，
