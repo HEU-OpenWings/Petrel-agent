@@ -22,23 +22,13 @@ afterEach(() => {
 })
 
 describe('request', () => {
-  it('没有 token 时不注入 Authorization', async () => {
+  it('不注入 Authorization —— token 在 httpOnly cookie 里，JS 碰不到', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }))
     vi.stubGlobal('fetch', fetchMock)
 
     await get('/api/system/health')
 
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBeUndefined()
-  })
-
-  it('有 token 时注入 Bearer', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }))
-    vi.stubGlobal('fetch', fetchMock)
-    useUserStore().token = 'abc123'
-
-    await get('/api/whatever')
-
-    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer abc123')
   })
 
   it('对象 body 自动序列化并带 JSON Content-Type', async () => {
@@ -66,15 +56,24 @@ describe('request', () => {
   })
 
   it('401 时登出并触发未授权处理器', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ detail: '无效令牌' }, 401)))
+    // mock 必须分两段：第一个响应是业务请求的 401，第二个是 401 分支里 logout()
+    // 顺带发出的 POST /api/auth/logout。如果简化成「所有请求都返 401」，那次 logout
+    // 请求也会撞进 401 分支再次调 logout()，测试里会无限递归。
+    // 生产不会这样：/api/auth/logout 挂在 requireAuth 之前（apps/api/src/http/app.ts），永不返 401。
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ detail: '无效令牌' }, 401))
+      .mockResolvedValue(jsonResponse({ ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
     const userStore = useUserStore()
-    userStore.token = 'expired'
+    userStore.user = { id: '1', email: 'a@x.io', role: 'user' }
     const handler = vi.fn()
     setUnauthorizedHandler(handler)
 
     await expect(get('/api/whatever')).rejects.toThrow('登录已失效，请重新登录')
-    expect(userStore.token).toBe('')
     expect(handler).toHaveBeenCalledOnce()
+    // 同步断言是有意的：logout() 必须在跳转登录页之前就把本地态清掉
+    expect(userStore.user).toBeNull()
   })
 
   it('非 2xx 时抛出后端给的错误文案', async () => {

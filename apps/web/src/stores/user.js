@@ -1,403 +1,91 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { computed, ref } from 'vue'
+import { loginApi, logoutApi, meApi, registerApi } from '@/apis/auth_api'
 
+/**
+ * 用户状态。
+ *
+ * token 不在这里——它在 httpOnly cookie 里，JS 读不到也不需要读。
+ * 代价是刷新页面后必须调一次 /api/auth/me 才知道自己是谁，见 main.js。
+ */
 export const useUserStore = defineStore('user', () => {
-  // 状态
-  const token = ref(localStorage.getItem('user_token') || '')
-  const userId = ref(parseInt(localStorage.getItem('user_id') || '0') || null)
-  const username = ref(localStorage.getItem('username') || '')
-  const userIdLogin = ref(localStorage.getItem('user_id_login') || '') // 用于登录的user_id
-  const phoneNumber = ref(localStorage.getItem('phone_number') || '')
-  const avatar = ref(localStorage.getItem('avatar') || '')
-  const userRole = ref(localStorage.getItem('user_role') || '')
+  const user = ref(null)
 
-  // 计算属性
-  const isLoggedIn = computed(() => !!token.value)
-  const isAdmin = computed(() => userRole.value === 'admin' || userRole.value === 'superadmin')
-  const isSuperAdmin = computed(() => userRole.value === 'superadmin')
+  const isLoggedIn = computed(() => user.value !== null)
+  const isAdmin = computed(() => user.value?.role === 'admin')
+  /** 展示名取邮箱前缀，不单独落库 */
+  const displayName = computed(() => user.value?.email?.split('@')[0] ?? '')
 
-  // 动作
-  async function login(credentials) {
+  async function login(email, password) {
+    const data = await loginApi(email, password)
+    user.value = data.user
+    return data.user
+  }
+
+  async function register(email, password) {
+    const data = await registerApi(email, password)
+    user.value = data.user
+    return data.user
+  }
+
+  async function logout() {
+    // 先同步清本地态：http.js 的 401 分支不 await 本函数，跳转登录页时必须已经是未登录，
+    // 否则 LoginView 的 onMounted 会读到 isLoggedIn === true 把用户弹回首页
+    user.value = null
     try {
-      const formData = new FormData()
-      // 支持user_id或phone_number登录
-      formData.append('username', credentials.loginId) // 使用loginId作为通用登录标识
-      formData.append('password', credentials.password)
-
-      const response = await fetch('/api/auth/token', {
-        method: 'POST',
-        body: formData
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-
-        // 如果是423锁定状态码，抛出包含状态码的错误
-        if (response.status === 423) {
-          const lockError = new Error(error.detail || '账户被锁定')
-          lockError.status = 423
-          lockError.headers = response.headers
-          throw lockError
-        }
-
-        throw new Error(error.detail || '登录失败')
-      }
-
-      const data = await response.json()
-
-      // 更新状态
-      token.value = data.access_token
-      userId.value = data.user_id
-      username.value = data.username
-      userIdLogin.value = data.user_id_login
-      phoneNumber.value = data.phone_number || ''
-      avatar.value = data.avatar || ''
-      userRole.value = data.role
-
-      // 保存到本地存储
-      localStorage.setItem('user_token', data.access_token)
-      localStorage.setItem('user_id', data.user_id)
-      localStorage.setItem('username', data.username)
-      localStorage.setItem('user_id_login', data.user_id_login)
-      localStorage.setItem('phone_number', data.phone_number || '')
-      localStorage.setItem('avatar', data.avatar || '')
-      localStorage.setItem('user_role', data.role)
-
-      return true
-    } catch (error) {
-      console.error('登录错误:', error)
-      throw error
+      await logoutApi()
+    } catch {
+      // 后端不可达时不阻断本地登出
     }
   }
 
-  function logout() {
-    // 清除状态
-    token.value = ''
-    userId.value = null
-    username.value = ''
-    userIdLogin.value = ''
-    phoneNumber.value = ''
-    avatar.value = ''
-    userRole.value = ''
-
-    // 清除本地存储
-    localStorage.removeItem('user_token')
-    localStorage.removeItem('user_id')
-    localStorage.removeItem('username')
-    localStorage.removeItem('user_id_login')
-    localStorage.removeItem('phone_number')
-    localStorage.removeItem('avatar')
-    localStorage.removeItem('user_role')
+  /**
+   * 启动时恢复登录态。
+   *
+   * 注意副作用：未登录时 /api/auth/me 返 401，会被 http.js 的全局 401 分支拦截——
+   * 先触发一次 logout()（多打一次 logout 请求），再调 unauthorizedHandler()
+   * （通常是跳 /login），最后才把错误抛给调用方。调用方 catch 也拦不住跳转，
+   * 所以匿名可访问的页面不要裸调它。
+   */
+  async function fetchMe() {
+    const data = await meApi()
+    user.value = data.user
+    return data.user
   }
 
-  async function initialize(admin) {
-    try {
-      const response = await fetch('/api/auth/initialize', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(admin)
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || '初始化管理员失败')
-      }
-
-      const data = await response.json()
-
-      // 更新状态
-      token.value = data.access_token
-      userId.value = data.user_id
-      username.value = data.username
-      userIdLogin.value = data.user_id_login
-      phoneNumber.value = data.phone_number || ''
-      avatar.value = data.avatar || ''
-      userRole.value = data.role
-
-      // 保存到本地存储
-      localStorage.setItem('user_token', data.access_token)
-      localStorage.setItem('user_id', data.user_id)
-      localStorage.setItem('username', data.username)
-      localStorage.setItem('user_id_login', data.user_id_login)
-      localStorage.setItem('phone_number', data.phone_number || '')
-      localStorage.setItem('avatar', data.avatar || '')
-      localStorage.setItem('user_role', data.role)
-
-      return true
-    } catch (error) {
-      console.error('初始化管理员错误:', error)
-      throw error
-    }
-  }
-
-  async function checkFirstRun() {
-    try {
-      const response = await fetch('/api/auth/check-first-run')
-      const data = await response.json()
-      return data.first_run
-    } catch (error) {
-      console.error('检查首次运行状态错误:', error)
-      return false
-    }
-  }
-
-  // 用于API请求的授权头
-  function getAuthHeaders() {
-    return {
-      'Authorization': `Bearer ${token.value}`
-    }
-  }
-
-  // 用户管理功能
-  async function getUsers() {
-    try {
-      const response = await fetch('/api/auth/users', {
-        headers: {
-          ...getAuthHeaders()
-        }
-      })
-
-      if (!response.ok) {
-        throw new Error('获取用户列表失败')
-      }
-
-      return await response.json()
-    } catch (error) {
-      console.error('获取用户列表错误:', error)
-      throw error
-    }
-  }
-
-  async function createUser(userData) {
-    try {
-      const response = await fetch('/api/auth/users', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify(userData)
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || '创建用户失败')
-      }
-
-      return await response.json()
-    } catch (error) {
-      console.error('创建用户错误:', error)
-      throw error
-    }
-  }
-
-  async function updateUser(userId, userData) {
-    try {
-      const response = await fetch(`/api/auth/users/${userId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify(userData)
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || '更新用户失败')
-      }
-
-      return await response.json()
-    } catch (error) {
-      console.error('更新用户错误:', error)
-      throw error
-    }
-  }
-
-  async function deleteUser(userId) {
-    try {
-      const response = await fetch(`/api/auth/users/${userId}`, {
-        method: 'DELETE',
-        headers: {
-          ...getAuthHeaders()
-        }
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || '删除用户失败')
-      }
-
-      return await response.json()
-    } catch (error) {
-      console.error('删除用户错误:', error)
-      throw error
-    }
-  }
-
-  // 验证用户名并生成user_id
-  async function validateUsernameAndGenerateUserId(username) {
-    try {
-      const response = await fetch('/api/auth/validate-username', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify({ username })
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || '用户名验证失败')
-      }
-
-      return await response.json()
-    } catch (error) {
-      console.error('用户名验证错误:', error)
-      throw error
-    }
-  }
-
-  // 上传头像
-  async function uploadAvatar(file) {
-    try {
-      const formData = new FormData()
-      formData.append('file', file)
-
-      const response = await fetch('/api/auth/upload-avatar', {
-        method: 'POST',
-        headers: {
-          ...getAuthHeaders()
-        },
-        body: formData
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || '头像上传失败')
-      }
-
-      const data = await response.json()
-
-      // 更新本地头像状态
-      avatar.value = data.avatar_url
-      localStorage.setItem('avatar', data.avatar_url)
-
-      return data
-    } catch (error) {
-      console.error('头像上传错误:', error)
-      throw error
-    }
-  }
-
-  // 获取当前用户信息
-  async function getCurrentUser() {
-    try {
-      const response = await fetch('/api/auth/me', {
-        headers: {
-          ...getAuthHeaders()
-        }
-      })
-
-      if (!response.ok) {
-        throw new Error('获取用户信息失败')
-      }
-
-      const userData = await response.json()
-
-      // 更新本地状态
-      username.value = userData.username
-      userIdLogin.value = userData.user_id
-      phoneNumber.value = userData.phone_number || ''
-      avatar.value = userData.avatar || ''
-      userRole.value = userData.role
-
-      // 更新本地存储
-      localStorage.setItem('username', userData.username)
-      localStorage.setItem('user_id_login', userData.user_id)
-      localStorage.setItem('phone_number', userData.phone_number || '')
-      localStorage.setItem('avatar', userData.avatar || '')
-      localStorage.setItem('user_role', userData.role)
-
-      return userData
-    } catch (error) {
-      console.error('获取用户信息错误:', error)
-      throw error
-    }
-  }
-
-  // 更新个人资料
-  async function updateProfile(profileData) {
-    try {
-      const response = await fetch('/api/auth/profile', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify(profileData)
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || '更新个人资料失败')
-      }
-
-      const userData = await response.json()
-
-      // 更新本地状态
-      if (typeof userData.username === 'string') {
-        username.value = userData.username
-        localStorage.setItem('username', userData.username)
-      }
-      if (typeof userData.phone_number !== 'undefined') {
-        phoneNumber.value = userData.phone_number || ''
-        localStorage.setItem('phone_number', userData.phone_number || '')
-      }
-
-      return userData
-    } catch (error) {
-      console.error('更新个人资料错误:', error)
-      throw error
-    }
-  }
+  /**
+   * 兼容垫片（store 方法）：v0.4 的 apis/base.js、apis/agent_api.js、
+   * views/GraphView.vue、components/FileUploadModal.vue 还在调
+   * userStore.getAuthHeaders()，删掉会让它们运行时 TypeError。
+   * cookie 方案下不需要手动加认证头，返回空对象即可。
+   */
+  const getAuthHeaders = () => ({})
 
   return {
-    // 状态
-    token,
-    userId,
-    username,
-    userIdLogin,
-    phoneNumber,
-    avatar,
-    userRole,
-
-    // 计算属性
+    user,
     isLoggedIn,
     isAdmin,
-    isSuperAdmin,
-
-    // 方法
+    displayName,
     login,
+    register,
     logout,
-    initialize,
-    checkFirstRun,
-    getAuthHeaders,
-    getUsers,
-    createUser,
-    updateUser,
-    deleteUser,
-    validateUsernameAndGenerateUserId,
-    uploadAvatar,
-    getCurrentUser,
-    updateProfile
+    fetchMe,
+    getAuthHeaders
   }
 })
 
-// 检查当前用户是否有管理员权限
+/**
+ * 以下两个是兼容垫片（具名导入），不是新功能。
+ *
+ * apis/base.js:5 与 components/DebugComponent.vue:125 还在具名导入它们。
+ * ESM 里导入一个不存在的符号会让 Vite 构建期直接失败——那两个文件本来就打不通
+ * v0.4 的 Python API，但不该因为这次改动连构建都过不去。
+ *
+ * （第三个垫片 getAuthHeaders 是 store 方法，不是具名导入，见上面 store 内部。）
+ *
+ * 它们随那批组件一起删除，见 docs/frontend-plan.md 的组件处置清单。
+ */
+
 export const checkAdminPermission = () => {
   const userStore = useUserStore()
   if (!userStore.isAdmin) {
@@ -406,11 +94,5 @@ export const checkAdminPermission = () => {
   return true
 }
 
-// 检查当前用户是否有超级管理员权限
-export const checkSuperAdminPermission = () => {
-  const userStore = useUserStore()
-  if (!userStore.isSuperAdmin) {
-    throw new Error('需要超级管理员权限')
-  }
-  return true
-}
+/** v0.5 没有 superadmin 这一级，等同于 admin 校验 */
+export const checkSuperAdminPermission = checkAdminPermission

@@ -33,11 +33,6 @@ export async function request(url, options = {}) {
     finalHeaders['Content-Type'] = 'application/json'
   }
 
-  const userStore = useUserStore()
-  if (userStore.token) {
-    finalHeaders.Authorization = `Bearer ${userStore.token}`
-  }
-
   let payload
   if (body !== undefined) {
     payload = isFormData ? body : JSON.stringify(body)
@@ -46,7 +41,8 @@ export async function request(url, options = {}) {
   const response = await fetch(url, { method, headers: finalHeaders, body: payload, signal })
 
   if (response.status === 401) {
-    userStore.logout()
+    // 依赖 /api/auth/logout 是公开路由（挂在 requireAuth 之前）：它一旦会返 401，这里就会自我递归
+    useUserStore().logout()
     unauthorizedHandler?.()
     throw new Error('登录已失效，请重新登录')
   }
