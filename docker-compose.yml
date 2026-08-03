@@ -1,4 +1,24 @@
 services:
+  db:
+    # 直接用 pgvector 镜像：本轮用不到向量，但知识库那轮要，
+    # 现在用普通 postgres 到时候换镜像得重建数据卷
+    image: pgvector/pgvector:pg17
+    container_name: petrel-db-dev
+    environment:
+      POSTGRES_USER: petrel
+      POSTGRES_PASSWORD: petrel
+      POSTGRES_DB: petrel
+    ports:
+      - "5432:5432"
+    volumes:
+      - petrel-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U petrel -d petrel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -14,12 +34,18 @@ services:
       - ./packages/ai/src:/app/packages/ai/src
       - ./packages/config/src:/app/packages/config/src
       - ./packages/logger/src:/app/packages/logger/src
+      - ./packages/database/src:/app/packages/database/src
       - ./tsconfig.base.json:/app/tsconfig.base.json
     ports:
       - "5050:5050"
     env_file:
       - path: .env
         required: false
+    environment:
+      - DATABASE_URL=postgres://petrel:petrel@db:5432/petrel
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5050/api/system/health || exit 1"]
@@ -51,3 +77,6 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+
+volumes:
+  petrel-pgdata:

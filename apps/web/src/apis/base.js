@@ -1,3 +1,7 @@
+/**
+ * @deprecated v0.4 遗留的 HTTP 封装，仍被知识库 / Dashboard / 评测等旧页面使用。
+ * 新代码请用 ./http.js。两者收敛的时机是旧页面按 HEU-21 / HEU-28 重写时。
+ */
 import { useUserStore, checkAdminPermission, checkSuperAdminPermission } from '@/stores/user'
 import { message } from 'ant-design-vue'
 

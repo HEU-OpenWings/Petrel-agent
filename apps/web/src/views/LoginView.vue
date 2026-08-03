@@ -199,12 +199,8 @@
             </div>
           </div>
 
-          <!-- 页脚 -->
-          <div class="login-footer">
-            <a href="https://github.com/xerrors" target="_blank">联系我们</a>
-            <a href="https://github.com/xerrors/Yuxi-Know" target="_blank">使用帮助</a>
-            <a href="https://github.com/xerrors/Yuxi-Know/blob/main/LICENSE" target="_blank">隐私政策</a>
-          </div>
+          <!-- 页脚原本是指向上游 Yuxi-Know 的「联系我们 / 使用帮助 / 隐私政策」三个外链，
+               Petrel 还没有对应地址，先整块去掉，有了再加回来 -->
         </div>
       </div>
     </div>
@@ -232,17 +228,17 @@ const loginBgImage = computed(() => {
 const brandName = computed(() => {
   const rawName = infoStore.branding?.name ?? '';
   const trimmed = rawName.trim();
-  return trimmed || 'Yuxi-Know';
+  return trimmed || 'Petrel';
 });
 const brandSubtitle = computed(() => {
   const rawSubtitle = infoStore.branding?.subtitle ?? '';
   const trimmed = rawSubtitle.trim();
-  return trimmed || '大模型驱动的知识库管理工具';
+  return trimmed || '以对话为核心的智能体平台';
 });
 const brandDescription = computed(() => {
   const rawDescription = infoStore.branding?.description ?? '';
   const trimmed = rawDescription.trim();
-  return trimmed || '结合知识库与知识图谱，提供更准确、更全面的回答';
+  return trimmed || '接入大模型与工具，把复杂任务交给智能体完成';
 });
 
 // 状态
@@ -375,14 +371,14 @@ const handleLogin = async () => {
         // 尝试获取默认智能体
         if (agentStore.defaultAgentId) {
           // 如果存在默认智能体，直接跳转
-          router.push(`/agent/${agentStore.defaultAgentId}`);
+          router.push('/agent');
           return;
         }
 
         // 没有默认智能体，获取第一个可用智能体
         const agentIds = Object.keys(agentStore.agents);
         if (agentIds.length > 0) {
-          router.push(`/agent/${agentIds[0]}`);
+          router.push('/agent');
           return;
         }
 
@@ -780,27 +776,6 @@ onUnmounted(() => {
   }
 }
 
-
-.login-footer {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--gray-150);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-  font-size: 13px;
-
-  a {
-    color: var(--gray-600);
-    cursor: pointer;
-
-    &:hover {
-      color: var(--main-color);
-    }
-  }
-}
 
 .server-status-alert {
   position: absolute;

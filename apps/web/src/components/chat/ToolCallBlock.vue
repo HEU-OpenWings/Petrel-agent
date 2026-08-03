@@ -1,29 +1,46 @@
 <template>
-  <div class="tool-call" :class="state">
-    <button class="summary" type="button" @click="expanded = !expanded">
-      <ChevronRight class="chevron" :class="{ open: expanded }" :size="14" />
-      <Wrench :size="14" />
-      <span class="name">{{ toolCall.name }}</span>
-      <span class="state-text">{{ stateText }}</span>
-      <span v-if="detail.ms !== undefined" class="ms">{{ detail.ms }}ms</span>
-    </button>
+  <div class="tool-call-display" :class="[state, { 'is-collapsed': !expanded }]">
+    <div class="tool-header" @click="expanded = !expanded">
+      <span v-if="state === 'done'" class="header-text">
+        <CircleCheckBig :size="16" class="tool-loader tool-success" />
+        工具 <span class="tool-name">{{ toolCall.name }}</span> 执行完成
+      </span>
+      <span v-else-if="state === 'error'" class="header-text">
+        <CircleAlert :size="16" class="tool-loader tool-error" />
+        工具 <span class="tool-name">{{ toolCall.name }}</span> 执行失败
+      </span>
+      <span v-else class="header-text">
+        <Loader :size="16" class="tool-loader rotate tool-loading" />
+        正在调用工具:
+        <span class="tool-name">{{ toolCall.name }}</span>
+      </span>
 
-    <div v-if="expanded" class="detail">
-      <div class="section">
-        <div class="label">参数</div>
-        <pre>{{ formattedArgs }}</pre>
+      <span v-if="detail.ms !== undefined" class="tool-ms">{{ detail.ms }}ms</span>
+
+      <button class="icon-btn send" type="button" title="在工作区查看" @click.stop="sendToWorkspace">
+        <ArrowUpRight :size="14" />
+      </button>
+    </div>
+
+    <div v-show="expanded" class="tool-content">
+      <div v-if="formattedArgs !== '(无)'" class="tool-params">
+        <div class="tool-params-content"><strong>参数: </strong>{{ formattedArgs }}</div>
       </div>
-      <div v-if="resultText" class="section">
-        <div class="label">结果</div>
-        <pre>{{ resultText }}</pre>
+
+      <div v-if="resultText" class="tool-result">
+        <ToolResultRenderer :tool-name="toolCall.name" :result-content="resultText" />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { ChevronRight, Wrench } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { ArrowUpRight, CircleAlert, CircleCheckBig, Loader } from 'lucide-vue-next'
+import { ToolResultRenderer } from '@/components/ToolCallingResult'
+import { useLayoutStore } from '@/stores/layout'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { extractToolResultText, formatToolArgs } from '@/utils/toolCall'
 
 const props = defineProps({
   /** pi 的 toolCall content block：{ id, name, arguments } */
@@ -33,115 +50,150 @@ const props = defineProps({
 })
 
 const expanded = ref(false)
+const layout = useLayoutStore()
+const workspace = useWorkspaceStore()
 
 const state = computed(() => props.detail.state ?? 'pending')
+// detail.args 来自 tool_execution_start 事件，工具还没开始执行时退回 content block 里的参数
+const args = computed(() => props.detail.args ?? props.toolCall.arguments)
+const formattedArgs = computed(() => formatToolArgs(args.value))
+// ToolResultRenderer 会自己尝试 JSON.parse，按结果形状挑对应的展示卡片
+const resultText = computed(() => extractToolResultText(props.detail.result))
 
-const stateText = computed(
-  () => ({ running: '执行中', done: '完成', error: '失败', pending: '待执行' })[state.value]
+/** 右栏与本组件是兄弟关系，注入不到，只能把完整快照写进 store */
+function snapshot() {
+  return {
+    id: props.toolCall.id,
+    name: props.toolCall.name,
+    state: state.value,
+    args: args.value,
+    result: props.detail.result,
+    ms: props.detail.ms
+  }
+}
+
+// 右栏折叠时也要能送过去，否则用户点了没有任何反馈
+function sendToWorkspace() {
+  workspace.openToolCall(snapshot())
+  layout.expandRight()
+}
+
+// 工具执行中就被送到右栏时，后续的状态与结果要跟着更新，
+// 否则右栏会一直停在「执行中」
+watch(
+  () => props.detail,
+  () => {
+    if (workspace.activeToolCallId === props.toolCall.id) {
+      workspace.syncToolCall(snapshot())
+    }
+  },
+  { deep: true }
 )
-
-const formattedArgs = computed(() => {
-  const args = props.detail.args ?? props.toolCall.arguments
-  if (args === undefined || args === null) return '(无)'
-  return typeof args === 'string' ? args : JSON.stringify(args, null, 2)
-})
-
-const resultText = computed(() => {
-  const result = props.detail.result
-  if (!result) return ''
-  // pi 的工具结果是 content block 数组，取其中的文本
-  const blocks = Array.isArray(result.content) ? result.content : []
-  const text = blocks
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-  return text || JSON.stringify(result, null, 2)
-})
 </script>
 
 <style lang="less" scoped>
-.tool-call {
-  margin: 8px 0;
-  border: 1px solid var(--gray-200);
-  border-radius: 6px;
-  background: var(--gray-25);
-  font-size: 13px;
-
-  &.error {
-    border-color: #e8a3a3;
-  }
+.tool-call-display {
+  margin: 10px 0;
+  border-radius: 8px;
+  outline: 1px solid var(--gray-150);
+  background-color: var(--gray-25);
+  overflow: hidden;
 }
 
-.summary {
+.tool-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 6px 10px;
-  border: none;
-  background: none;
-  color: var(--gray-700);
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gray-100);
+  color: var(--gray-800);
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  text-align: left;
-}
+  user-select: none;
 
-.chevron {
-  transition: transform 0.15s;
-  flex-shrink: 0;
+  // 送右栏的入口只在 hover 时出现，避免每张卡片都常驻一个图标
+  .send {
+    opacity: 0;
+  }
 
-  &.open {
-    transform: rotate(90deg);
+  &:hover .send {
+    opacity: 1;
   }
 }
 
-.name {
-  font-family: monospace;
-  color: var(--gray-1000);
+.is-collapsed .tool-header {
+  border-bottom: none;
 }
 
-.state-text {
+// 占满剩余宽度，把耗时与送右栏按钮自然顶到右侧
+.header-text {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tool-name {
+  color: var(--main-700);
+  font-weight: 600;
+}
+
+.tool-loader {
+  flex-shrink: 0;
+  color: var(--main-700);
+
+  &.rotate {
+    animation: rotate 2s linear infinite;
+  }
+
+  &.tool-success {
+    color: var(--color-success-500);
+  }
+
+  &.tool-error {
+    color: var(--color-error-500);
+  }
+
+  &.tool-loading {
+    color: var(--color-info-500);
+  }
+}
+
+.tool-ms {
+  flex-shrink: 0;
   color: var(--gray-500);
-}
-
-.running .state-text {
-  color: var(--main-color);
-}
-
-.error .state-text {
-  color: #c04a4a;
-}
-
-.ms {
-  margin-left: auto;
-  color: var(--gray-400);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-.detail {
-  padding: 0 10px 10px;
-  border-top: 1px solid var(--gray-150);
+.tool-params {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gray-150);
+  background-color: var(--gray-25);
 }
 
-.section {
-  margin-top: 8px;
-}
-
-.label {
-  margin-bottom: 4px;
-  color: var(--gray-500);
+.tool-params-content {
+  color: var(--gray-700);
   font-size: 12px;
-}
-
-pre {
-  margin: 0;
-  padding: 8px;
-  max-height: 240px;
-  overflow: auto;
-  border-radius: 4px;
-  background: var(--gray-100);
-  color: var(--gray-900);
-  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.tool-result {
+  padding: 0;
+  background-color: transparent;
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

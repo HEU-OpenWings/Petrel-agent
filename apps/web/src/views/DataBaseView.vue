@@ -546,7 +546,7 @@ const createDatabase = () => {
 }
 
 const navigateToDatabase = (databaseId) => {
-  router.push({ path: `/database/${databaseId}` });
+  router.push({ path: `/knowledge/${databaseId}` });
 };
 
 watch(() => newDatabase.reranker.enabled, (enabled) => {
@@ -586,7 +586,7 @@ watch(
 )
 
 watch(() => route.path, (newPath, oldPath) => {
-  if (newPath === '/database') {
+  if (newPath === '/knowledge') {
     loadDatabases();
   }
 });

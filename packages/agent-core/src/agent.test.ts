@@ -1,4 +1,4 @@
-import type { AgentEvent } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   createModels,
   fauxAssistantMessage,
@@ -7,15 +7,15 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { createAgent } from "./index.ts";
+import { type CreateAgentOptions, createAgent } from "./index.ts";
 
 /** 用 pi 自带的 faux provider 跑真实 agent loop，无需模型凭据。 */
-function fauxAgent() {
+function fauxAgent(options: Omit<CreateAgentOptions, "models" | "model"> = {}) {
   const faux = fauxProvider({ tokensPerSecond: 10_000 });
   const models = createModels();
   models.setProvider(faux.provider);
   const events: AgentEvent[] = [];
-  const agent = createAgent({ models, model: faux.getModel() });
+  const agent = createAgent({ ...options, models, model: faux.getModel() });
   agent.subscribe((event) => {
     events.push(event);
   });
@@ -65,5 +65,33 @@ describe("agent loop", () => {
     expect(toolResult).toMatchObject({ toolName: "get_current_time", isError: false });
     // 工具返回的是 ISO 8601 时间字符串
     expect(JSON.stringify(toolResult)).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  });
+
+  it("回灌的历史进入 transcript，并随请求发给 provider", async () => {
+    // 助手消息用 fauxAssistantMessage 造：AgentMessage 的 assistant 分支还带
+    // api / provider / model / usage 等字段，手写一个字面量凑不齐
+    const history: AgentMessage[] = [
+      { role: "user", content: [{ type: "text", text: "上一轮提问" }], timestamp: Date.now() },
+      fauxAssistantMessage([fauxText("上一轮回答")]),
+    ];
+    const { faux, agent } = fauxAgent({ messages: history, sessionId: "session-1" });
+
+    let seen: { messages: unknown[]; sessionId?: string } | undefined;
+    faux.setResponses([
+      (context, options) => {
+        seen = { messages: context.messages, sessionId: options?.sessionId };
+        return fauxAssistantMessage([fauxText("这一轮回答")]);
+      },
+    ]);
+
+    // 回灌之后 transcript 就已经不是空的了
+    expect(agent.state.messages).toHaveLength(2);
+
+    await agent.prompt("这一轮提问");
+
+    expect(seen?.messages).toHaveLength(3);
+    expect(JSON.stringify(seen?.messages)).toContain("上一轮回答");
+    // sessionId 是 pi Agent 的顶层选项，会随每次请求下发给 provider
+    expect(seen?.sessionId).toBe("session-1");
   });
 });

@@ -30,9 +30,6 @@
           />
         </div>
         <div class="config-controls">
-          <a-button type="link" class="doc-link-btn" @click="openDocLink">
-            <InfoCircleOutlined /> 文档处理与 OCR 说明
-          </a-button>
           <a-button
             @click="showChunkConfigModal"
             :disabled="isGraphBased"
@@ -690,10 +687,6 @@ const getAuthHeaders = () => {
   return userStore.getAuthHeaders();
 };
 
-const openDocLink = () => {
-  window.open('https://xerrors.github.io/Yuxi-Know/latest/advanced/document-processing.html', '_blank', 'noopener');
-};
-
 const chunkData = async () => {
   if (!databaseId.value) {
     message.error('请先选择知识库');
@@ -779,12 +772,6 @@ const chunkData = async () => {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.doc-link-btn {
-  color: var(--main-600);
-  display: flex;
-  align-items: center;
 }
 
 .source-segmented {
@@ -880,11 +867,6 @@ const chunkData = async () => {
 .zip-support-tip {
   font-size: 12px;
   color: var(--color-warning-500);
-}
-
-.doc-link-btn {
-  color: var(--main-600);
-  margin-left: 12px;
 }
 
 // 同名文件提示样式

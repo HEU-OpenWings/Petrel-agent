@@ -28,6 +28,17 @@ export function useAgentStream() {
     activeIndex = -1
   }
 
+  /** 切换会话时把历史消息灌进来。归约逻辑不参与，直接覆盖整个数组。 */
+  function loadHistory(history) {
+    // 先掐掉上一轮：用户常在等回答时就切走，不中断的话旧流的消息、工具调用、
+    // 错误文案会继续写进新会话的界面，running 也会一直卡在 true 让输入框禁用
+    abort()
+    messages.value = Array.isArray(history) ? [...history] : []
+    toolCalls.value = {}
+    error.value = ''
+    activeIndex = -1
+  }
+
   /** message_start / message_update / message_end 都带完整或部分消息，按下标覆盖即可。 */
   function upsertMessage(index, message) {
     if (index < 0) return
@@ -93,7 +104,12 @@ export function useAgentStream() {
 
     try {
       await streamChat(
-        { message, systemPrompt: options.systemPrompt, signal: controller.value.signal },
+        {
+          message,
+          sessionId: options.sessionId,
+          systemPrompt: options.systemPrompt,
+          signal: controller.value.signal
+        },
         (frame) => {
           if (frame.event === 'error') {
             error.value = frame.data?.message ?? '服务端返回未知错误'
@@ -118,5 +134,5 @@ export function useAgentStream() {
     controller.value?.abort()
   }
 
-  return { messages, toolCalls, running, error, canSend, send, abort, reset }
+  return { messages, toolCalls, running, error, canSend, send, abort, reset, loadHistory }
 }

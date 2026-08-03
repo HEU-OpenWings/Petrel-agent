@@ -1,11 +1,5 @@
 <template>
   <div class="chat-view">
-    <header class="top">
-      <span class="title">Petrel</span>
-      <span class="model">agent-server · pi agent loop</span>
-      <button class="reset" type="button" :disabled="running" @click="reset">新对话</button>
-    </header>
-
     <main ref="scrollArea" class="stream">
       <div class="inner">
         <div v-if="messages.length === 0" class="empty">
@@ -26,39 +20,221 @@
       </div>
     </main>
 
-    <footer class="composer">
+    <footer class="composer-wrap">
       <div class="inner">
-        <textarea
-          v-model="draft"
-          class="input"
-          rows="1"
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-          @keydown.enter.exact.prevent="submit"
-        />
-        <button v-if="running" class="action stop" type="button" @click="abort">停止</button>
-        <button v-else class="action" type="button" :disabled="!draft.trim()" @click="submit">
-          发送
-        </button>
+        <div class="composer-shell">
+          <CommandPalette
+            v-if="palette.open.value"
+            :commands="palette.filtered.value"
+            :active-index="palette.activeIndex.value"
+            @pick="onPickCommand"
+            @hover="palette.activeIndex.value = $event"
+          />
+
+          <MessageInputComponent
+            ref="input"
+            :model-value="draft"
+            :is-loading="running"
+            :send-button-disabled="!running && !draft.trim()"
+            placeholder="输入问题，Enter 发送，Shift+Enter 换行，/ 唤起命令"
+            @update:model-value="onDraftChange"
+            @send="onSendOrStop"
+            @keydown="onKeydown"
+          >
+            <template #actions-right>
+              <span class="model">{{ MODEL_NAME }}</span>
+              <a-tooltip :title="canUseCommands ? '命令' : '清空输入后可使用命令'">
+                <a-button
+                  type="text"
+                  class="command-btn"
+                  :disabled="!canUseCommands"
+                  @click="toggleCommands"
+                >
+                  <template #icon><Slash :size="15" /></template>
+                </a-button>
+              </a-tooltip>
+            </template>
+          </MessageInputComponent>
+        </div>
       </div>
     </footer>
   </div>
 </template>
 
 <script setup>
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { Slash } from 'lucide-vue-next'
+import CommandPalette from '@/components/chat/CommandPalette.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
+import MessageInputComponent from '@/components/MessageInputComponent.vue'
+import { fetchMessages } from '@/apis/session_api'
 import { useAgentStream } from '@/composables/useAgentStream'
+import { useCommandPalette } from '@/composables/useCommandPalette'
+import { useLayoutStore } from '@/stores/layout'
+import { useSessionStore } from '@/stores/session'
+import { useWorkspaceStore } from '@/stores/workspace'
 
-const { messages, toolCalls, running, error, send, abort, reset } = useAgentStream()
+/** packages/ai 目前只注册了这一个模型，所以这里是静态文字而不是下拉 */
+const MODEL_NAME = 'DeepSeek-V3'
+
+const { messages, toolCalls, running, error, send, abort, reset, loadHistory } = useAgentStream()
+
+const layout = useLayoutStore()
+const sessionStore = useSessionStore()
+const workspace = useWorkspaceStore()
+
+// AppShell 用 key 强制重挂载来实现「新对话」，卸载时必须掐断在飞的请求，
+// 否则旧对话的 SSE 会继续跑到没有组件接收它为止
+onUnmounted(abort)
+
+// 进对话页时没有当前会话就开一个新的；已经有了（从左栏点进来、或从别的页面切回来）就拉历史。
+// startNew() 也会改 currentId，从而触发下面的 watch 去拉一个后端还不存在的会话——
+// 该接口对不存在的会话刻意返回 200 + 空数组（见 routes/sessions.ts），多打一次而已，
+// 换来的是「新建」和「切换」共用同一条加载路径，不用在两处各维护一套清空逻辑
+onMounted(() => {
+  if (!sessionStore.currentId) sessionStore.startNew()
+  else void loadSession(sessionStore.currentId)
+})
+
+/**
+ * submit() 的自增计数。守的是这个场景：历史 GET 慢，用户没等它回来就发了消息，
+ * 等历史到达时 loadHistory() 会先 abort() 掐死这条刚起的流、再把 messages 清空
+ * ——用户的消息凭空消失。这里不能用 running 判断：切会话时旧流也在 running，
+ * 分不出「别的会话的旧流」和「本会话的新流」，只有 send 的次数能。
+ * 别因为看不出它在防什么就删掉。
+ */
+let sendSeq = 0
+
+async function loadSession(id) {
+  const seenSend = sendSeq
+  let history = []
+  try {
+    const data = await fetchMessages(id)
+    history = data.messages ?? []
+  } catch {
+    // 历史拉不到就当空会话继续，不阻塞用户提问
+  }
+  // 加载期间用户发了新消息，界面已经属于新一轮对话，这份历史作废
+  if (sendSeq !== seenSend) return
+  // 连着点两个会话时响应可能乱序到达，晚到的旧响应会把当前会话的内容盖掉
+  if (sessionStore.currentId !== id) return
+  loadHistory(history)
+}
+
+watch(
+  () => sessionStore.currentId,
+  (id) => {
+    if (id) void loadSession(id)
+  }
+)
 
 const draft = ref('')
 const scrollArea = ref(null)
+const input = ref(null)
+
+function newChat() {
+  // 必须先 abort 再 reset：reset() 不会碰 running/controller，
+  // 旧流后续到达的事件会继续写回刚清空的 messages，且 running 会卡在 true 挡住新消息
+  abort()
+  reset()
+  workspace.clear()
+  draft.value = ''
+  sessionStore.startNew()
+}
+
+const palette = useCommandPalette([
+  { name: 'new', description: '新对话', run: newChat },
+  { name: 'workspace', description: '开合右栏', run: () => layout.toggleRight() },
+  { name: 'sidebar', description: '开合左栏', run: () => layout.toggleLeft() }
+])
+
+/** 只在整段输入以 / 开头时唤起面板，避免正文里的斜杠误触发 */
+function onDraftChange(value) {
+  draft.value = value
+  if (value.startsWith('/')) {
+    palette.openWith(value.slice(1))
+  } else if (palette.open.value) {
+    palette.close()
+  }
+}
+
+// 输入框在加载中会把发送按钮换成停止图标，两种点击都走这里
+function onSendOrStop() {
+  if (running.value) {
+    abort()
+    return
+  }
+  submit()
+}
+
+// 面板开着时要能点它关闭；只有「面板没开且已有草稿」才禁用，
+// 否则点一下会把用户没发出去的内容冲掉
+const canUseCommands = computed(() => palette.open.value || !draft.value.trim())
+
+function toggleCommands() {
+  if (palette.open.value) {
+    palette.close()
+    return
+  }
+  // 走到这里说明面板没开，canUseCommands 此时等价于「草稿是否为空」，
+  // 非空则拒绝打开面板，避免覆盖草稿
+  if (!canUseCommands.value) return
+  draft.value = '/'
+  palette.openWith('')
+  input.value?.focus()
+}
+
+function onPickCommand(index) {
+  palette.pick(index)
+  draft.value = ''
+}
+
+function onKeydown(event) {
+  if (palette.open.value) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      palette.moveDown()
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      palette.moveUp()
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      palette.close()
+      return
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      palette.pick()
+      draft.value = ''
+      return
+    }
+  }
+
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
+    submit()
+  }
+}
 
 async function submit() {
   const text = draft.value.trim()
   if (!text || running.value) return
+
+  // onMounted 保证了 currentId 非空，?? 只是不让 null 漏进请求体（后端会 400）
+  const sessionId = sessionStore.currentId ?? sessionStore.startNew()
+
   draft.value = ''
-  await send(text)
+  // 必须在 send 之前自增：在飞的 loadSession 靠它判断「我拉的历史已经过期了」
+  sendSeq += 1
+  await send(text, { sessionId })
+
+  // 首条消息会让后端 upsert 出这个会话，刷新列表才能把它显示出来；
+  // 后续消息只改 updatedAt，同样要刷新，否则左栏的时间倒序是旧的
+  await sessionStore.refresh()
 }
 
 watch(
@@ -75,62 +251,31 @@ watch(
 .chat-view {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  background: var(--gray-0);
-}
-
-.top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--gray-150);
-}
-
-.title {
-  color: var(--gray-1000);
-  font-weight: 600;
-}
-
-.model {
-  color: var(--gray-400);
-  font-size: 12px;
-}
-
-.reset {
-  margin-left: auto;
-  padding: 4px 10px;
-  border: 1px solid var(--gray-200);
-  border-radius: 4px;
-  background: var(--gray-0);
-  color: var(--gray-700);
-  font-size: 12px;
-  cursor: pointer;
-
-  &:disabled {
-    color: var(--gray-400);
-    cursor: not-allowed;
-  }
+  height: 100%;
+  background: var(--surface-app);
 }
 
 .stream {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 
+// 760px 是上限而非固定值：1280 下三栏全开时中栏只剩 680px，
+// 让内容自然收窄，不挤压左右栏也不出横向滚动
 .inner {
   max-width: 760px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 24px;
 }
 
 .empty {
   padding: 80px 0;
-  color: var(--gray-500);
+  color: var(--text-muted);
   text-align: center;
 
   .hint {
-    color: var(--gray-400);
+    color: var(--text-faint);
     font-size: 13px;
   }
 }
@@ -138,60 +283,47 @@ watch(
 .error {
   margin: 12px 0;
   padding: 10px 12px;
-  border: 1px solid #e8a3a3;
-  border-radius: 6px;
-  background: #fdf5f5;
-  color: #c04a4a;
+  border-radius: 8px;
+  background: var(--color-error-50);
+  color: var(--color-error-700);
   font-size: 13px;
   word-break: break-word;
 }
 
-.composer {
-  border-top: 1px solid var(--gray-150);
-  padding: 12px 0 20px;
-
-  .inner {
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
-  }
+.composer-wrap {
+  flex: 0 0 auto;
+  padding: 8px 0 20px;
 }
 
-.input {
-  flex: 1;
-  max-height: 200px;
-  padding: 10px 12px;
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
-  background: var(--gray-0);
-  color: var(--gray-1000);
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 1.5;
-  resize: none;
-
-  &:focus {
-    outline: none;
-    border-color: var(--main-300);
-  }
+// 输入框本体是 v0.4 的 MessageInputComponent，这里只负责给命令面板一个定位参照
+.composer-shell {
+  position: relative;
 }
 
-.action {
-  padding: 10px 18px;
-  border: none;
+// packages/ai 只注册了一个模型，这里是静态标识而不是可点的下拉
+.model {
+  margin-right: 4px;
+  color: var(--gray-500);
+  font-size: 12px;
+}
+
+.command-btn {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  padding: 0;
   border-radius: 8px;
-  background: var(--main-color);
-  color: #fff;
-  font-size: 14px;
-  cursor: pointer;
+  color: var(--gray-600);
+
+  &:hover:not(:disabled) {
+    color: var(--main-color);
+  }
 
   &:disabled {
-    background: var(--gray-300);
-    cursor: not-allowed;
-  }
-
-  &.stop {
-    background: var(--gray-700);
+    color: var(--gray-300);
   }
 }
 </style>

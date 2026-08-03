@@ -11,63 +11,30 @@ export const useInfoStore = defineStore('info', () => {
 
   // 计算属性 - 组织信息
   const organization = computed(() => infoConfig.value.organization || {
-    name: "江南语析",
+    name: "Petrel",
     logo: "/favicon.svg",
     avatar: "/avatar.jpg"
   })
 
   // 计算属性 - 品牌信息
   const branding = computed(() => infoConfig.value.branding || {
-    name: "Yuxi-Know",
-    title: "Yuxi-Know",
-    subtitle: "大模型驱动的知识库管理工具",
-    description: "结合知识库与知识图谱，提供更准确、更全面的回答"
+    name: "Petrel",
+    title: "Petrel",
+    subtitle: "以对话为核心的智能体平台",
+    description: "接入大模型与工具，把复杂任务交给智能体完成"
   })
 
   // 计算属性 - 功能特性
-  const features = computed(() => infoConfig.value.features || [{
-    label: "GitHub Stars",
-    value: "3000+",
-    description: "开发者社区的认可与支持",
-    icon: "stars"
-  }, {
-    label: "已解决 Issues",
-    value: "250+",
-    description: "持续改进和问题解决能力",
-    icon: "issues"
-  }, {
-    label: "累计 Commits",
-    value: "1100+",
-    description: "活跃的开发迭代和功能更新",
-    icon: "commits"
-  }, {
-    label: "开源协议",
-    value: "MIT 协议",
-    description: "完全免费，支持商业使用",
-    icon: "license"
-  }])
+  // 默认值原本是上游 Yuxi-Know 的仓库统计（Stars / Issues / Commits），
+  // 挂在 Petrel 名下就是假数据，一并清空。HomeView 的展示区带 v-if，空数组时整块不渲染
+  const features = computed(() => infoConfig.value.features || [])
 
-  const actions = computed(() => infoConfig.value.actions || [{
-    name: "演示视频",
-    icon: "video",
-    url: "https://www.bilibili.com/video/BV1DF14BTETq"
-  }, {
-    name: "文档中心",
-    icon: "docs",
-    url: "https://xerrors.github.io/Yuxi-Know/"
-  }, {
-    name: "提交 Issue",
-    icon: "issue",
-    url: "https://github.com/xerrors/Yuxi-Know/issues/new/choose"
-  }, {
-    name: "开发路线图",
-    icon: "roadmap",
-    url: "https://github.com/xerrors/Yuxi-Know#roadmap"
-  }])
+  // 同上：默认值原本全是上游项目的文档 / Issue / 路线图外链，Petrel 还没有对应地址
+  const actions = computed(() => infoConfig.value.actions || [])
 
   // 计算属性 - 页脚信息
   const footer = computed(() => infoConfig.value.footer || {
-    copyright: "© 江南语析 2025 [WIP] v0.12.138"
+    copyright: "© Petrel 2026"
   })
 
   // 动作方法
