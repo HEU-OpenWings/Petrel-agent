@@ -1,16 +1,18 @@
 import type { Agent } from "@petrel/agent-core";
-import {
-  createMessageRepository,
-  createSessionRepository,
-  type Database,
-  DEFAULT_USER_ID,
-} from "@petrel/database";
+import { createMessageRepository, createSessionRepository, type Database } from "@petrel/database";
 import { logger } from "@petrel/logger";
+import { isUniqueViolation } from "./db-errors.ts";
 
 const TITLE_MAX_LENGTH = 30;
 const FALLBACK_TITLE = "新对话";
 
-export function createSessionService(db: Database) {
+/**
+ * 会话 service。
+ *
+ * userId 由工厂参数传入而不是每个方法都带一个：调用点在 route 层，
+ * 那里刚从 context 拿到当前用户，一次绑定比每个调用点各传一次更难写错。
+ */
+export function createSessionService(db: Database, userId: string) {
   const sessionRepo = createSessionRepository(db);
   const messageRepo = createMessageRepository(db);
 
@@ -29,15 +31,21 @@ export function createSessionService(db: Database) {
   return {
     buildTitle,
 
-    async ensureSession(sessionId: string, firstMessage: string): Promise<void> {
-      await sessionRepo.upsert({
+    /** @returns false 表示这个 id 已被别人占用，调用方应当拒绝本次请求 */
+    async ensureSession(sessionId: string, firstMessage: string): Promise<boolean> {
+      return sessionRepo.upsert({
         id: sessionId,
-        userId: DEFAULT_USER_ID,
+        userId,
         title: buildTitle(firstMessage),
       });
     },
 
     async loadHistory(sessionId: string) {
+      // 先确认归属：listBySession 只按 sessionId 查，这条路上没有 userId。
+      // 不属于自己时按会话不存在处理，与「新会话后端还没有这一行」的行为一致
+      if (!(await sessionRepo.findById(sessionId, userId))) {
+        return { messages: [], interruptedSeqs: [] };
+      }
       const stored = await messageRepo.listBySession(sessionId);
       return {
         messages: stored.map((row) => row.message),
@@ -53,32 +61,24 @@ export function createSessionService(db: Database) {
     },
 
     async list() {
-      return sessionRepo.listByUser(DEFAULT_USER_ID);
+      return sessionRepo.listByUser(userId);
     },
 
     async rename(sessionId: string, title: string): Promise<boolean> {
-      return sessionRepo.rename(sessionId, title);
+      return sessionRepo.rename(sessionId, userId, title);
     },
 
     async remove(sessionId: string): Promise<boolean> {
-      return sessionRepo.remove(sessionId);
+      return sessionRepo.remove(sessionId, userId);
     },
 
     async touch(sessionId: string): Promise<void> {
-      await sessionRepo.touch(sessionId);
+      await sessionRepo.touch(sessionId, userId);
     },
   };
 }
 
 type SessionService = ReturnType<typeof createSessionService>;
-
-/**
- * drizzle 把驱动抛的错误包一层，原始错误在 cause 上；node-postgres 与 PGlite
- * 的 cause 都是 pg 风格的对象，唯一约束冲突是 SQLSTATE 23505。
- */
-function isUniqueViolation(error: unknown): boolean {
-  return (error as { cause?: { code?: string } } | null)?.cause?.code === "23505";
-}
 
 /**
  * 订阅 agent 事件并落库。

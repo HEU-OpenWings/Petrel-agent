@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
 import { attachPersistence, createSessionService } from "../../services/session.ts";
+import type { AppEnv } from "../../types.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -41,6 +42,15 @@ function parseChatRequest(body: unknown) {
 }
 
 /**
+ * 会话 id 已被别人占用。
+ *
+ * 单独一个类型是为了穿透 prepareSession 的降级逻辑：那里把数据库故障
+ * 降级成「照常对话但不持久化」，而越权必须明确拒绝——否则攻击者虽然拿不到
+ * 别人的历史，对方的会话仍会被 touch，等于给了一个骚扰通道。
+ */
+class SessionOwnedByOther extends Error {}
+
+/**
  * 加载历史并确保会话存在。
  *
  * 这里不手动存用户消息：pi 的事件序列里用户消息同样会触发 message_end，
@@ -49,10 +59,12 @@ function parseChatRequest(body: unknown) {
  * 数据库不可用时整段降级：对话照常进行，只是这一轮不会被保存，
  * 多轮上下文退化成单轮。能用但记不住，好过直接不能用。
  */
-async function prepareSession(sessionId: string, message: string) {
+async function prepareSession(sessionId: string, message: string, userId: string) {
   try {
-    const service = createSessionService(getDb());
-    await service.ensureSession(sessionId, message);
+    const service = createSessionService(getDb(), userId);
+    if (!(await service.ensureSession(sessionId, message))) {
+      throw new SessionOwnedByOther();
+    }
 
     const history = await service.loadHistory(sessionId);
     // 落库的就是 pi 的 AgentMessage，读回来是 jsonb 的 unknown，原样回灌不做转换。
@@ -61,18 +73,24 @@ async function prepareSession(sessionId: string, message: string) {
     // 正是 schema.ts 存 jsonb 时要避免的事（pi 一改就要同步改两处）。
     return { service, history: history.messages as AgentMessage[] };
   } catch (error) {
+    if (error instanceof SessionOwnedByOther) throw error;
     logger.error({ err: error, sessionId }, "session unavailable, continuing without persistence");
     return undefined;
   }
 }
 
-export const chat = new Hono().post("/", async (c) => {
+export const chat = new Hono<AppEnv>().post("/", async (c) => {
   const body: unknown = await c.req.json().catch(() => {
     throw new HTTPException(400, { message: "请求体必须是 JSON" });
   });
   const { message, sessionId, systemPrompt } = parseChatRequest(body);
 
-  const prepared = await prepareSession(sessionId, message);
+  const prepared = await prepareSession(sessionId, message, c.get("currentUser").id).catch((error) => {
+    if (error instanceof SessionOwnedByOther) {
+      throw new HTTPException(403, { message: "会话不存在或无权访问" });
+    }
+    throw error;
+  });
 
   return streamSSE(c, async (stream) => {
     const agent = createAgent({

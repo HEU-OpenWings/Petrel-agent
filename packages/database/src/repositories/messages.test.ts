@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_USER_ID, messages, sessions } from "../schema.ts";
-import { createTestDb, type TestDb } from "../testing.ts";
+import { messages, sessions } from "../schema.ts";
+import { createTestDb, TEST_USER_ID, type TestDb } from "../testing.ts";
 import { createMessageRepository } from "./messages.ts";
 
 let db: TestDb;
@@ -18,7 +18,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await reset();
-  await db.insert(sessions).values({ id: SESSION_ID, userId: DEFAULT_USER_ID, title: "测试会话" });
+  await db.insert(sessions).values({ id: SESSION_ID, userId: TEST_USER_ID, title: "测试会话" });
 });
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
@@ -78,7 +78,7 @@ describe("messageRepository", () => {
 
   it("只返回指定会话的消息", async () => {
     const other = "22222222-2222-2222-2222-222222222222";
-    await db.insert(sessions).values({ id: other, userId: DEFAULT_USER_ID, title: "另一个会话" });
+    await db.insert(sessions).values({ id: other, userId: TEST_USER_ID, title: "另一个会话" });
     await repo.append({ sessionId: SESSION_ID, role: "user", message: {} });
     await repo.append({ sessionId: other, role: "user", message: {} });
 

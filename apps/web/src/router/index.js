@@ -1,12 +1,15 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AppShell from '@/layouts/AppShell.vue'
 import BlankLayout from '@/layouts/BlankLayout.vue'
+import { useUserStore } from '@/stores/user'
+import { safeRedirect } from '@/utils/redirect'
 
 /**
  * meta 约定：
  * - workspace: true  该页需要右栏工作区
  * - title            中栏顶部工具条显示的标题
- * - requiresAuth     HEU-7 落地前一律 false，见文件末尾的守卫说明
+ * - requiresAuth     需要登录
+ * - requiresAdmin    需要 admin 角色（同时要 requiresAuth）
  */
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -39,7 +42,20 @@ const router = createRouter({
           path: '',
           name: 'Chat',
           component: () => import('../views/ChatView.vue'),
-          meta: { requiresAuth: false, workspace: true, title: '新对话' }
+          meta: { requiresAuth: true, workspace: true, title: '新对话' }
+        }
+      ]
+    },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: AppShell,
+      children: [
+        {
+          path: '',
+          name: 'AdminUsers',
+          component: () => import('../views/AdminView.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true, title: '用户管理' }
         }
       ]
     },
@@ -98,23 +114,33 @@ const router = createRouter({
 })
 
 /**
- * 认证守卫暂时关闭：agent-server 还没有任何认证接口（HEU-7 未做）。
+ * 认证守卫。
  *
- * HEU-7 落地后要做的事：
- * 1. 给需要登录的路由把 meta.requiresAuth 改回 true
- * 2. 打开下面被注释的分支
- *
- * 原来的 requiresAdmin 分支已整段删除而不是注释保留：它会调
- * agentStore.initialize() 打 v0.4 的 Python API，必然抛错。留着它，
- * 关掉认证的结果不是「不校验」而是「导航时报错」。
- * 角色模型要等 HEU-7 定了范围再重写。
+ * requiresAdmin 分支不要恢复 v0.4 那一版：它会调 agentStore.initialize() 打
+ * Python API，必然抛错——那样关掉认证的结果不是「不校验」而是「导航时报错」。
  */
 router.beforeEach((to, from, next) => {
-  // const userStore = useUserStore()
-  // if (to.meta.requiresAuth === true && !userStore.isLoggedIn) {
-  //   next({ path: '/login', query: { redirect: to.fullPath } })
-  //   return
-  // }
+  const userStore = useUserStore()
+
+  if (to.meta.requiresAuth === true && !userStore.isLoggedIn) {
+    next({ path: '/login', query: { redirect: to.fullPath } })
+    return
+  }
+
+  if (to.meta.requiresAdmin === true && !userStore.isAdmin) {
+    next({ path: '/agent' })
+    return
+  }
+
+  // 已登录的人不该再看到登录页；如果 URL 上带着 redirect（被 401 踢过来时写的），
+  // 就把人送回原目标，而不是一律扔到 /agent
+  if (to.path === '/login' && userStore.isLoggedIn) {
+    // 传字符串而不是 { path }：redirect 里是 fullPath，可能带 query / hash，
+    // { path } 形式不会解析它们
+    next(safeRedirect(to.query.redirect))
+    return
+  }
+
   next()
 })
 

@@ -41,9 +41,8 @@
 
       <div class="user">
         <template v-if="userStore.isLoggedIn">
-          <img v-if="userStore.avatar" class="avatar" :src="userStore.avatar" alt="" />
-          <span v-else class="avatar fallback">{{ initial }}</span>
-          <span class="name">{{ userStore.username || '已登录' }}</span>
+          <span class="avatar fallback">{{ initial }}</span>
+          <span class="name">{{ userStore.displayName || '已登录' }}</span>
         </template>
         <RouterLink v-else to="/login" class="login">
           <LogIn :size="16" />
@@ -63,7 +62,8 @@ import {
   LogIn,
   Pencil,
   SquarePen,
-  Trash2
+  Trash2,
+  Users
 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
@@ -76,13 +76,16 @@ const userStore = useUserStore()
 
 onMounted(() => sessionStore.refresh())
 
-const navItems = [
+// 用 computed 而不是常量：/admin 只对 admin 可见，登录态是异步恢复的（main.js 里
+// fetchMe），isAdmin 会从 false 变 true，静态数组不会重新求值
+const navItems = computed(() => [
   { label: '知识库', path: '/knowledge', icon: LibraryBig },
   { label: 'Dashboard', path: '/dashboard', icon: BarChart3 },
-  { label: '评测', path: '/eval', icon: CircleCheck }
-]
+  { label: '评测', path: '/eval', icon: CircleCheck },
+  ...(userStore.isAdmin ? [{ label: '用户管理', path: '/admin', icon: Users }] : [])
+])
 
-const initial = computed(() => (userStore.username || '?').slice(0, 1).toUpperCase())
+const initial = computed(() => (userStore.displayName || '?').slice(0, 1).toUpperCase())
 
 function onNewChat() {
   emit('new-chat')

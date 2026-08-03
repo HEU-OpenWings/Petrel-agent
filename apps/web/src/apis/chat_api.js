@@ -4,6 +4,7 @@
  * POST /api/chat 返回 SSE，事件体是 pi 的 AgentEvent 原样透传。
  * 因为需要 POST + 自定义请求头，这里用 fetch 读流，而不是 EventSource。
  */
+import { handleUnauthorized } from '@/apis/http'
 
 /** 把 SSE 帧文本解析为 { event, data }，data 解析失败时为 null。 */
 function parseFrame(frame) {
@@ -40,6 +41,12 @@ export async function streamChat({ message, sessionId, systemPrompt, signal }, o
   })
 
   if (!response.ok) {
+    // 401 走 http.js 的同一份处理，否则登录失效时对话界面只会显示一条错误文案，
+    // 不会跳登录页。放在解析错误体之前：那份文案这一支根本用不上
+    if (response.status === 401) {
+      throw handleUnauthorized()
+    }
+
     let detail = ''
     try {
       const body = await response.json()
@@ -47,6 +54,7 @@ export async function streamChat({ message, sessionId, systemPrompt, signal }, o
     } catch {
       detail = await response.text().catch(() => '')
     }
+
     throw new Error(detail || `请求失败（HTTP ${response.status}）`)
   }
 

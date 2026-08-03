@@ -31,15 +31,6 @@
           <CodeOutlined class="icon" />
           <span>模型配置</span>
         </div>
-        <div
-          class="sider-item"
-          :class="{ activesec: activeTab === 'user' }"
-          @click="activeTab = 'user'"
-          v-if="userStore.isAdmin"
-        >
-          <UserOutlined class="icon" />
-          <span>用户管理</span>
-        </div>
       </div>
 
       <!-- 顶部导航 (Mobile) -->
@@ -60,14 +51,6 @@
         >
           模型配置
         </div>
-        <div
-          class="nav-item"
-          :class="{ active: activeTab === 'user' }"
-          @click="activeTab = 'user'"
-          v-if="userStore.isAdmin"
-        >
-          用户管理
-        </div>
       </div>
 
       <!-- 内容区域 -->
@@ -83,10 +66,6 @@
             <a-divider />
             <ModelProvidersComponent />
           </div>
-
-          <div v-show="activeTab === 'user'" v-if="userStore.isAdmin">
-            <UserManagementComponent />
-          </div>
         </div>
       </div>
     </div>
@@ -98,12 +77,10 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useUserStore } from '@/stores/user'
 import {
   SettingOutlined,
-  CodeOutlined,
-  UserOutlined
+  CodeOutlined
 } from '@ant-design/icons-vue'
 import BasicSettingsSection from '@/components/BasicSettingsSection.vue'
 import ModelProvidersComponent from '@/components/ModelProvidersComponent.vue'
-import UserManagementComponent from '@/components/UserManagementComponent.vue'
 
 const props = defineProps({
   visible: {
@@ -146,8 +123,6 @@ watch(() => props.visible, (newVal) => {
   if (newVal) {
     if (userStore.isSuperAdmin) {
       activeTab.value = 'base'
-    } else if (userStore.isAdmin) {
-      activeTab.value = 'user'
     }
   }
 })

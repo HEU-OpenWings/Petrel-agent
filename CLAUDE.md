@@ -33,7 +33,10 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
 [pi](https://github.com/earendil-works/pi)。
 
 - `apps/api`（`@petrel/api`）— Hono HTTP 应用。`src/http/app.ts` 挂载路由，
-  当前有 `system`（health）、`chat`（SSE）与 `sessions`（会话 CRUD）。
+  当前有 `system`（health）、`auth`（注册/登录/登出/me）、`chat`（SSE）、
+  `sessions`（会话 CRUD）与 `admin`（用户管理）。
+  **`app.ts` 的挂载顺序有安全含义**：`system` 与 `auth` 是仅有的两个公开前缀，
+  `app.use("/api/*", requireAuth)` 之下的路由自动受保护（`admin` 再叠一层 `requireAdmin`）。
 - `apps/web`（`@petrel/web`）— Vue 3 + Vite + Ant Design Vue + pinia，JS（尚未 TS 化）。
 - `packages/agent-core` — `createAgent()` 装配 pi `Agent`，内置工具在 `src/tools/`。
 - `packages/ai` — 模型 provider 注册。DeepSeek 官方与 SiliconFlow 都不在 pi 内置 provider 里，
@@ -72,7 +75,26 @@ event: error   data: { message }
 `sessionId` 由**前端生成**（`crypto.randomUUID()`）、后端 upsert，所以 SSE 不需要回传新会话 id。
 会话 CRUD 在 `/api/sessions`：`GET /` 列表 · `GET /:id/messages` 历史 · `PATCH /:id` 重命名 ·
 `DELETE /:id` 删除。消息按 `message_end` 增量落库，中断的半截回答在 `agent_end` 时补写并标
-`interrupted`。**落库失败不中断对话**——数据库挂掉时 SSE 照常输出，只在日志里报错。
+`interrupted`。**落库失败不中断对话**——会话/消息仓储写失败时 SSE 照常输出，只在日志里报错
+（`chat.test.ts` 有用例守着）。注意挂上认证后**整个数据库不可用**不再是这个结果：
+`requireAuth` 要查库确认用户，整库挂掉时这一步先失败（`resolveUser` 的 try/catch 只包 `verify()`，
+`findById()` 的错误直接冒泡到 `onError` → **500**），请求根本进不到 handler。
+401 只对应「没 cookie / 验签失败或过期 / 用户不存在或已禁用」。
+
+### 认证
+
+邮箱密码登录，JWT 存 httpOnly cookie（`petrel_token`，`SameSite=Strict`，7 天，
+`secure` 仅在生产开启）。密码用 Node 内置 `scrypt`，JWT 用 Hono 内置 `hono/jwt`——
+**零第三方认证依赖**。
+
+`requireAuth` 每次请求都查一次库确认用户存在且未禁用，不只验签：
+token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必须立即生效。
+角色与禁用状态一律以库里为准。
+
+`ADMIN_EMAILS` 名单里的邮箱在注册与每次登录时自动提升为 admin，不做反向降级。
+
+**尚未实现（公开部署前必须先做）**：配额与 token 计量、注册限流、邮箱验证、密码重置。
+登录失败限流（同一邮箱 5 次失败锁 15 分钟）是单实例内存的，进程重启即失效、多副本部署下无效。
 
 ### 消费 pi AgentEvent 的硬约束（已核对 pi 的 `types.d.ts`，勿凭文档记忆）
 
@@ -116,12 +138,17 @@ event: error   data: { message }
    `reasoning: { effort: "none" }` 把思考关掉**（`openai-responses.js` 的 else 分支）。
    想沿用 provider 自己的默认值，要把 `thinkingLevelMap.off` 设成 `null`，
    见 `packages/ai/src/index.ts` 里 `deepseek-v4-flash` 的注释。
+10. **cookie 的 `secure` 必须按环境开关**。本地 `http://localhost` 下设 `secure: true`，
+    浏览器会静默丢弃 cookie，表现为「登录接口返回 200 但下一个请求仍是未登录」。
+11. **Node 的 `scrypt` 默认 `maxmem` 是 32MB**，而 N=65536、r=8 需要 64MB，
+    不显式调高会抛 `ERR_CRYPTO_INVALID_SCRYPT_PARAMS`，报错不指向根因。
 
 ## 重构现状
 
 本仓库由 `agent-server` 与 `agent-web` 合并而来，正处于 v0.4（Python + FastAPI + LangGraph）
 → v0.5（TypeScript + Hono + pi）的重构中。前端采取「先原样迁入基线再逐步改造」，
-因此**大量组件调用的是已不存在的 v0.4 Python API**（登录、知识库、图谱、Dashboard 都会失败），
+因此**大量组件调用的是已不存在的 v0.4 Python API**（知识库、图谱、Dashboard 都会失败；
+登录已在 HEU-7 重做，走 v0.5 的 `/api/auth`），
 另有约 8000 行待删的旧对话代码与知识图谱/思维导图组件。
 
 计划、待办与组件处置清单在 [docs/backend-plan.md](docs/backend-plan.md) 与

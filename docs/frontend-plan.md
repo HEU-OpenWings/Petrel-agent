@@ -17,7 +17,7 @@ Petrel（原 Yuxi）v0.4 前端（Vue 3 + Ant Design Vue，对接 Python API）�
 | 语言 | 暂时 JS，后续转 TS | 为快速跑通 SSE 先用 JS；TS 化是独立任务 |
 | 首屏形态 | **单栏对话流**，工具输出内联折叠 | 原方案是三栏；会话列表缺后端持久化，右栏推后到 HEU-26 |
 | 入口 | 新对话界面直接接管 `/agent` | 不并存新旧两套入口 |
-| 认证 | 暂时去掉登录守卫 | agent-server 目前没有认证接口 |
+| 认证 | **已启用**：登录页 + 路由守卫 + httpOnly cookie | 见 [superpowers/specs/2026-08-03-auth-design.md](superpowers/specs/2026-08-03-auth-design.md) |
 
 ## 2. 当前状态
 
@@ -150,7 +150,26 @@ src/
 所以刷新恢复、两个会话来回切、中断后半截回答、hover 出图标、三个原生弹窗、active 高亮
 都只有自动化测试和构建覆盖，**没有人在浏览器里看过**。
 
-### 已知问题：前端的两个基建缺口
+### 已完成：认证接入（HEU-7，2026-08-03）
+
+`apis/auth_api.js` + `apis/admin_api.js` + 重写的 `stores/user.js` + `views/LoginView.vue`
+（登录/注册同页切换）+ `views/AdminView.vue`（用户列表与禁用/解禁）+ `router` 的
+`requiresAuth` / `requiresAdmin` 守卫。后端契约见 [backend-plan.md](backend-plan.md) 的
+「认证与越权收口」。
+
+- **token 不进前端状态**：它在 httpOnly cookie 里，JS 读不到也不需要读。
+  代价是刷新页面后必须在 `main.js` 里调一次 `/api/auth/me` 才知道自己是谁，
+  且这次 `await` 必须排在 `app.use(router)` **之前**（分界是它而不是 `mount()`：
+  router 的 `install()` 里就会发起首次导航），否则已登录用户刷新 `/agent`
+  会在 user 还是 null 时被守卫重定向到 `/login`，等 fetchMe 回来导航早已 resolve。
+- **`logout()` 先同步清本地态再发请求**：`http.js` 的全局 401 分支不 `await` 它，
+  紧接着就跳转，跳转发生的那一刻必须已经是未登录态。
+- `meApi` 带 `skipUnauthorizedHandler`：未登录时 `/me` 返 401 是正常路径，
+  不该触发全局跳转，该不该跳由守卫按 `meta.requiresAuth` 决定。
+
+**v0.4 遗留组件因此坏掉了一批**，见 §5「组件处置清单」下的记录——本轮只记录不修复。
+
+### 已知问题：前端的三个基建缺口
 
 1. **前端目前零 lint 覆盖**，而且两头都断：根 `biome.json` 的 `files.includes` 里有
    `"!apps/web"`，所以 `pnpm run lint` 根本不看前端；而 `apps/web` 自己的 `lint` 脚本是
@@ -161,7 +180,11 @@ src/
    （该插件已经装在 `apps/web` 里），vitest 解析不了 `.vue` 文件；**不是「缺 `@vue/test-utils`」**。
    composable / store / api 这些 `.js` 已经有测试并跟着 `pnpm test` 一起跑（本轮新增
    `apis/chat_api` · `composables/useAgentStream` · `stores/session` 三个测试文件）。
-   挂插件属于基建变更，单独一个任务做。
+   挂插件属于基建变更，单独一个任务做。**后果要说清楚**：`.vue` 一个都测不了意味着
+   登录页、admin 页、路由守卫这类刚落地的安全相关 UI 全靠人眼，没有回归网。
+3. **`apps/web` 没有 typecheck**（是 JS，且没有 `vue-tsc`），Biome 又在根 `biome.json` 里
+   排除了它。加上第 2 条，前端目前**三道自动化关卡（lint / typecheck / 组件测试）全空**，
+   只有 `vite build` 能拦住语法错误与不存在的具名导入。
 
 另外 `stores/session.js` 的 `refresh()` 里那句 `list.value = list.value ?? []` 是恒等式
 （`list` 初始化为 `[]`，永远不会是 nullish），属既存代码，本轮未改。
@@ -169,8 +192,9 @@ src/
 ### 迁入基线的现状
 
 - **大部分接口不可用**：基线调用的是 v0.4 的 Python API，而 agent-server 目前只提供
-  `GET /api/system/health` · `POST /api/chat` · `/api/sessions` 四个会话接口。
-  登录、知识库、图谱、Dashboard 都会失败。
+  `GET /api/system/health` · `POST /api/chat` · `/api/sessions` 四个会话接口 ·
+  `/api/auth` 四个认证接口 · `/api/admin/users` 两个管理接口。
+  知识库、图谱、Dashboard 仍会失败；登录已在 HEU-7 重做，走 v0.5 的 `/api/auth`。
 - **旧对话代码已无路由引用**但文件仍在：`AgentView` · `AgentSingleView` ·
   `AgentChatComponent` · `AgentMessageComponent` · `AgentInputArea` · `ChatSidebarComponent` ·
   `AgentConfigSidebar` · `ToolCallingResult/*`，合计约 8000 行。
@@ -214,6 +238,9 @@ event: error   data: { message }
   连同 `@antv/g6` · `sigma` · `graphology` · `d3` · `markmap-*` 依赖一并移除。
   收益明显：`GraphCanvas` 单个 chunk 就有 1.16 MB
 - **修 lint**：迁到 `eslint.config.js`，或直接换 Biome 与 agent-server 统一
+- **补组件层测试基建**：根 `vitest.config.ts` 挂 `@vitejs/plugin-vue`（该依赖只装在
+  `apps/web/package.json` 里），否则任何 `import` 了 `.vue` 的测试都跑不起来，
+  `apps/web` 的组件层零测试覆盖；连带把 `apps/web` 纳入 typecheck 与 Biome。见 §2「基建缺口」
 - **Composer 增强（HEU-25）剩余部分**：`/` 命令面板已完成（`/new` · `/workspace` · `/sidebar`）；
   `@` 引用知识库等后端 kb 接口，模型切换等 HEU-12，附件上传等文件服务
 
@@ -225,7 +252,7 @@ event: error   data: { message }
 | 审批弹窗 `ApprovalDialog` | HEU-14 工具 preflight HITL |
 | Agent 选择与配置表单 | HEU-12 agent 注册表（TypeBox schema 生成表单） |
 | 引用角标与 refs 面板（HEU-26） | HEU-21 `kb_search` 真实检索 |
-| 登录页恢复 | HEU-7 最小认证 |
+| ~~登录页恢复~~ | HEU-7 最小认证 —— **已解锁并交付**，见 §2「认证接入」 |
 | 知识库管理页（HEU-27） | HEU-21 KB 与文档管理 API |
 | Dashboard / 评测页 | HEU-28 / HEU-29 |
 
@@ -242,7 +269,30 @@ event: error   data: { message }
 | --- | --- |
 | **保留/移植** | `MarkdownContentViewer` · `ImagePreviewComponent` · `ThemeToggle` · `ModelProvidersComponent` · `FileTable` · `FileUploadModal` · `ChunkParamsConfig` · `EmbeddingModelSelector` · `dashboard/*` |
 | **已重写** | 对话流（→ `components/chat/*` + `useAgentStream`） |
-| **待删除** | `AgentView` · `AgentSingleView` · `AgentChatComponent` · `AgentMessageComponent` · `AgentInputArea` · `ChatSidebarComponent` · `AgentConfigSidebar` · `ToolCallingResult/*` · `GraphCanvas` · `GraphDetailPanel` · `KnowledgeGraphSection` · `MindMapSection` |
+| **待删除** | `AgentView` · `AgentSingleView` · `AgentChatComponent` · `AgentMessageComponent` · `AgentInputArea` · `ChatSidebarComponent` · `AgentConfigSidebar` · `ToolCallingResult/*` · `GraphCanvas` · `GraphDetailPanel` · `KnowledgeGraphSection` · `MindMapSection` · `AppLayout`（已无路由引用） |
+
+`stores/user.js` 里的三个兼容垫片——`getAuthHeaders()`（store 方法）与
+`checkAdminPermission` / `checkSuperAdminPermission`（具名导出）——不是新功能，
+只为让还在调它们的 v0.4 文件（`apis/base.js` · `apis/agent_api.js` · `views/GraphView.vue` ·
+`components/FileUploadModal.vue` · `components/DebugComponent.vue`）不至于运行时 TypeError
+或构建期报「导入不存在的符号」。**它们随上面这批遗留组件一起删除**，不单独保留。
+
+### HEU-7 暴露的遗留组件损坏（只记录，不修复）
+
+Task 12 重写 `stores/user.js` 时删掉了 v0.4 store 的字段与方法（`username` · `userId` ·
+`userIdLogin` · `phoneNumber` · `userRole` · `avatar` · `token` · `isSuperAdmin` ·
+`getCurrentUser()` · `updateProfile()` · `uploadAvatar()`），下列组件仍在引用，实测结果：
+
+| 组件 | 现状 | 是否可达 |
+| --- | --- | --- |
+| `components/StatusBar.vue` | `onMounted` 调 `userStore.getCurrentUser()` → TypeError（被就地 `try/catch` 吞成 `console.error`，不白屏）；`userStore.username` 恒 `undefined`，用户名显示为「游客」 | **可达**，挂在 `views/DashboardView.vue`（路由 `/dashboard`）下 |
+| `components/UserInfoComponent.vue` | `username` / `avatar` / `userIdLogin` / `phoneNumber` / `userRole` 全恒 `undefined`（头像首字母、角色标签、个人资料都空）；打开个人资料还会调已不存在的 `getCurrentUser()` / `updateProfile()` / `uploadAvatar()` | **可达**，挂在 `views/HomeView.vue`（路由 `/`）下 |
+| `components/SettingsModal.vue` | 两个 tab（基本设置 / 模型配置）连同内容区都 gate 在 `userStore.isSuperAdmin` 上，新 store 没有这个 computed，恒 `undefined`，**admin 打开也是空侧栏 + 空内容** | 暂不可达：只在孤儿 `layouts/AppLayout.vue` 里挂载 |
+| `components/DebugComponent.vue` | 调试面板读 `token` / `userId` / `username` / `userIdLogin` / `phoneNumber` / `userRole` / `isSuperAdmin`，全恒 `undefined` | 暂不可达：同上 |
+
+修不修取决于这些组件的去留（`SettingsModal` 内嵌的 `ModelProvidersComponent` 在保留清单里，
+外壳本身未定；`DebugComponent` 与 `AppLayout` 大概率随死代码清理一起删），因此本轮不修，
+留给「删除死代码」那一轮统一处置。
 
 ## 6. 开发约定与踩过的坑
 

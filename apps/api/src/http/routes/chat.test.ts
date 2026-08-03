@@ -12,8 +12,10 @@ import { app } from "../app.ts";
  */
 const state = vi.hoisted(() => ({
   db: undefined as TestDb | undefined,
-  /** 打开后 getDb() 直接抛，用来模拟数据库不可用 */
+  /** 打开后 getDb() 直接抛，用来模拟整库不可用（连鉴权都查不出身份） */
   dbBroken: false,
+  /** 打开后只有会话仓储的查询失败，鉴权用的用户查询照常，用来模拟「已登录但会话表读写不了」 */
+  sessionRepoBroken: false,
   agentOptions: undefined as CreateAgentOptions | undefined,
 }));
 
@@ -31,6 +33,17 @@ vi.mock("@petrel/database", async (importOriginal) => {
       }
       // getDb 的签名只认 NodePgDatabase，断言一次把 PGlite 实例塞进去
       return state.db as unknown as ReturnType<typeof actual.getDb>;
+    },
+    /**
+     * 故障粒度要比 getDb 更细：鉴权（createUserRepository）与会话/消息仓储走的是
+     * 同一个 db，整个 getDb 抛掉就只能覆盖「身份都验不出来」那条路径，
+     * prepareSession 的 catch-and-degrade 分支（已登录、但会话仓储查不动）就没人覆盖了。
+     * 这里只让会话仓储失败，且失败发生在查询时而不是建仓储时——真实故障就是这个形态。
+     */
+    createSessionRepository: (...args: Parameters<typeof actual.createSessionRepository>) => {
+      const repo = actual.createSessionRepository(...args);
+      if (!state.sessionRepoBroken) return repo;
+      return { ...repo, upsert: () => Promise.reject(new Error("database unavailable")) };
     },
   };
 });
@@ -67,6 +80,18 @@ let messageRepo: ReturnType<typeof createMessageRepository>;
 let faux: ReturnType<typeof fauxProvider>;
 let reset: () => Promise<void>;
 let close: () => Promise<void>;
+let cookie: string;
+
+/** 注册一个用户并返回它的 cookie（同 admin.test.ts 的 registerUser） */
+async function registerUser(email: string): Promise<{ cookie: string; id: string }> {
+  const response = await app.request("/api/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  const body = (await response.json()) as { user: { id: string } };
+  return { cookie: (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
+}
 
 /** 换一套 faux provider 并让后续请求的 createAgent 用它；默认是不分块的快回答 */
 function useFaux(options: Parameters<typeof fauxProvider>[0] = { tokensPerSecond: 10_000 }) {
@@ -82,15 +107,18 @@ beforeAll(async () => {
   state.db = testDb.db;
   reset = testDb.reset;
   close = testDb.close;
-  service = createSessionService(testDb.db);
   // seq 不由 service 暴露，要断言它只能下探到 repository
   messageRepo = createMessageRepository(testDb.db);
 });
 
 beforeEach(async () => {
   state.dbBroken = false;
+  state.sessionRepoBroken = false;
   useFaux();
   await reset();
+  const user = await registerUser("a@x.io");
+  cookie = user.cookie;
+  service = createSessionService(state.db!, user.id);
 });
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
@@ -99,7 +127,7 @@ afterAll(() => close?.());
 function post(body: string, init: RequestInit = {}) {
   return app.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Cookie: cookie },
     body,
     ...init,
   });
@@ -426,8 +454,34 @@ describe("POST /api/chat 会话持久化", () => {
     expect(persisted.length).toBeLessThan(LONG_ANSWER.length);
   });
 
-  it("数据库不可用时照常流式输出，只是这一轮不落库", async () => {
+  /**
+   * Task 10 之前这里断言的是「数据库不可用时照常流式输出，只是这一轮不落库」——
+   * 那时 chat 没有认证，prepareSession 的 try/catch 是数据库唯一会被摸到的地方。
+   * 挂上 requireAuth 之后，鉴权本身也要查库（resolveUser 用 cookie 里的 sub 查用户），
+   * 库不可用时连身份都验不出来，请求进不到 handler 就已经失败——这是 fail-closed，
+   * 不是回归：宁可拒绝服务，也不能在验不出身份时还把请求当成已登录处理。
+   */
+  it("数据库不可用时鉴权本身就会失败，请求进不到 chat handler", async () => {
     state.dbBroken = true;
+    faux.setResponses([fauxAssistantMessage([fauxText("照常回答")])]);
+
+    const { response, text } = await chatTurn({ message: "你好", sessionId: SESSION_ID });
+
+    expect(response.status).toBe(500);
+    expect(text).not.toContain("照常回答");
+
+    state.dbBroken = false;
+    expect(await service.list()).toEqual([]);
+    expect((await service.loadHistory(SESSION_ID)).messages).toEqual([]);
+  });
+
+  /**
+   * 上面那条覆盖的是「身份都验不出来」，这条才是 prepareSession 的降级分支：
+   * 用户已经登录（鉴权的用户查询正常），但会话仓储查不动。
+   * 这时对话必须照常进行，只是这一轮不落库——能用但记不住，好过直接不能用。
+   */
+  it("已登录但会话仓储查库失败时照常流式输出，只是这一轮不落库", async () => {
+    state.sessionRepoBroken = true;
     faux.setResponses([fauxAssistantMessage([fauxText("照常回答")])]);
 
     const { response, text } = await chatTurn({ message: "你好", sessionId: SESSION_ID });
@@ -435,9 +489,8 @@ describe("POST /api/chat 会话持久化", () => {
     expect(response.status).toBe(200);
     expect(text).toContain("照常回答");
 
-    state.dbBroken = false;
     expect(await service.list()).toEqual([]);
-    expect((await service.loadHistory(SESSION_ID)).messages).toEqual([]);
+    expect(await seqsOf(SESSION_ID)).toEqual([]);
   });
 });
 

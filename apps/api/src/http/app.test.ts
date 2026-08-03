@@ -11,16 +11,13 @@ describe("system routes", () => {
 });
 
 describe("chat routes", () => {
-  it("rejects an empty message before touching the model", async () => {
+  it("rejects an unauthenticated request", async () => {
     const response = await app.request("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "  " }),
     });
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { message: "message 必须是非空字符串" },
-    });
+    expect(response.status).toBe(401);
   });
 });

@@ -4,10 +4,21 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import * as schema from "./schema.ts";
-import { DEFAULT_USER_ID, DEFAULT_USERNAME, messages, sessions, users } from "./schema.ts";
+import { messages, sessions, users } from "./schema.ts";
 
 /** migration 目录是包内的相对位置，测试从仓库根跑，所以要解析成绝对路径 */
 const MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
+
+/**
+ * 测试夹具用户。
+ *
+ * 数据层的测试需要一个能挂会话的用户，但建它不该依赖 apps/api 的注册流程
+ * （那是反方向的依赖）。passwordHash 存 "!"：它不是合法的哈希格式，scrypt 校验
+ * 必然失败，所以这个账号登不进来，不用于登录测试；
+ * 需要真实登录的用例走 /api/auth/register。
+ */
+export const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
+export const TEST_USER_EMAIL = "test@example.com";
 
 export type TestDb = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -30,11 +41,15 @@ export async function createTestDb(): Promise<{
 
   await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
 
-  async function seedDefaultUser() {
-    await db.insert(users).values({ id: DEFAULT_USER_ID, username: DEFAULT_USERNAME });
+  async function seedTestUser() {
+    await db.insert(users).values({
+      id: TEST_USER_ID,
+      email: TEST_USER_EMAIL,
+      passwordHash: "!",
+    });
   }
 
-  await seedDefaultUser();
+  await seedTestUser();
 
   return {
     db,
@@ -43,7 +58,7 @@ export async function createTestDb(): Promise<{
       // RESTART IDENTITY 当前是空操作（本 schema 没有 serial/identity 列），
       // 留着是为了以后真加了自增列时不会漏掉复位
       await db.execute(sql`TRUNCATE ${users}, ${sessions}, ${messages} RESTART IDENTITY CASCADE`);
-      await seedDefaultUser();
+      await seedTestUser();
     },
     close: () => client.close(),
   };
