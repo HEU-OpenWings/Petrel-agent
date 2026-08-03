@@ -330,6 +330,34 @@ describe("attachPersistence", () => {
     expect(stopReasons).not.toContain("aborted");
   });
 
+  /**
+   * 模型调用失败时 pi 不抛异常也不发 error 事件，而是发一条
+   * stopReason: "error" 的助手消息（见 CLAUDE.md 的硬约束 3）。
+   * 这条消息 message_end 已经落库，agent_end 不能再把 partial 补写一遍。
+   *
+   * 这是 2026-08-03 端到端验收时发现的真 bug：SiliconFlow 返回 429，
+   * 库里出现两行逐字节相同的助手消息，第二行还被标成 interrupted。
+   */
+  it("模型报错时只落一条助手消息，且不标 interrupted", async () => {
+    await service.ensureSession(SESSION_ID, "你好");
+
+    const { faux, agent } = fauxAgent(CHUNKED);
+    faux.setResponses([
+      fauxAssistantMessage([], { stopReason: "error", errorMessage: "429 status code (no body)" }),
+    ]);
+    attachPersistence(service, agent, SESSION_ID);
+
+    await agent.prompt("你好");
+    await agent.waitForIdle();
+
+    const history = await service.loadHistory(SESSION_ID);
+    // 用户消息 + 报错的助手消息，不多不少
+    expect(history.messages).toHaveLength(2);
+    expect(history.interruptedSeqs).toEqual([]);
+    // 报错原因要留在库里，否则恢复历史时会显示一条没有任何解释的空助手消息
+    expect((history.messages[1] as { errorMessage?: string }).errorMessage).toBe("429 status code (no body)");
+  });
+
   it("正常完成的一轮不会被 agent_end 重复补写", async () => {
     await service.ensureSession(SESSION_ID, "你好");
 

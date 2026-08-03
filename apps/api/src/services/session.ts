@@ -95,7 +95,9 @@ function isUniqueViolation(error: unknown): boolean {
  *   瞬间已出的那部分（与 partial 相同，不一定为空）。它和 agent_end 要写的 partial
  *   是同一条消息的两个副本，所以 message_end 里跳过 aborted 的消息，
  *   统一留给 agent_end 用 partial 落库，避免写进两条重复的助手消息。
- * - 正常完成的一轮，message_end 已把全部消息落库，agent_end 时只有 interrupted 才写 partial。
+ * - 反过来，只要一条消息走到了 message_end 并落库，partial 里那份就是它的旧副本，
+ *   要立刻清掉。于是 agent_end 时「partial 还在」就等价于「本轮被打断」，
+ *   不需要再去查 state 的 stopReason 或 errorMessage。
  *
  * 这里不持有序号：seq 由数据库在每次插入时分配。曾经的 startSeq 参数要求调用方
  * 在请求开始时从历史算出下一个序号，那个值在并发写同一会话时（多标签页、
@@ -121,17 +123,21 @@ export function attachPersistence(service: SessionService, agent: Agent, session
         // 半截内容统一由 agent_end 用 partial 落库
         const ended = event.message as { stopReason?: string } | undefined;
         if (ended?.stopReason === "aborted") return;
+        // 先作废 partial 再写：这条消息已经走到 message_end，partial 里那份就是它的
+        // 旧副本，留着会被 agent_end 当成「没写完的半截」再补一条内容完全相同的。
+        // 模型报错时踩的就是这里——pi 不抛异常，而是发一条 stopReason "error" 的
+        // 助手消息走 message_end（见 CLAUDE.md 硬约束 3）。
+        // 清空放在 await 之前，是为了让这次写入失败时 agent_end 不再拿同一条去重试一遍
+        partial = undefined;
         await service.appendMessage(sessionId, event.message);
         return;
       }
 
       if (event.type === "agent_end") {
-        // agent_end 触发前 state 已更新完毕，且 listener 里访问 state 是安全的
-        // （processEvents 先更新 state 再调 listener）
-        const last = agent.state.messages.at(-1) as { stopReason?: string } | undefined;
-        const interrupted = agent.state.errorMessage !== undefined || last?.stopReason === "aborted";
-        // 只有本轮确实中断了才补写半截消息；正常完成时 message_end 已写全，不能重复
-        if (interrupted && partial !== undefined) {
+        // 走到这里 partial 还在，只能是「这条消息发过 message_start / message_update
+        // 却没等到 message_end」，也就是本轮确实被打断了——正常完成与模型报错
+        // 都会经过上面那个分支把它清掉。不必再去查 state 的 stopReason / errorMessage
+        if (partial !== undefined) {
           await service.appendMessage(sessionId, partial, true);
         }
         await service.touch(sessionId);
