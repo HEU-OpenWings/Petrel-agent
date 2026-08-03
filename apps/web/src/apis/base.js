@@ -77,7 +77,11 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
       }
 
       // 特殊处理401和403错误
-      if (response.status === 401) {
+      // requiresAuth === false 表示调用方已声明这是公开接口，此时的 401 不代表登录失效
+      //（例如后端根本没有该路由，请求落到全局 requireAuth 上被判 401），
+      // 不该弹提示 / 登出 / 跳登录页——硬跳转会整页重载，重载后又发同一个请求，形成死循环。
+      // 按普通错误抛出，交给调用方自己的 catch 处理。
+      if (response.status === 401 && requiresAuth) {
         // 如果是认证失败，可能需要重新登录
         const userStore = useUserStore()
 
