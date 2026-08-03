@@ -15,6 +15,13 @@
       "when": 1785736299594,
       "tag": "0001_green_sumo",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785762641650,
+      "tag": "0002_aromatic_captain_cross",
+      "breakpoints": true
     }
   ]
 }

@@ -1,13 +1,7 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { createAgent } from "@petrel/agent-core";
-import {
-  createMessageRepository,
-  DEFAULT_USER_ID,
-  DEFAULT_USERNAME,
-  UNUSABLE_PASSWORD_HASH,
-  users,
-} from "@petrel/database";
-import { createTestDb, type TestDb } from "@petrel/database/testing";
+import { createMessageRepository, users } from "@petrel/database";
+import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
 import { logger } from "@petrel/logger";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachPersistence, createSessionService } from "./session.ts";
@@ -23,7 +17,7 @@ const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 // 建库慢，整个文件复用一个实例，用例之间靠清表隔离
 beforeAll(async () => {
   ({ db, reset, close } = await createTestDb());
-  service = createSessionService(db, DEFAULT_USER_ID);
+  service = createSessionService(db, TEST_USER_ID);
   // seq 已经不由 service 暴露了，要断言它只能下探到 repository
   messageRepo = createMessageRepository(db);
 });
@@ -264,16 +258,15 @@ describe("attachPersistence", () => {
   /**
    * seq 撞车是「服务看着健康、数据却在丢」，和数据库整体挂掉必须在日志里分得开。
    *
-   * 这里用真实驱动造一个 23505（重复插默认用户），而不是手搓一个假错误对象：
+   * 这里用真实驱动造一个 23505（重复插夹具用户），而不是手搓一个假错误对象：
    * 判定读的是 drizzle 包装后的 cause.code，手搓的形状一旦和实际脱节就白测了。
    */
   it("唯一约束冲突单独打一条日志，与普通落库失败区分开", async () => {
     const uniqueViolation = await captureError(() =>
       db.insert(users).values({
-        id: DEFAULT_USER_ID,
-        username: DEFAULT_USERNAME,
+        id: TEST_USER_ID,
         email: "collision@localhost",
-        passwordHash: UNUSABLE_PASSWORD_HASH,
+        passwordHash: "!",
       }),
     );
     const errors = vi.spyOn(logger, "error").mockImplementation(() => {});

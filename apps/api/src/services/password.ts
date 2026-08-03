@@ -25,8 +25,8 @@ export async function hashPassword(plain: string): Promise<string> {
 /**
  * 任何格式异常一律返回 false，不抛错。
  *
- * 库里存着格式不合法的哈希是正常状态——默认用户的占位值就是 "!"，
- * 表示「这个账号不可登录」。让它抛错会把一次正常的登录失败变成 500。
+ * 库里存着格式不合法的哈希是正常状态——不可登录的账号会存一个必然校验失败的
+ * 占位值（如 "!"）。让它抛错会把一次正常的登录失败变成 500。
  */
 export async function verifyPassword(plain: string, stored: string): Promise<boolean> {
   const parts = stored.split("$");

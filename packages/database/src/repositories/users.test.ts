@@ -114,7 +114,7 @@ describe("listAll", () => {
 
     const list = await repo.listAll();
 
-    // 默认用户也在表里，所以按邮箱过滤后再断言顺序
+    // 夹具用户也在表里，所以按邮箱过滤后再断言顺序
     const emails = list.map((user) => user.email).filter((email) => email.endsWith("@x.io"));
     expect(emails).toEqual(["second@x.io", "first@x.io"]);
     expect(list[0]).not.toHaveProperty("passwordHash");

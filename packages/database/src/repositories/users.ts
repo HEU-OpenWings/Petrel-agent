@@ -39,9 +39,6 @@ export function createUserRepository(db: Database) {
           email: input.email,
           passwordHash: input.passwordHash,
           role: input.role ?? "user",
-          // username 是待删的遗留列，仍是 notNull unique，先用邮箱填上。
-          // Task 16 删掉这一列后这行也要删
-          username: input.email,
         })
         .returning();
       // 0 参 returning()：TS 在 NodePgDatabase | PgliteDatabase 联合上调用带泛型的

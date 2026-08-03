@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_USER_ID, messages, sessions, users } from "./schema.ts";
-import { createTestDb, type TestDb } from "./testing.ts";
+import { messages, sessions, users } from "./schema.ts";
+import { createTestDb, TEST_USER_ID, type TestDb } from "./testing.ts";
 
 let db: TestDb;
 let reset: () => Promise<void>;
@@ -19,15 +19,14 @@ afterAll(() => close?.());
 
 /** 造一个会话，返回它的 id */
 async function seedSession(id = "11111111-1111-1111-1111-111111111111") {
-  await db.insert(sessions).values({ id, userId: DEFAULT_USER_ID, title: "测试会话" });
+  await db.insert(sessions).values({ id, userId: TEST_USER_ID, title: "测试会话" });
   return id;
 }
 
 describe("schema", () => {
-  it("migration 跑完后默认用户已存在", async () => {
-    const rows = await db.select().from(users).where(eq(users.id, DEFAULT_USER_ID));
+  it("测试夹具用户已就位", async () => {
+    const rows = await db.select().from(users).where(eq(users.id, TEST_USER_ID));
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.username).toBe("default");
   });
 
   it("同一会话的 seq 不允许重复", async () => {

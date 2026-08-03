@@ -1,6 +1,8 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb, getDb } from "../client.ts";
-import { DEFAULT_USER_ID } from "../schema.ts";
+import { users } from "../schema.ts";
+import { TEST_USER_EMAIL, TEST_USER_ID } from "../testing.ts";
 import { createMessageRepository } from "./messages.ts";
 import { createSessionRepository } from "./sessions.ts";
 
@@ -31,16 +33,22 @@ describe.skipIf(!process.env.DATABASE_URL)("messageRepository（真实 Postgres�
   beforeAll(async () => {
     const db = getDb();
     repo = createMessageRepository(db);
+    // 真实库里没有播种用户了，会话要挂在人身上，先把夹具用户建出来。
+    // passwordHash 同 testing.ts：不合法的哈希格式，这个账号登不进来
+    await db
+      .insert(users)
+      .values({ id: TEST_USER_ID, email: TEST_USER_EMAIL, passwordHash: "!" })
+      .onConflictDoNothing();
     await createSessionRepository(db).upsert({
       id: SESSION_ID,
-      userId: DEFAULT_USER_ID,
+      userId: TEST_USER_ID,
       title: "并发集成测试",
     });
   });
 
-  // 跑完把库恢复原状：删会话，messages 靠外键级联一起走
+  // 跑完把库恢复原状：删夹具用户，会话与消息靠外键级联一起走
   afterAll(async () => {
-    await createSessionRepository(getDb()).remove(SESSION_ID, DEFAULT_USER_ID);
+    await getDb().delete(users).where(eq(users.id, TEST_USER_ID));
     await closeDb();
   });
 

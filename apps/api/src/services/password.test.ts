@@ -27,7 +27,7 @@ describe("verifyPassword", () => {
     await expect(verifyPassword("wrong password here", hash)).resolves.toBe(false);
   });
 
-  // 默认用户与将来任何「不可登录」的账号都存这个值，必须安全地返回 false 而不是抛错
+  // 任何「不可登录」的账号都存这个值，必须安全地返回 false 而不是抛错
   it.each([
     { name: "占位哈希", stored: "!" },
     { name: "空字符串", stored: "" },
