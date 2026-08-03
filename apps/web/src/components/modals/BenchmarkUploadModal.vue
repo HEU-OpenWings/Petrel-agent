@@ -102,15 +102,9 @@ const visible = computed({
   set: (val) => emit('update:visible', val)
 });
 
-// 说明文本
-const extraText = computed(() => h('span', {}, [
-  '需要了解评估基准格式？查看',
-  h('a', {
-    href: 'https://xerrors.github.io/Yuxi-Know/latest/intro/evaluation.html',
-    target: '_blank',
-    rel: 'noopener noreferrer'
-  }, '使用说明')
-]));
+// 说明文本。原本尾部挂着一个指向上游 Yuxi-Know 文档的「使用说明」外链，
+// Petrel 还没有对应文档，先只留文案
+const extraText = computed(() => h('span', {}, '仅支持 JSONL 格式的评估基准文件'));
 
 // 文件上传前验证
 const beforeUpload = async (file) => {

@@ -21,10 +21,6 @@
             </div>
           </a-menu-item>
           <a-menu-divider />
-          <a-menu-item key="docs" @click="openDocs">
-            <BookOpen size="16"/>
-            <span class="menu-text">文档中心</span>
-          </a-menu-item>
           <a-menu-item key="theme" @click="toggleTheme">
             <component :is="themeStore.isDark ? Sun : Moon" size="16"/>
             <span class="menu-text">{{ themeStore.isDark ? '切换到浅色模式' : '切换到深色模式 (Beta)' }}</span>
@@ -166,7 +162,7 @@ import { useUserStore } from '@/stores/user';
 //
 //
 import { message } from 'ant-design-vue';
-import { CircleUser, UserRoundCheck, BookOpen, Sun, Moon, User, LogOut, Upload, Settings } from 'lucide-vue-next';
+import { CircleUser, UserRoundCheck, Sun, Moon, User, LogOut, Upload, Settings } from 'lucide-vue-next';
 import { useThemeStore } from '@/stores/theme'
 
 const router = useRouter();
@@ -237,10 +233,6 @@ const logout = () => {
 const goToLogin = () => {
   router.push('/login');
 };
-
-const openDocs = () => {
-  window.open('https://xerrors.github.io/Yuxi-Know/', '_blank', 'noopener,noreferrer')
-}
 
 const toggleTheme = () => {
   themeStore.toggleTheme()
