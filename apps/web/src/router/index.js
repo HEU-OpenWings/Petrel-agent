@@ -46,8 +46,19 @@ const router = createRouter({
         }
       ]
     },
-    // /admin 路由随 views/AdminView.vue 一起在 HEU-7 Task 15 加：
-    // 动态 import 一个不存在的文件会让 vite build 直接失败，没法先占位
+    {
+      path: '/admin',
+      name: 'admin',
+      component: AppShell,
+      children: [
+        {
+          path: '',
+          name: 'AdminUsers',
+          component: () => import('../views/AdminView.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true, title: '用户管理' }
+        }
+      ]
+    },
     {
       path: '/knowledge',
       name: 'knowledge',
