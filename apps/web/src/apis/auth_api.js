@@ -6,9 +6,17 @@
  */
 import { get, post } from '@/apis/http'
 
-export const registerApi = (email, password) => post('/api/auth/register', { email, password })
+/**
+ * treatUnauthorizedAsRequestError：登录/注册失败后端返 401（凭据错误、账号被禁用），
+ * 那是这次请求的业务结果，不是「登录失效」。不加这个标记会被 http.js 的全局 401
+ * 分支截胡：错误文案被替换、多打一次 logout、还会把用户从 /login 推到
+ * /login?redirect=/login（之后即使密码输对也会在守卫里打转）。
+ */
+export const registerApi = (email, password) =>
+  post('/api/auth/register', { email, password }, { treatUnauthorizedAsRequestError: true })
 
-export const loginApi = (email, password) => post('/api/auth/login', { email, password })
+export const loginApi = (email, password) =>
+  post('/api/auth/login', { email, password }, { treatUnauthorizedAsRequestError: true })
 
 export const logoutApi = () => post('/api/auth/logout', {})
 

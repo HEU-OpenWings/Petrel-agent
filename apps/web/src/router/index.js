@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AppShell from '@/layouts/AppShell.vue'
 import BlankLayout from '@/layouts/BlankLayout.vue'
 import { useUserStore } from '@/stores/user'
+import { safeRedirect } from '@/utils/redirect'
 
 /**
  * meta 约定：
@@ -120,9 +121,12 @@ router.beforeEach((to, from, next) => {
     return
   }
 
-  // 已登录的人不该再看到登录页
+  // 已登录的人不该再看到登录页；如果 URL 上带着 redirect（被 401 踢过来时写的），
+  // 就把人送回原目标，而不是一律扔到 /agent
   if (to.path === '/login' && userStore.isLoggedIn) {
-    next({ path: '/agent' })
+    // 传字符串而不是 { path }：redirect 里是 fullPath，可能带 query / hash，
+    // { path } 形式不会解析它们
+    next(safeRedirect(to.query.redirect))
     return
   }
 

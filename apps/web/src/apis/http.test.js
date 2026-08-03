@@ -95,6 +95,25 @@ describe('request', () => {
     expect(userStore.user).toBeNull()
   })
 
+  it('treatUnauthorizedAsRequestError 时 401 透出后端原文、不登出也不通知 handler', async () => {
+    // 登录/注册失败走这条：后端 401 是「邮箱或密码不正确」，不是登录失效。
+    // 单个 mock 就够——不该有第二次请求（不 logout）。
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ detail: '邮箱或密码不正确' }, 401))
+    vi.stubGlobal('fetch', fetchMock)
+    const userStore = useUserStore()
+    userStore.user = { id: '1', email: 'a@x.io', role: 'user' }
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+
+    await expect(
+      post('/api/auth/login', { email: 'a@x.io' }, { treatUnauthorizedAsRequestError: true })
+    ).rejects.toThrow('邮箱或密码不正确')
+    // 通知 handler 会把用户从 /login 推到 /login?redirect=/login，之后即使密码输对也进不去
+    expect(handler).not.toHaveBeenCalled()
+    expect(userStore.user).not.toBeNull()
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('非 2xx 时抛出后端给的错误文案', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ detail: '知识库不存在' }, 404)))
 

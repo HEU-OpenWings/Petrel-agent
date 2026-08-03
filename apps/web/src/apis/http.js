@@ -23,7 +23,10 @@ export function setUnauthorizedHandler(handler) {
  *
  * skipUnauthorizedHandler 只给 /api/auth/me 用：启动时恢复登录态失败是「本来就
  * 没登录」，不是「登录失效」，这时不该通知 handler（它注册的跳转会把守卫算好的
- * ?redirect= 覆盖掉），去不去登录页交给路由守卫。
+ * ?redirect= 覆盖掉），去不去登录页交给路由守卫。它仍然会 logout()。
+ *
+ * 注意与 request() 的 treatUnauthorizedAsRequestError 区分：那个是「这次 401 根本
+ * 不是登录失效」，压根不进本函数。
  */
 export function handleUnauthorized({ skipUnauthorizedHandler = false } = {}) {
   // 不 await：调用方（含 handler 里的跳转）必须立刻看到未登录态，
@@ -52,7 +55,8 @@ export async function request(url, options = {}) {
     headers = {},
     signal,
     responseType = 'json',
-    skipUnauthorizedHandler = false
+    skipUnauthorizedHandler = false,
+    treatUnauthorizedAsRequestError = false
   } = options
 
   const isFormData = body instanceof FormData
@@ -69,7 +73,11 @@ export async function request(url, options = {}) {
 
   const response = await fetch(url, { method, headers: finalHeaders, body: payload, signal })
 
-  if (response.status === 401) {
+  // treatUnauthorizedAsRequestError：这个接口的 401 是请求自身的业务结果而不是
+  // 「登录失效」——登录/注册凭据错误就是这样。此时既不该 logout()、也不该通知
+  // handler（用户就在登录页，跳转会把 URL 变成 /login?redirect=/login），更不该把
+  // 后端的「邮箱或密码不正确」换成「登录已失效」。直接落到下面的 !response.ok 分支。
+  if (response.status === 401 && !treatUnauthorizedAsRequestError) {
     throw handleUnauthorized({ skipUnauthorizedHandler })
   }
 
