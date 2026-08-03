@@ -29,8 +29,8 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function logout() {
-    // 先同步清本地态：http.js 的 401 分支不 await 本函数，跳转登录页时必须已经是未登录，
-    // 否则 LoginView 的 onMounted 会读到 isLoggedIn === true 把用户弹回首页
+    // 先同步清本地态：http.js 的 401 分支不 await 本函数，紧接着就跳转登录页，
+    // 跳转发生的那一刻必须已经是未登录态，否则路由守卫会把人当成已登录再弹走
     user.value = null
     try {
       await logoutApi()

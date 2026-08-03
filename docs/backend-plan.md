@@ -163,7 +163,9 @@ insert + touch 会让刚 touch 过的会话**排到后面**，正好打在「在
   把 `FOR UPDATE` 删掉后集成测试立刻变红
 - **migration 链路已验证，但只在宿主机上**：新建一个空库 `petrel_migtest`，用
   `DATABASE_URL=…/petrel_migtest tsx apps/api/src/index.ts` 直接起 api，日志输出
-  `database migrations applied` 与 `agent-server listening`，三张表被自动建出、默认用户被播种。
+  `database migrations applied` 与 `agent-server listening`，三张表被自动建出、默认用户被播种
+  （**「默认用户播种」这段已随 HEU-7 废止**：认证落地时删掉了默认用户与 `username` 列，
+  现在只建表不播种）。
   **这不等于容器内验证通过**——计划 Task 4 Step 8 要求的是 `docker compose up -d` 之后看
   `docker logs petrel-api-dev`，那一步因为下面的构建失败仍然没做。两者的差别在于镜像构建、
   compose 的环境变量注入、`depends_on: service_healthy` 这几段都还没跑过
@@ -174,9 +176,12 @@ insert + touch 会让刚 touch 过的会话**排到后面**，正好打在「在
 `database migrations applied`。11 项逐条走的是真实模型 + 真实 Postgres，验证方式是
 HTTP 接口 + `psql` 查表（不是浏览器点击）：
 
+> **这张表跑在认证落地之前**，其中第 1 项的「默认用户播种」与第 11 项的结论都已被 HEU-7 改变，
+> 见每条后面的注。
+
 | # | 检查项 | 结果 |
 | --- | --- | --- |
-| 1 | 首次启动自动建表 | ✅ 另建空库 `petrel_fresh` 起 api，三张表建出、默认用户播种 |
+| 1 | 首次启动自动建表 | ✅ 另建空库 `petrel_fresh` 起 api，三张表建出、默认用户播种（**播种已随 HEU-7 删除**） |
 | 2 | 发消息后刷新对话还在 | ✅ `GET /:id/messages` 返回完整 transcript |
 | 3 | 左栏出现会话，标题取首句 | ✅ 标题 = `用一句话介绍你自己` |
 | 4 | 两个会话不串 | ✅ A / B 各 4 条，互不可见（后端层面） |
@@ -186,7 +191,7 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
 | 8 | 工具调用后刷新能重建 | ✅ `assistant(text+toolCall)` → `toolResult` → `assistant` 三条齐全 |
 | 9 | 旧会话发消息跳顶 | ✅ A 从第 2 位回到第 1 位 |
 | 10 | 新建不发消息不产生空会话 | ✅ 只 GET 一个陌生 id 不建行 |
-| 11 | 停掉 db 仍能流式输出 | ✅ 600 行 SSE 正常收完、有 `agent_end`、无 `event: error`，api 日志记下落库失败 |
+| 11 | 停掉 db 仍能流式输出 | ✅ 600 行 SSE 正常收完、有 `agent_end`、无 `event: error`，api 日志记下落库失败。**该结论限认证落地前**：挂上 `requireAuth` 后鉴权自己要查库，整库挂掉时请求在中间件就 500，根本流不出 SSE（`chat.test.ts` 有用例断言 500）。「仅会话/消息仓储写失败不中断对话」这条不变式仍然成立，见 CLAUDE.md 的认证一节 |
 
 第 11 项还额外确认了一件事：`ensureSession` 本身失败时**不会**留下空会话行（下方已知问题 2
 说的是 `ensureSession` 成功而 `loadHistory` 失败那条路径，两者不是一回事）。
@@ -258,10 +263,34 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
    （`updatedAt` 被顶起；如果是新会话，还会带着标题被建出来），但本轮 0 条消息落库——
    左栏会出现一个排在最上面的空会话。当前有意推迟：这需要把两步包进一个事务，或者失败时回滚
    刚建出的会话行，两种都比现在这段代码复杂。
-3. **认证完全没做（HEU-7），而且现在就埋着一个现成的 IDOR**。四个会话路由没有任何认证；
-   更要紧的是 `rename` / `remove` / `loadHistory` **不按 `userId` 收窄**，只按 id 定位。
-   今天所有会话都挂在同一个默认用户下所以看不出问题，认证一落地就是「换个 id 就能改删别人的会话」。
-   修点在 repository 的方法签名上，届时要同时动 repository / service / route 三层。
+3. ~~**认证完全没做（HEU-7），而且现在就埋着一个现成的 IDOR**~~ —— **已交付**（HEU-7，见下方
+   「认证与越权收口」）。原记录：四个会话路由没有任何认证，且 `rename` / `remove` /
+   `loadHistory` **不按 `userId` 收窄**，只按 id 定位，认证一落地就是「换个 id 就能改删别人的会话」。
+   现在这三处都按 `userId` 收窄了；**设计阶段还新发现了第四处越权**——
+   `sessions.upsert`：会话 id 由前端生成，猜到别人的 id 就能顶起对方会话的 `updatedAt`、
+   甚至把自己的消息写进去。修法是 `onConflictDoUpdate` 加
+   `setWhere: eq(sessions.userId, input.userId)`，冲突且不属于自己时 DO UPDATE 不执行、
+   `returning()` 为空，service 据此让本次请求失败。
+
+### 认证与越权收口（HEU-7，2026-08-03 交付）
+
+设计文档见 [superpowers/specs/2026-08-03-auth-design.md](superpowers/specs/2026-08-03-auth-design.md)。
+
+- **零第三方认证依赖**：密码用 Node 内置 `scrypt`（`N=65536, r=8, p=1`，`maxmem` 必须显式给到
+  128MB，否则抛 `ERR_CRYPTO_INVALID_SCRYPT_PARAMS`），JWT 用 Hono 内置 `hono/jwt`（HS256）。
+- **token 存 httpOnly cookie**（`petrel_token`，`SameSite=Strict`，7 天，`secure` 只在生产开），
+  前端读不到也不需要读，代价是刷新后要调一次 `/api/auth/me`。
+- **`requireAuth` 每次请求查库**，不只验签：token 里的 role 是签发瞬间的快照，
+  而禁用一个滥用者必须立即生效。角色与禁用状态一律以库里为准。
+- **`app.ts` 的挂载顺序是安全边界**：`system` 与 `auth` 是仅有的两个公开前缀，
+  之后 `app.use("/api/*", requireAuth)`，`admin` 再叠 `requireAdmin`。
+  `routes/isolation.test.ts` 有用例钉住这个顺序。
+- **`ADMIN_EMAILS`** 名单里的邮箱在注册与每次登录时提权为 admin，不做反向降级
+  （误编辑 `.env` 不应一次性清空管理权限）。
+- **登录端点的防枚举**：账号不存在也走一次哈希校验拉平耗时；「不存在」与「密码错」共用同一句
+  文案；`disabled` 的判定排在密码校验之后。失败 5 次锁 15 分钟，计数在**单实例内存**里。
+- 接口：`POST /api/auth/register|login|logout` · `GET /api/auth/me` ·
+  `GET /api/admin/users` · `PATCH /api/admin/users/:id`（禁用/解禁，不能禁自己）。
 
 ## 4. 待办
 
@@ -269,8 +298,15 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
 - **HEU-6 Drizzle schema 剩余的表**：会话相关的 `users` · `sessions` · `messages` 已交付（见 §3；
   表名是 `sessions` 而不是原计划的 `conversations`，`tool_calls` 决定不建）。
   `kb_*` · `eval_*` · `jobs` 与 `kb_chunks.embedding vector(1024)` + HNSW 随各自业务落地时再加
-- **HEU-7 最小认证**：登录 + JWT 中间件 + 超管初始化（范围取决于 HEU-2 的决策）
-- **HEU-2 / HEU-3 决策**：认证范围（最小 JWT vs 纯单用户）、被删除能力清单确认
+- **HEU-2 / HEU-3 决策**：认证范围**已定**——最小 JWT + 邮箱密码 + admin 名单提权，
+  已随 HEU-7 交付（见 §3）。剩下的是被删除能力清单确认
+- **配额与 token 计量**：当前任何登录用户都能无限调模型，成本无上限也无归属。
+  这是**公开注册的前置**——在它落地之前不能开放注册，只能内部名单使用
+- **待确认：成本与 token 数是否该暴露给客户端**。`GET /api/sessions/:id/messages` 把落库的 pi
+  `AssistantMessage` 原样吐出，其中的 `usage`（含 `cost`）、`model`、`provider`、`api` 一并透传。
+  不做转换是有意的（`chat.ts` 的 SSE 也是原样透传 AgentEvent，两边保持同一份形状，
+  前端才能复用同一套归约逻辑），但「让终端用户看到单次请求的美元成本与所用模型」
+  是否符合预期，需要产品侧确认；不符合的话就要在这一层做投影，并连带改前端归约
 
 ### M2 剩余
 - **HEU-10 会话持久化剩余部分**：落库与历史回灌已交付（见 §3），前端会话列表因此解锁。
