@@ -23,7 +23,7 @@ const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 // 建库慢，整个文件复用一个实例，用例之间靠清表隔离
 beforeAll(async () => {
   ({ db, reset, close } = await createTestDb());
-  service = createSessionService(db);
+  service = createSessionService(db, DEFAULT_USER_ID);
   // seq 已经不由 service 暴露了，要断言它只能下探到 repository
   messageRepo = createMessageRepository(db);
 });

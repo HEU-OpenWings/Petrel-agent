@@ -2,6 +2,7 @@ import { getDb } from "@petrel/database";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { createSessionService } from "../../services/session.ts";
+import type { AppEnv } from "../../types.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -9,9 +10,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * 重命名的标题长度上限。自动生成的标题是 30 字（services/session.ts），
  * 200 给手动重命名留了充足余量，正常用户碰不到。
  *
- * 之所以要有上限：schema 里 title 是无长度限制的 text，而这几个路由没有认证，
- * 一次请求就能塞进几十万字，之后每次 GET /api/sessions 都要把它整份吐给左栏，
- * 且没有任何 UI 路径能改回来。
+ * 之所以要有上限：schema 里 title 是无长度限制的 text，一次请求就能塞进几十万字，
+ * 之后每次 GET /api/sessions 都要把它整份吐给左栏，且没有任何 UI 路径能改回来。
  */
 const TITLE_LENGTH_LIMIT = 200;
 
@@ -54,9 +54,9 @@ function requireTitle(body: unknown): string {
 
 // 每个 handler 里现取 service，不在模块顶层建：getDb() 会建连接池，
 // 顶层调用会让「只导入 app 就连数据库」，校验类用例也就没法脱离数据库跑
-export const sessions = new Hono()
+export const sessions = new Hono<AppEnv>()
   .get("/", async (c) => {
-    const service = createSessionService(getDb());
+    const service = createSessionService(getDb(), c.get("currentUser").id);
     return c.json({ sessions: await service.list() });
   })
 
@@ -65,7 +65,7 @@ export const sessions = new Hono()
   // 用户切进去时后端还没有这一行，这里返回 404 会让新建的会话直接打不开
   .get("/:id/messages", async (c) => {
     const id = requireUuid(c.req.param("id"));
-    const service = createSessionService(getDb());
+    const service = createSessionService(getDb(), c.get("currentUser").id);
     const history = await service.loadHistory(id);
     return c.json({ messages: history.messages, interruptedSeqs: history.interruptedSeqs });
   })
@@ -77,7 +77,7 @@ export const sessions = new Hono()
     });
     const title = requireTitle(body);
 
-    const service = createSessionService(getDb());
+    const service = createSessionService(getDb(), c.get("currentUser").id);
     if (!(await service.rename(id, title))) {
       throw new HTTPException(404, { message: "会话不存在" });
     }
@@ -86,7 +86,7 @@ export const sessions = new Hono()
 
   .delete("/:id", async (c) => {
     const id = requireUuid(c.req.param("id"));
-    const service = createSessionService(getDb());
+    const service = createSessionService(getDb(), c.get("currentUser").id);
     if (!(await service.remove(id))) {
       throw new HTTPException(404, { message: "会话不存在" });
     }

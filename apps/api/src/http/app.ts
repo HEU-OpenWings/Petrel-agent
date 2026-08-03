@@ -15,10 +15,15 @@ app.use(requestLogger);
 app.onError(onError);
 app.notFound(notFound);
 
-// 后续路由挂载点：agents · knowledge · dashboard · eval
+// 挂载顺序有安全含义：system 与 auth 在 requireAuth 之前，是仅有的两个公开前缀；
+// 之后新增的业务路由挂在 requireAuth 之下就自动受保护，不会因为忘了加中间件而裸奔。
+// routes/isolation.test.ts 有两条用例守着这个顺序，调整前先看那里
 app.route("/api/system", system);
 app.route("/api/auth", auth);
+
+app.use("/api/*", requireAuth);
+
 app.route("/api/chat", chat);
 app.route("/api/sessions", sessions);
-app.use("/api/admin/*", requireAuth, requireAdmin);
+app.use("/api/admin/*", requireAdmin);
 app.route("/api/admin", admin);

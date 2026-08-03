@@ -67,6 +67,18 @@ let messageRepo: ReturnType<typeof createMessageRepository>;
 let faux: ReturnType<typeof fauxProvider>;
 let reset: () => Promise<void>;
 let close: () => Promise<void>;
+let cookie: string;
+
+/** 注册一个用户并返回它的 cookie（同 admin.test.ts 的 registerUser） */
+async function registerUser(email: string): Promise<{ cookie: string; id: string }> {
+  const response = await app.request("/api/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  const body = (await response.json()) as { user: { id: string } };
+  return { cookie: (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
+}
 
 /** 换一套 faux provider 并让后续请求的 createAgent 用它；默认是不分块的快回答 */
 function useFaux(options: Parameters<typeof fauxProvider>[0] = { tokensPerSecond: 10_000 }) {
@@ -82,7 +94,6 @@ beforeAll(async () => {
   state.db = testDb.db;
   reset = testDb.reset;
   close = testDb.close;
-  service = createSessionService(testDb.db);
   // seq 不由 service 暴露，要断言它只能下探到 repository
   messageRepo = createMessageRepository(testDb.db);
 });
@@ -91,6 +102,9 @@ beforeEach(async () => {
   state.dbBroken = false;
   useFaux();
   await reset();
+  const user = await registerUser("a@x.io");
+  cookie = user.cookie;
+  service = createSessionService(state.db!, user.id);
 });
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
@@ -99,7 +113,7 @@ afterAll(() => close?.());
 function post(body: string, init: RequestInit = {}) {
   return app.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Cookie: cookie },
     body,
     ...init,
   });
@@ -426,14 +440,21 @@ describe("POST /api/chat 会话持久化", () => {
     expect(persisted.length).toBeLessThan(LONG_ANSWER.length);
   });
 
-  it("数据库不可用时照常流式输出，只是这一轮不落库", async () => {
+  /**
+   * Task 10 之前这里断言的是「数据库不可用时照常流式输出，只是这一轮不落库」——
+   * 那时 chat 没有认证，prepareSession 的 try/catch 是数据库唯一会被摸到的地方。
+   * 挂上 requireAuth 之后，鉴权本身也要查库（resolveUser 用 cookie 里的 sub 查用户），
+   * 库不可用时连身份都验不出来，请求进不到 handler 就已经失败——这是 fail-closed，
+   * 不是回归：宁可拒绝服务，也不能在验不出身份时还把请求当成已登录处理。
+   */
+  it("数据库不可用时鉴权本身就会失败，请求进不到 chat handler", async () => {
     state.dbBroken = true;
     faux.setResponses([fauxAssistantMessage([fauxText("照常回答")])]);
 
     const { response, text } = await chatTurn({ message: "你好", sessionId: SESSION_ID });
 
-    expect(response.status).toBe(200);
-    expect(text).toContain("照常回答");
+    expect(response.status).toBe(500);
+    expect(text).not.toContain("照常回答");
 
     state.dbBroken = false;
     expect(await service.list()).toEqual([]);

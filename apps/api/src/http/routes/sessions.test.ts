@@ -40,10 +40,21 @@ beforeAll(async () => {
   state.db = testDb.db;
   reset = testDb.reset;
   close = testDb.close;
-  service = createSessionService(testDb.db);
 });
 
-beforeEach(() => reset());
+let cookie: string;
+
+beforeEach(async () => {
+  await reset();
+  const response = await app.request("/api/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "a@x.io", password: "hunter2hunter2" }),
+  });
+  cookie = (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+  const body = (await response.json()) as { user: { id: string } };
+  service = createSessionService(state.db!, body.user.id);
+});
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
@@ -51,14 +62,14 @@ afterAll(() => close?.());
 function patch(id: string, body: string) {
   return app.request(`/api/sessions/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Cookie: cookie },
     body,
   });
 }
 
 describe("GET /api/sessions", () => {
   it("空库返回空数组", async () => {
-    const response = await app.request("/api/sessions");
+    const response = await app.request("/api/sessions", { headers: { Cookie: cookie } });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ sessions: [] });
@@ -73,7 +84,7 @@ describe("GET /api/sessions", () => {
     await new Promise((resolve) => setTimeout(resolve, 2));
     await service.ensureSession(OTHER_SESSION_ID, "后建的会话");
 
-    const response = await app.request("/api/sessions");
+    const response = await app.request("/api/sessions", { headers: { Cookie: cookie } });
     const body = (await response.json()) as { sessions: { id: string; title: string }[] };
 
     expect(response.status).toBe(200);
@@ -90,7 +101,9 @@ describe("GET /api/sessions/:id/messages", () => {
     await service.appendMessage(SESSION_ID, { role: "user", content: "你好" });
     await service.appendMessage(SESSION_ID, { role: "assistant", content: "半截" }, true);
 
-    const response = await app.request(`/api/sessions/${SESSION_ID}/messages`);
+    const response = await app.request(`/api/sessions/${SESSION_ID}/messages`, {
+      headers: { Cookie: cookie },
+    });
 
     expect(response.status).toBe(200);
     // 全等断言：确认没有多余的内部字段漏给前端
@@ -104,14 +117,18 @@ describe("GET /api/sessions/:id/messages", () => {
   });
 
   it("会话不存在时返回空数组而不是 404", async () => {
-    const response = await app.request(`/api/sessions/${ABSENT_SESSION_ID}/messages`);
+    const response = await app.request(`/api/sessions/${ABSENT_SESSION_ID}/messages`, {
+      headers: { Cookie: cookie },
+    });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ messages: [], interruptedSeqs: [] });
   });
 
   it("非法 UUID 返回 400", async () => {
-    const response = await app.request("/api/sessions/not-a-uuid/messages");
+    const response = await app.request("/api/sessions/not-a-uuid/messages", {
+      headers: { Cookie: cookie },
+    });
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: { message: "会话 id 必须是 UUID" } });
@@ -198,7 +215,10 @@ describe("DELETE /api/sessions/:id", () => {
     await service.ensureSession(SESSION_ID, "待删的会话");
     await service.appendMessage(SESSION_ID, { role: "user", content: "你好" });
 
-    const response = await app.request(`/api/sessions/${SESSION_ID}`, { method: "DELETE" });
+    const response = await app.request(`/api/sessions/${SESSION_ID}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
@@ -207,14 +227,20 @@ describe("DELETE /api/sessions/:id", () => {
   });
 
   it("会话不存在返回 404", async () => {
-    const response = await app.request(`/api/sessions/${ABSENT_SESSION_ID}`, { method: "DELETE" });
+    const response = await app.request(`/api/sessions/${ABSENT_SESSION_ID}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({ error: { message: "会话不存在" } });
   });
 
   it("非法 UUID 返回 400", async () => {
-    const response = await app.request("/api/sessions/not-a-uuid", { method: "DELETE" });
+    const response = await app.request("/api/sessions/not-a-uuid", {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: { message: "会话 id 必须是 UUID" } });
