@@ -40,12 +40,20 @@ function publicView(user: { id: string; email: string; role: string }) {
   return { id: user.id, email: user.email, role: user.role };
 }
 
+let authService: ReturnType<typeof createAuthService> | undefined;
+
+function getAuthService() {
+  // 登录失败计数存在 service 实例内，整个应用必须复用同一个实例；
+  // 惰性初始化保留「只导入 app 不连接数据库」的测试能力。
+  authService ??= createAuthService(getDb());
+  return authService;
+}
+
 export const auth = new Hono<AppEnv>()
   .post("/register", async (c) => {
     const { email, password } = parseCredentials(await readJson(c));
-    const service = createAuthService(getDb());
 
-    const user = await service.register(email, password).catch(toHttpException);
+    const user = await getAuthService().register(email, password).catch(toHttpException);
     await issueToken(c, user);
 
     return c.json({ user: publicView(user) }, 201);
@@ -53,9 +61,8 @@ export const auth = new Hono<AppEnv>()
 
   .post("/login", async (c) => {
     const { email, password } = parseCredentials(await readJson(c));
-    const service = createAuthService(getDb());
 
-    const user = await service.login(email, password).catch(toHttpException);
+    const user = await getAuthService().login(email, password).catch(toHttpException);
     await issueToken(c, user);
 
     return c.json({ user: publicView(user) });

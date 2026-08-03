@@ -135,6 +135,24 @@ describe("POST /api/auth/login", () => {
     expect(wrongPassword.status).toBe(noSuchUser.status);
     expect(await wrongPassword.json()).toEqual(await noSuchUser.json());
   });
+
+  it("连续失败 5 次后第 6 次 HTTP 请求返回 429", async () => {
+    await post("/api/auth/register", { email: "limited@x.io", password: "hunter2hunter2" });
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const response = await post("/api/auth/login", {
+        email: "limited@x.io",
+        password: "wrongpassword",
+      });
+      expect(response.status).toBe(401);
+    }
+
+    const response = await post("/api/auth/login", {
+      email: "limited@x.io",
+      password: "wrongpassword",
+    });
+    expect(response.status).toBe(429);
+  });
 });
 
 describe("POST /api/auth/logout", () => {
