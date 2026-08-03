@@ -125,11 +125,8 @@ tie 用的，生产不需要。
 - **浏览器 UI 观感**：hover 才出现的重命名/删除图标、`prompt` / `confirm` / `alert`
   三个原生弹窗、active 高亮、切换会话的实际手感。上面 11 项验的是后端契约与数据落地，
   前端把这些数据渲染成什么样仍然没有人看过。
-- **默认模型 `deepseek-ai/DeepSeek-V3` 当前被平台限流**（`code 50609 / System is too busy`，
-  连试 6 次全 429）。账号正常，`DeepSeek-V3.1` · `Qwen3-8B` · `GLM-4-9B` 都秒回。
-  上面的验收是临时把 `packages/ai/src/index.ts` 的 `DEFAULT_MODEL_ID` 换成 V3.1 跑的，跑完已改回。
-  **浏览器验收前要先解决这个**，否则每轮只会拿到一条 `stopReason: "error"` 的空回答
-  （而且会触发下方已知问题第 0 条的重复落库）。
+模型侧另有变化：SiliconFlow 的 `DeepSeek-V3` 被平台限流，默认模型已换成 DeepSeek 官方的
+`deepseek-v4-flash`（走 Responses API），详见 `docs/backend-plan.md` §3。
 
 ### 实施中改掉的两处计划设计
 
@@ -150,18 +147,19 @@ tie 用的，生产不需要。
 
 ### 实施中新增的技术债与已知问题
 
-> 接手前先读完这一节。第 0 条是验收时发现的真 bug（未修），1~3 条是行为缺陷，4~6 条是基建缺口。
+> 接手前先读完这一节。第 0 条验收当天已修，1~3 条是行为缺陷，4~6 条是基建缺口。
 
-0. **模型报错时同一条助手消息落库两次**（2026-08-03 端到端验收发现，**未修**）。
+0. **模型报错时同一条助手消息落库两次**（2026-08-03 端到端验收发现，**已修**）。
    实测 SiliconFlow 返回 429 时，`messages` 表里出现两行逐字节相同的助手消息（`timestamp` 都一样），
    第二行还被标成 `interrupted = true`。根因在 `attachPersistence`：`message_end` 只跳过
    `stopReason === "aborted"`，而报错那条是 `"error"`，先被写入一次；随后 `agent_end` 的判定
    `agent.state.errorMessage !== undefined || last?.stopReason === "aborted"` **把模型报错也算成中断**，
    于是 `partial` 又被补写一遍。
    这正是 `CLAUDE.md` 那条「模型调用失败时 pi 不抛异常，把原因写进 `errorMessage`」的约束
-   在落库侧漏掉了。现有测试全走 `abort()` 路径，**错误路径一条用例都没有**。
-   修法：把 `agent_end` 的 `interrupted` 判定收窄成「本轮确实被 abort」，并补一条
-   faux provider 返回错误的用例。中断路径没有这个问题（验收第 7 项已确认）。
+   在落库侧漏掉了。当时的测试全走 `abort()` 路径，错误路径一条用例都没有。
+   **修法**：改成在 `message_end` 落库前先清空 `partial`，于是 `agent_end` 时
+   「`partial` 还在」就等价于「本轮真被打断」，不必再去猜 state 的 stopReason / errorMessage。
+   已补用例 `模型报错时只落一条助手消息，且不标 interrupted`。中断路径本来就没问题。
 
 1. **中断后重发会让 transcript 顺序错乱**（最需要注意的一条）。`seq` 反映「写入时刻」，
    而对话的逻辑顺序是「轮次」；被打断的半截助手消息在 `agent_end` 才落库，必然排到下一轮

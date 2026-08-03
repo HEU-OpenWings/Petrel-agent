@@ -196,16 +196,28 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
 - **浏览器 UI 观感**——hover 才出现的重命名/删除图标、`prompt` / `confirm` / `alert`
   三个原生弹窗、active 高亮、切换会话的手感。上面 11 项验的是后端契约与数据落地，
   前端把这些数据渲染成什么样，仍然**没有人在浏览器里看过**。
-- **默认模型 `deepseek-ai/DeepSeek-V3` 当前被 SiliconFlow 平台限流**
-  （`code 50609 / System is too busy now`，连续 6 次全部 429）。账号本身正常：
-  `DeepSeek-V3.1` · `Qwen3-8B` · `GLM-4-9B` 都秒回。上面的验收是临时把默认模型换成 V3.1 跑的，
-  跑完已改回。浏览器验收前需要先解决这个，否则每一轮都会得到一条 `stopReason: "error"` 的空回答。
+**默认模型换成 DeepSeek 官方的 `deepseek-v4-flash`（2026-08-03）**
+
+起因是 SiliconFlow 的 `deepseek-ai/DeepSeek-V3` 被平台限流（`code 50609 / System is too busy`，
+连试 6 次全 429，账号本身正常）。新增 DeepSeek 官方 provider：
+
+- **走 Responses API**（`openai-responses.lazy`），因为 DeepSeek 官方**只提供 `/responses`**，
+  没有 chat/completions。base URL `https://api.deepseek.com`，凭据取 `DEEPSEEK_API_KEY`。
+- SiliconFlow provider 与 `DeepSeek-V3` 保留着做备选，`defaultModel()` 指回去即可。
+- `reasoning: true` 之外还要写 `thinkingLevelMap: { off: null }`：pi 在调用方没指定 effort 时
+  会主动发 `reasoning: { effort: "none" }` 把思考关掉，映射成 `null` 才会让它什么都不发、
+  沿用 DeepSeek 自己的默认值。实测不加这条，落库的助手消息里就没有 `thinking` 块。
+- 价格按官方定价（¥1 / ¥2 每百万 token，缓存命中 ¥0.02）折成美元，与 SiliconFlow 那条口径一致。
+
+已实测通过：带工具调用的完整一轮（`thinking` → `toolCall` → `toolResult` → `thinking` + 回答
+四条消息全部落库）、中途掐断连接只落一条 `interrupted` 的半截回答。
 
 ### 会话持久化的已知问题
 
-> 除第 1 条外都是有意留下的。第 1 条是 2026-08-03 端到端验收时发现的真 bug，尚未修。
+> 第 0 条是 2026-08-03 端到端验收时发现的真 bug，**当天已修**（保留记录是因为踩点值得记）。
+> 其余都是有意留下的。
 
-0. **模型调用失败时，同一条助手消息会被落库两次**（验收时发现，未修）。
+0. **模型调用失败时，同一条助手消息会被落库两次**（验收时发现，✅ 已修）。
    触发条件：模型返回错误（实测是 SiliconFlow 的 429）。现象是每一轮在 `messages` 表里留下
    两行**逐字节相同**的助手消息（连 `timestamp` 都一样），其中第二行还被错误地标成
    `interrupted = true`。
@@ -223,9 +235,15 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
    `abort()` 路径（`stopReason: "aborted"`），错误路径一条都没有。
 
    影响：transcript 里多出重复消息，回灌给模型时也是重复的；`interrupted` 标记的语义被污染。
-   修法应是把 `agent_end` 的判定从「state 上有 errorMessage」收窄成「本轮确实是被 abort 的」，
-   并补一条 faux provider 返回错误的用例。**中断路径没有这个问题**——验收第 7 项确认了
-   掐断连接只落一条。
+
+   **修法**：不再去猜 state 的 `stopReason` / `errorMessage`，改成在 `message_end` 落库前
+   先把 `partial` 清空。于是 `agent_end` 时「`partial` 还在」就等价于「这条消息发过
+   `message_start` 却没等到 `message_end`」，也就是本轮真被打断了——正常完成与模型报错
+   都会经过 `message_end` 那个分支被清掉。清空放在 `await` 之前，是为了让写入失败时
+   `agent_end` 不再拿同一条重试。
+   新增用例 `模型报错时只落一条助手消息，且不标 interrupted`（用
+   `fauxAssistantMessage([], { stopReason: "error", errorMessage })` 造报错响应），
+   修之前它复现出 3 条消息。**中断路径没有这个问题**——验收第 7 项与既有用例都确认只落一条。
 
 1. **中断后重发会让 transcript 的顺序错乱**——本轮最需要注意的一条。`seq` 反映的是「写入时刻」，
    而对话的逻辑顺序是「轮次」。被打断的半截助手消息在 `agent_end` 才落库，那时 HTTP 响应早就关了，

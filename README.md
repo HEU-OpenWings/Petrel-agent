@@ -16,7 +16,7 @@ Petrel 智能体平台。TypeScript monorepo，agent 内核用 [pi](https://gith
 ## 快速开始
 
 ```bash
-cp .env.template .env   # 对话功能需要填 SILICONFLOW_API_KEY
+cp .env.template .env   # 对话功能需要填 DEEPSEEK_API_KEY
 docker compose up -d
 ```
 
@@ -58,7 +58,7 @@ petrel-agent/
 │        └─ views/ChatView.vue
 ├─ packages/
 │  ├─ agent-core/              # pi Agent 装配与内置工具（@petrel/agent-core）
-│  ├─ ai/                      # 模型 provider 注册（@petrel/ai）
+│  ├─ ai/                      # 模型 provider 注册；默认 deepseek-v4-flash（@petrel/ai）
 │  ├─ config/                  # 环境配置；全仓唯一读取 process.env（@petrel/config）
 │  ├─ database/                # Drizzle schema 与 repository（@petrel/database）
 │  └─ logger/                  # pino 日志与请求日志（@petrel/logger）

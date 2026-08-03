@@ -36,8 +36,10 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
   当前有 `system`（health）、`chat`（SSE）与 `sessions`（会话 CRUD）。
 - `apps/web`（`@petrel/web`）— Vue 3 + Vite + Ant Design Vue + pinia，JS（尚未 TS 化）。
 - `packages/agent-core` — `createAgent()` 装配 pi `Agent`，内置工具在 `src/tools/`。
-- `packages/ai` — 模型 provider 注册。SiliconFlow 不在 pi 内置 provider 里，用
-  `createProvider` + `openai-completions.lazy` 注册，默认模型 `deepseek-ai/DeepSeek-V3`。
+- `packages/ai` — 模型 provider 注册。DeepSeek 官方与 SiliconFlow 都不在 pi 内置 provider 里，
+  用 `createProvider` 自行注册。默认模型是 DeepSeek 官方的 `deepseek-v4-flash`，走
+  **Responses API**（`openai-responses.lazy`，DeepSeek 官方不提供 chat/completions）；
+  SiliconFlow 的 `deepseek-ai/DeepSeek-V3` 走 `openai-completions.lazy`，留作限流时的备选。
 - `packages/database` — Drizzle schema 与 repository。`sessions` / `messages` 存 pi 的
   `AgentMessage` JSONB，消息用整数 `seq` 排序（同一轮的多条消息时间戳可能相同），
   `seq` 由数据库在插入时分配（`SELECT ... FOR UPDATE` + `MAX(seq)+1`），不由调用方传。
@@ -81,7 +83,11 @@ event: error   data: { message }
 4. `text_start` / `toolcall_delta` 是 pi-ai 层 `assistantMessageEvent` 的子类型，嵌在
    `message_update` 里，不是顶层 `AgentEvent`。
 
-模型 API key 由 pi-ai 的 auth 机制从 `SILICONFLOW_API_KEY` 解析，这是
+5. **模型报错那条消息同样走 `message_end`**（`stopReason: "error"`），只是没有 `message_end`
+   之外的信号。落库/去重逻辑若只把 `"aborted"` 当特例，就会把报错那条当成「没写完的半截」
+   重复处理一遍——`services/session.ts` 踩过这个。
+
+模型 API key 由 pi-ai 的 auth 机制从 `DEEPSEEK_API_KEY` / `SILICONFLOW_API_KEY` 解析，这是
 「`@petrel/config` 是唯一读 env 的位置」的**唯一例外**。
 
 ### 测试
@@ -106,6 +112,10 @@ event: error   data: { message }
    与 `allowBuilds` 写在这里，缺了镜像内 `pnpm install --frozen-lockfile` 会被策略拒绝。
 7. **nginx 反代必须 `proxy_buffering off`**：`/api/chat` 是 SSE，不关缓冲会攒住输出。
 8. **API key 混入非 ASCII 时 pi 报 `Cannot convert argument to a ByteString`**，不指向根因。
+9. **`reasoning: true` 的模型，pi 会在调用方没指定 effort 时主动发
+   `reasoning: { effort: "none" }` 把思考关掉**（`openai-responses.js` 的 else 分支）。
+   想沿用 provider 自己的默认值，要把 `thinkingLevelMap.off` 设成 `null`，
+   见 `packages/ai/src/index.ts` 里 `deepseek-v4-flash` 的注释。
 
 ## 重构现状
 
