@@ -32,7 +32,10 @@ export async function verifyPassword(plain: string, stored: string): Promise<boo
   const parts = stored.split("$");
   if (parts.length !== 3 || parts[0] !== ALGORITHM) return false;
 
-  const [, saltStr, hashStr] = parts;
+  const saltStr = parts[1];
+  const hashStr = parts[2];
+  if (saltStr === undefined || hashStr === undefined) return false;
+
   const salt = Buffer.from(saltStr, "base64");
   const expected = Buffer.from(hashStr, "base64");
   if (salt.length !== SALT_LENGTH || expected.length !== KEY_LENGTH) return false;
