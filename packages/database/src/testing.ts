@@ -4,7 +4,15 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import * as schema from "./schema.ts";
-import { DEFAULT_USER_ID, DEFAULT_USERNAME, messages, sessions, users } from "./schema.ts";
+import {
+  DEFAULT_USER_EMAIL,
+  DEFAULT_USER_ID,
+  DEFAULT_USERNAME,
+  messages,
+  sessions,
+  UNUSABLE_PASSWORD_HASH,
+  users,
+} from "./schema.ts";
 
 /** migration 目录是包内的相对位置，测试从仓库根跑，所以要解析成绝对路径 */
 const MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
@@ -31,7 +39,12 @@ export async function createTestDb(): Promise<{
   await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
 
   async function seedDefaultUser() {
-    await db.insert(users).values({ id: DEFAULT_USER_ID, username: DEFAULT_USERNAME });
+    await db.insert(users).values({
+      id: DEFAULT_USER_ID,
+      username: DEFAULT_USERNAME,
+      email: DEFAULT_USER_EMAIL,
+      passwordHash: UNUSABLE_PASSWORD_HASH,
+    });
   }
 
   await seedDefaultUser();

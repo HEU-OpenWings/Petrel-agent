@@ -1,6 +1,12 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { createAgent } from "@petrel/agent-core";
-import { createMessageRepository, DEFAULT_USER_ID, DEFAULT_USERNAME, users } from "@petrel/database";
+import {
+  createMessageRepository,
+  DEFAULT_USER_ID,
+  DEFAULT_USERNAME,
+  UNUSABLE_PASSWORD_HASH,
+  users,
+} from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { logger } from "@petrel/logger";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -263,7 +269,12 @@ describe("attachPersistence", () => {
    */
   it("唯一约束冲突单独打一条日志，与普通落库失败区分开", async () => {
     const uniqueViolation = await captureError(() =>
-      db.insert(users).values({ id: DEFAULT_USER_ID, username: DEFAULT_USERNAME }),
+      db.insert(users).values({
+        id: DEFAULT_USER_ID,
+        username: DEFAULT_USERNAME,
+        email: "collision@localhost",
+        passwordHash: UNUSABLE_PASSWORD_HASH,
+      }),
     );
     const errors = vi.spyOn(logger, "error").mockImplementation(() => {});
 

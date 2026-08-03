@@ -1,7 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { getDb } from "./client.ts";
-import { DEFAULT_USER_ID, DEFAULT_USERNAME, users } from "./schema.ts";
+import {
+  DEFAULT_USER_EMAIL,
+  DEFAULT_USER_ID,
+  DEFAULT_USERNAME,
+  UNUSABLE_PASSWORD_HASH,
+  users,
+} from "./schema.ts";
 
 const MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
 
@@ -14,5 +20,13 @@ export async function runMigrations(): Promise<void> {
   await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
 
   // 播种默认用户。幂等，重启不会重复插入
-  await db.insert(users).values({ id: DEFAULT_USER_ID, username: DEFAULT_USERNAME }).onConflictDoNothing();
+  await db
+    .insert(users)
+    .values({
+      id: DEFAULT_USER_ID,
+      username: DEFAULT_USERNAME,
+      email: DEFAULT_USER_EMAIL,
+      passwordHash: UNUSABLE_PASSWORD_HASH,
+    })
+    .onConflictDoNothing();
 }

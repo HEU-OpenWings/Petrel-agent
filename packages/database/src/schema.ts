@@ -1,13 +1,19 @@
 import { boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 /**
- * 认证（HEU-7）落地前的占位用户表。
- * 本轮只建表并播种一条默认用户，所有会话都挂在它下面；
- * 认证落地后这条记录要么被真实用户接管，要么作为历史数据的归属保留。
+ * 用户表。
+ *
+ * username 列是认证落地前的遗留，展示名现在由前端取邮箱前缀，
+ * 这一列在 Task 16 连同默认用户一起删除。
  */
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   username: text("username").notNull().unique(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  // 用 text 而不是 pg enum：enum 加值要 migration，应用层收窄更灵活
+  role: text("role").notNull().default("user"),
+  disabled: boolean("disabled").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -51,3 +57,7 @@ export const messages = pgTable(
 /** 认证落地前，所有会话的归属用户 */
 export const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000001";
 export const DEFAULT_USERNAME = "default";
+
+/** 默认用户的占位邮箱与密码哈希。哈希格式不合法，scrypt 校验必然失败——这个账号登不进来 */
+export const DEFAULT_USER_EMAIL = "default@localhost";
+export const UNUSABLE_PASSWORD_HASH = "!";
