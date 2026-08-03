@@ -31,12 +31,43 @@ function port(name: string, raw: string | undefined, fallback: number): number {
   return value;
 }
 
+/** 开发与测试环境的回落密钥。生产环境不允许走到这里，见 jwtSecret() */
+const DEV_JWT_SECRET = "petrel-dev-secret-do-not-use-in-production";
+
+/**
+ * JWT 签名密钥。
+ *
+ * 生产环境必须显式提供：带着一个公开在源码里的默认密钥上线，
+ * 等于任何人都能自己签一个 admin token。所以这里宁可让进程起不来。
+ */
+function jwtSecret(raw: string | undefined, nodeEnv: NodeEnv): string {
+  const value = raw?.trim();
+  if (value) return value;
+  if (nodeEnv === "production") {
+    throw new Error("生产环境必须提供 JWT_SECRET");
+  }
+  return DEV_JWT_SECRET;
+}
+
+/** 逗号分隔的 admin 邮箱名单。统一小写，与 users.email 的存储形式对齐 */
+function adminEmails(raw: string | undefined): readonly string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => item.length > 0);
+}
+
+const nodeEnv = oneOf("NODE_ENV", process.env.NODE_ENV, NODE_ENVS, "development");
+
 export const env = {
-  nodeEnv: oneOf("NODE_ENV", process.env.NODE_ENV, NODE_ENVS, "development"),
+  nodeEnv,
   port: port("PORT", process.env.PORT, 5050),
   logLevel: oneOf("LOG_LEVEL", process.env.LOG_LEVEL, LOG_LEVELS, "info"),
   // compose 内用服务名 db，宿主机直连用 localhost
   databaseUrl: process.env.DATABASE_URL ?? "postgres://petrel:petrel@localhost:5432/petrel",
+  jwtSecret: jwtSecret(process.env.JWT_SECRET, nodeEnv),
+  adminEmails: adminEmails(process.env.ADMIN_EMAILS),
 } as const;
 
-export const isProduction = env.nodeEnv === "production";
+export const isProduction = nodeEnv === "production";
