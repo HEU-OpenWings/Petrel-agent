@@ -1,5 +1,5 @@
 import { computed, ref, shallowRef } from 'vue'
-import { streamChat } from '@/apis/chat_api'
+import { abortChat, streamChat } from '@/apis/chat_api'
 
 /**
  * 把 pi 的 AgentEvent 序列归约为消息状态。
@@ -16,6 +16,8 @@ export function useAgentStream() {
   const running = ref(false)
   const error = ref('')
   const controller = shallowRef(null)
+  /** 当前这一轮的会话 id。abort 要用它调后端接口，而 send 之外没有别的地方知道它 */
+  const activeSessionId = ref(null)
   /** 当前正在流式写入的消息下标，由 message_start 确定 */
   let activeIndex = -1
 
@@ -101,6 +103,7 @@ export function useAgentStream() {
     running.value = true
     error.value = ''
     controller.value = new AbortController()
+    activeSessionId.value = options.sessionId
 
     try {
       await streamChat(
@@ -130,8 +133,21 @@ export function useAgentStream() {
     }
   }
 
-  function abort() {
-    controller.value?.abort()
+  /**
+   * 停止生成。
+   *
+   * 两件事都要做：先调后端接口让 agent 真的停下（harness 是常驻的，
+   * 断开 SSE 只是不再接收推送，生成会一直跑完），再断开本地读取。
+   * 顺序不能反：先断流会让下面那次 await 处在组件收尾流程里，容易被跳过。
+   */
+  async function abort() {
+    try {
+      if (activeSessionId.value) {
+        await abortChat(activeSessionId.value)
+      }
+    } finally {
+      controller.value?.abort()
+    }
   }
 
   return { messages, toolCalls, running, error, canSend, send, abort, reset, loadHistory }

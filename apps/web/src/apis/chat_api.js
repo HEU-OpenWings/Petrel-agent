@@ -77,3 +77,24 @@ export async function streamChat({ message, sessionId, systemPrompt, signal }, o
     }
   }
 }
+
+/**
+ * 停止正在进行的一轮对话。
+ *
+ * 后端的 harness 是常驻的，关闭 SSE 连接只会断开推送、不会停止生成
+ * （这是有意的：关页面不再丢回答），所以停止必须走一个显式接口。
+ */
+export async function abortChat(sessionId) {
+  const response = await fetch('/api/chat/abort', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId })
+  })
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw handleUnauthorized()
+    }
+    throw new Error(`停止失败（HTTP ${response.status}）`)
+  }
+}

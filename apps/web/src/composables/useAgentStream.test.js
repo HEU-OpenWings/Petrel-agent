@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { streamChat } from '@/apis/chat_api'
+import { abortChat, streamChat } from '@/apis/chat_api'
 import { useAgentStream } from './useAgentStream.js'
 
 // 模块级替身：不改 useAgentStream 的结构就能拿到 streamChat 的入参
-vi.mock('@/apis/chat_api', () => ({ streamChat: vi.fn() }))
+vi.mock('@/apis/chat_api', () => ({ streamChat: vi.fn(), abortChat: vi.fn() }))
 
 /** 让 streamChat 替身按给定顺序回放 SSE 帧 */
 function replay(frames) {
@@ -48,6 +48,8 @@ const HISTORY = [
 beforeEach(() => {
   streamChat.mockReset()
   streamChat.mockResolvedValue(undefined)
+  abortChat.mockReset()
+  abortChat.mockResolvedValue(undefined)
 })
 
 describe('send', () => {
