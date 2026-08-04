@@ -49,6 +49,12 @@ function putPreferences(body: unknown, cookie: string) {
   });
 }
 
+/** 取一个真实的模型 id。白名单校验要求它必须是注册过的，不能随便编一个 */
+async function firstModelId(cookie: string): Promise<string> {
+  const body = (await (await getPreferences(cookie)).json()) as { models: { id: string }[] };
+  return body.models[0]!.id;
+}
+
 describe("GET /api/account/preferences", () => {
   it("未登录返回 401", async () => {
     expect((await app.request("/api/account/preferences")).status).toBe(401);
@@ -91,8 +97,7 @@ describe("PUT /api/account/preferences", () => {
 
   it("写入后能读回来", async () => {
     const cookie = await registerUser("a@x.io");
-    const models = (await (await getPreferences(cookie)).json()) as { models: { id: string }[] };
-    const modelId = models.models[0]!.id;
+    const modelId = await firstModelId(cookie);
 
     const put = await putPreferences({ defaultModel: modelId, systemPrompt: "你是助手" }, cookie);
 
@@ -102,10 +107,11 @@ describe("PUT /api/account/preferences", () => {
   });
 
   // 不归一的话「清空 system prompt」会存一个 ""，然后被当作有效值发给模型，
-  // agent 拿到的是空 prompt 而不是 DEFAULT_SYSTEM_PROMPT
+  // agent 拿到的是空 prompt 而不是 DEFAULT_SYSTEM_PROMPT。
+  // 前置必须把两个字段都写成非 null，否则断言「清成 null」对本来就是 null 的字段恒真
   it("空字符串归一成 null", async () => {
     const cookie = await registerUser("a@x.io");
-    await putPreferences({ defaultModel: null, systemPrompt: "你是助手" }, cookie);
+    await putPreferences({ defaultModel: await firstModelId(cookie), systemPrompt: "你是助手" }, cookie);
 
     await putPreferences({ defaultModel: "", systemPrompt: "   " }, cookie);
 
@@ -113,10 +119,11 @@ describe("PUT /api/account/preferences", () => {
     expect(body.preferences).toEqual({ defaultModel: null, systemPrompt: null });
   });
 
-  // 全量语义：字段缺失就是 null，不是「这项别动」
+  // 全量语义：字段缺失就是 null，不是「这项别动」。
+  // 同上，前置两个字段都要是非 null，才能区分「清空了」和「保留了旧值」
   it("字段缺失等同于 null，会清掉已有的值", async () => {
     const cookie = await registerUser("a@x.io");
-    await putPreferences({ defaultModel: null, systemPrompt: "你是助手" }, cookie);
+    await putPreferences({ defaultModel: await firstModelId(cookie), systemPrompt: "你是助手" }, cookie);
 
     await putPreferences({}, cookie);
 
