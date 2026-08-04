@@ -1,7 +1,9 @@
+import { createEntryRepository } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService } from "../../services/session.ts";
 import { app } from "../app.ts";
+import { __resetRegistry } from "./chat.ts";
 
 /**
  * 路由里的 getDb() 建的是 node-postgres 连接池，连不到 PGlite，
@@ -31,6 +33,7 @@ const OTHER_SESSION_ID = "22222222-2222-2222-2222-222222222222";
 const ABSENT_SESSION_ID = "33333333-3333-3333-3333-333333333333";
 
 let service: ReturnType<typeof createSessionService>;
+let entryRepo: ReturnType<typeof createEntryRepository>;
 let reset: () => Promise<void>;
 let close: () => Promise<void>;
 
@@ -40,12 +43,14 @@ beforeAll(async () => {
   state.db = testDb.db;
   reset = testDb.reset;
   close = testDb.close;
+  entryRepo = createEntryRepository(testDb.db);
 });
 
 let cookie: string;
 
 beforeEach(async () => {
   await reset();
+  __resetRegistry();
   const response = await app.request("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -58,6 +63,17 @@ beforeEach(async () => {
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
+
+/** 造一条 message 条目，parent 串在上一条后面 */
+async function appendMessage(sessionId: string, n: number, role: string, text: string) {
+  await entryRepo.append({
+    id: `aaaaaaaa-0000-0000-0000-${String(n).padStart(12, "0")}`,
+    sessionId,
+    parentId: n === 1 ? null : `aaaaaaaa-0000-0000-0000-${String(n - 1).padStart(12, "0")}`,
+    type: "message",
+    payload: { message: { role, content: [{ type: "text", text }], timestamp: Date.now() } },
+  });
+}
 
 function patch(id: string, body: string) {
   return app.request(`/api/sessions/${id}`, {
@@ -96,33 +112,29 @@ describe("GET /api/sessions", () => {
 });
 
 describe("GET /api/sessions/:id/messages", () => {
-  it("按序返回消息，并单独给出被中断的序号", async () => {
+  it("返回会话的完整消息列表", async () => {
     await service.ensureSession(SESSION_ID, "有历史的会话");
-    await service.appendMessage(SESSION_ID, { role: "user", content: "你好" });
-    await service.appendMessage(SESSION_ID, { role: "assistant", content: "半截" }, true);
+    await appendMessage(SESSION_ID, 1, "user", "问题");
+    await appendMessage(SESSION_ID, 2, "assistant", "回答");
 
     const response = await app.request(`/api/sessions/${SESSION_ID}/messages`, {
       headers: { Cookie: cookie },
     });
 
     expect(response.status).toBe(200);
-    // 全等断言：确认没有多余的内部字段漏给前端
+    // 契约里不再有 interruptedSeqs：前端从未消费它，中断信息在消息自带的 stopReason 里
     await expect(response.json()).resolves.toEqual({
-      messages: [
-        { role: "user", content: "你好" },
-        { role: "assistant", content: "半截" },
-      ],
-      interruptedSeqs: [2],
+      messages: [expect.objectContaining({ role: "user" }), expect.objectContaining({ role: "assistant" })],
     });
   });
 
-  it("会话不存在时返回空数组而不是 404", async () => {
+  it("会话不存在时返回 200 与空数组", async () => {
     const response = await app.request(`/api/sessions/${ABSENT_SESSION_ID}/messages`, {
       headers: { Cookie: cookie },
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ messages: [], interruptedSeqs: [] });
+    await expect(response.json()).resolves.toEqual({ messages: [] });
   });
 
   it("非法 UUID 返回 400", async () => {
@@ -213,7 +225,7 @@ describe("PATCH /api/sessions/:id", () => {
 describe("DELETE /api/sessions/:id", () => {
   it("删掉会话，消息一并级联删除", async () => {
     await service.ensureSession(SESSION_ID, "待删的会话");
-    await service.appendMessage(SESSION_ID, { role: "user", content: "你好" });
+    await appendMessage(SESSION_ID, 1, "user", "你好");
 
     const response = await app.request(`/api/sessions/${SESSION_ID}`, {
       method: "DELETE",
@@ -224,6 +236,23 @@ describe("DELETE /api/sessions/:id", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
     expect(await service.list()).toEqual([]);
     expect((await service.loadHistory(SESSION_ID)).messages).toEqual([]);
+  });
+
+  it("删除会话后常驻实例被清掉", async () => {
+    await service.ensureSession(SESSION_ID, "t");
+
+    const response = await app.request(`/api/sessions/${SESSION_ID}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+
+    expect(response.status).toBe(200);
+    // evict 是幂等的：没有活实例时也不该报错
+    const second = await app.request(`/api/sessions/${SESSION_ID}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(second.status).toBe(404);
   });
 
   it("会话不存在返回 404", async () => {

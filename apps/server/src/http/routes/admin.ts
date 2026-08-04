@@ -1,7 +1,8 @@
-import { createUserRepository, getDb } from "@petrel/database";
+import { createSessionRepository, createUserRepository, getDb } from "@petrel/database";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "../../types.ts";
+import { getRegistry } from "./chat.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -43,5 +44,13 @@ export const admin = new Hono<AppEnv>()
     if (!(await repo.setDisabled(id, disabled))) {
       throw new HTTPException(404, { message: "用户不存在" });
     }
+
+    // 被禁用者的下一个请求会被 requireAuth 拦住，但正在跑的那一轮不会自己停。
+    // 立即生效是认证那一轮定下的原则，所以这里主动停掉他所有活实例
+    if (disabled) {
+      const owned = await createSessionRepository(getDb()).listByUser(id);
+      await Promise.all(owned.map((session) => getRegistry().evict(session.id)));
+    }
+
     return c.json({ ok: true });
   });

@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { createSessionService } from "../../services/session.ts";
 import type { AppEnv } from "../../types.ts";
+import { getRegistry } from "./chat.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -67,7 +68,7 @@ export const sessions = new Hono<AppEnv>()
     const id = requireUuid(c.req.param("id"));
     const service = createSessionService(getDb(), c.get("currentUser").id);
     const history = await service.loadHistory(id);
-    return c.json({ messages: history.messages, interruptedSeqs: history.interruptedSeqs });
+    return c.json({ messages: history.messages });
   })
 
   .patch("/:id", async (c) => {
@@ -90,5 +91,7 @@ export const sessions = new Hono<AppEnv>()
     if (!(await service.remove(id))) {
       throw new HTTPException(404, { message: "会话不存在" });
     }
+    // 否则内存里还有个活 harness 往已删除的会话写，报错发生在没有请求上下文的地方，日志极难查
+    await getRegistry().evict(id);
     return c.json({ ok: true });
   });
