@@ -5,6 +5,7 @@ import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
 import { createHarnessRegistry, HarnessRegistryError } from "../../services/harness-registry.ts";
 import type { AppEnv } from "../../types.ts";
+import { createSseQueue } from "../sse-queue.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -72,80 +73,6 @@ function requireSessionId(body: unknown): string {
     throw new HTTPException(400, { message: "sessionId 必须是 UUID" });
   }
   return sessionId;
-}
-
-interface SseFrame {
-  event: string;
-  data: string;
-}
-
-/**
- * 有界队列 + 独立写出循环，把「pi 事件到达」和「SSE 真正写出」解耦。
- *
- * pi 的 subscribe 是 `for (const listener of handlers) await listener(event)`
- * （@earendil-works/pi-agent-core 的 agent-harness.js emitAny/emitOwn）：串行 await、
- * 没有超时。listener 如果直接 `await stream.writeSSE(...)`，客户端不读流时 hono
- * streamSSE 底层 TransformStream（highWaterMark 1）的 writer.write() 就不会 resolve，
- * 直接冻死整条 agent loop——不止这一个连接：registry 那份维护 running 标记的常驻订阅
- * 收不到 settled、running 永远真、refCount 不释放、同会话其他连接的 send() 卡在
- * held.chain 上、abort() 内部的 waitForIdle() 也解不开。慢客户端因此能把整个会话、
- * 乃至（占满 200 个槽位后）整个进程冻住。
- *
- * 修法：传给 subscribe() 的回调只做同步入队，绝不 await 任何 I/O；真正的
- * stream.writeSSE() 全部挪到 pump() 这个独立循环里——慢的是这个循环，不会
- * 反向传染给 harness。
- */
-function createSseQueue() {
-  /**
-   * 上限按事件条数，不按字节：chunked 逐字流的一条长回答能拆成几百到上千个
-   * delta 事件（token size 越小拆得越碎）。2000 留了几倍余量，正常回答不会碰到；
-   * 顶到这个数只可能是客户端完全不读，直接判定为死连接。
-   */
-  const MAX_QUEUE_EVENTS = 2000;
-  const items: SseFrame[] = [];
-  let waiter: (() => void) | undefined;
-  let closed = false;
-  let overflowed = false;
-
-  function wake() {
-    const resolve = waiter;
-    waiter = undefined;
-    resolve?.();
-  }
-
-  return {
-    /** 订阅回调调用：同步，不能在这里 await 任何 I/O。返回 false 表示已经溢出 */
-    push(frame: SseFrame): boolean {
-      if (overflowed) return false;
-      if (items.length >= MAX_QUEUE_EVENTS) {
-        overflowed = true;
-        wake();
-        return false;
-      }
-      items.push(frame);
-      wake();
-      return true;
-    },
-    /** 停止接收新事件；已经排队的不清空，pump() 会先写完它们再退出（要求 5：不丢尾部事件） */
-    close(): void {
-      closed = true;
-      wake();
-    },
-    /** 写出循环：写到队列空且（已 close 或已溢出）为止 */
-    async pump(write: (frame: SseFrame) => Promise<void>): Promise<void> {
-      for (;;) {
-        const frame = items.shift();
-        if (frame !== undefined) {
-          await write(frame);
-          continue;
-        }
-        if (closed || overflowed) return;
-        await new Promise<void>((resolve) => {
-          waiter = resolve;
-        });
-      }
-    },
-  };
 }
 
 export const chat = new Hono<AppEnv>()
