@@ -2,7 +2,9 @@ import { listModels } from "@petrel/agent";
 import { createPreferencesRepository, getDb } from "@petrel/database";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { AuthError, getAuthService } from "../../services/auth.ts";
 import type { AppEnv } from "../../types.ts";
+import { issueToken } from "../middleware/auth.ts";
 
 /**
  * system prompt 的长度上限。
@@ -33,6 +35,14 @@ function parseNullableString(value: unknown, field: string): string | null {
   }
   const cleaned = value.replaceAll(NUL, "").trim();
   return cleaned === "" ? null : cleaned;
+}
+
+/** AuthError 带着状态码，翻译成 HTTPException 交给 error 中间件统一出格式（同 routes/auth.ts） */
+function toHttpException(error: unknown): never {
+  if (error instanceof AuthError) {
+    throw new HTTPException(error.status, { message: error.message });
+  }
+  throw error;
 }
 
 export const account = new Hono<AppEnv>()
@@ -74,4 +84,26 @@ export const account = new Hono<AppEnv>()
     const repo = createPreferencesRepository(getDb());
     const preferences = await repo.save(c.get("currentUser").id, { defaultModel, systemPrompt });
     return c.json({ preferences });
+  })
+
+  .post("/password", async (c) => {
+    const body: unknown = await c.req.json().catch(() => {
+      throw new HTTPException(400, { message: "请求体必须是 JSON" });
+    });
+    const fields = body as { currentPassword?: unknown; newPassword?: unknown } | null;
+
+    if (typeof fields?.currentPassword !== "string" || typeof fields?.newPassword !== "string") {
+      throw new HTTPException(400, { message: "currentPassword 与 newPassword 必须是字符串" });
+    }
+
+    const user = c.get("currentUser");
+    await getAuthService()
+      .changePassword(user, fields.currentPassword, fields.newPassword)
+      .catch(toHttpException);
+
+    // 重新签发：改完密码当前会话不该掉线。
+    // 这不会失效其他设备上的旧 token——JWT 无状态，见 CLAUDE.md「尚未实现」
+    await issueToken(c, user);
+
+    return c.json({ ok: true });
   });

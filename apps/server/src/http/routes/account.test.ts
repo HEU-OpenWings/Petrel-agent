@@ -49,6 +49,22 @@ function putPreferences(body: unknown, cookie: string) {
   });
 }
 
+function changePassword(body: unknown, cookie: string) {
+  return app.request("/api/account/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify(body),
+  });
+}
+
+function login(email: string, password: string) {
+  return app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
 /** 取一个真实的模型 id。白名单校验要求它必须是注册过的，不能随便编一个 */
 async function firstModelId(cookie: string): Promise<string> {
   const body = (await (await getPreferences(cookie)).json()) as { models: { id: string }[] };
@@ -178,5 +194,89 @@ describe("PUT /api/account/preferences", () => {
     const body = (await (await getPreferences(bob)).json()) as { preferences: unknown };
 
     expect(body.preferences).toEqual({ defaultModel: null, systemPrompt: null });
+  });
+});
+
+/**
+ * 每个用例用独占邮箱：失败计数器在 services/auth.ts 的模块级单例里，
+ * 是进程级状态，beforeEach 的 reset() 只清数据库不清它。共用邮箱会让
+ * 前面用例记下的失败次数污染后面的期望（400 变 429、第 5 次就 429）。
+ */
+describe("POST /api/account/password", () => {
+  const OLD = "hunter2hunter2";
+  const NEW = "correcthorsebattery";
+
+  it("未登录返回 401", async () => {
+    const response = await app.request("/api/account/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPassword: OLD, newPassword: NEW }),
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("改成功后新密码能登录、旧密码不能", async () => {
+    const cookie = await registerUser("pw-ok@x.io");
+
+    const response = await changePassword({ currentPassword: OLD, newPassword: NEW }, cookie);
+
+    expect(response.status).toBe(200);
+    expect((await login("pw-ok@x.io", NEW)).status).toBe(200);
+    expect((await login("pw-ok@x.io", OLD)).status).toBe(401);
+  });
+
+  // 当前会话不该因为改了密码而掉线
+  it("改成功后重新签发 cookie", async () => {
+    const cookie = await registerUser("pw-reissue@x.io");
+
+    const response = await changePassword({ currentPassword: OLD, newPassword: NEW }, cookie);
+
+    expect(response.headers.get("Set-Cookie")).toContain("petrel_token=");
+  });
+
+  // 前端靠这个状态码 + treatUnauthorizedAsRequestError 避免把用户踢下线
+  it("旧密码不正确返回 401 且文案具体", async () => {
+    const cookie = await registerUser("pw-wrong@x.io");
+
+    const response = await changePassword({ currentPassword: "wrong-password", newPassword: NEW }, cookie);
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: { message: "当前密码不正确" } });
+  });
+
+  it("新密码太短返回 400", async () => {
+    const cookie = await registerUser("pw-short@x.io");
+
+    const response = await changePassword({ currentPassword: OLD, newPassword: "short" }, cookie);
+
+    expect(response.status).toBe(400);
+  });
+
+  it("旧密码连错 5 次后返回 429", async () => {
+    const cookie = await registerUser("pw-ratelimit@x.io");
+    for (let i = 0; i < 5; i += 1) {
+      expect(
+        (await changePassword({ currentPassword: "wrong-password", newPassword: NEW }, cookie)).status,
+      ).toBe(401);
+    }
+
+    const response = await changePassword({ currentPassword: "wrong-password", newPassword: NEW }, cookie);
+
+    expect(response.status).toBe(429);
+  });
+
+  it.each([
+    { name: "body 是 null", body: null, email: "pw-null@x.io" },
+    { name: "缺 newPassword", body: { currentPassword: OLD }, email: "pw-missing@x.io" },
+    {
+      name: "currentPassword 是数字",
+      body: { currentPassword: 1, newPassword: NEW },
+      email: "pw-type@x.io",
+    },
+  ])("$name 返回 400 而不是 500", async ({ body, email }) => {
+    const cookie = await registerUser(email);
+
+    expect((await changePassword(body, cookie)).status).toBe(400);
   });
 });
