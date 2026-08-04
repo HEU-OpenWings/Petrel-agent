@@ -103,10 +103,7 @@ describe("schema", () => {
   it("两列都可空：null 表示跟随系统默认", async () => {
     await db.insert(userPreferences).values({ userId: TEST_USER_ID });
 
-    const rows = await db
-      .select()
-      .from(userPreferences)
-      .where(eq(userPreferences.userId, TEST_USER_ID));
+    const rows = await db.select().from(userPreferences).where(eq(userPreferences.userId, TEST_USER_ID));
     expect(rows[0]).toMatchObject({ defaultModel: null, systemPrompt: null });
   });
 
