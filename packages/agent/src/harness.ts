@@ -1,4 +1,9 @@
-import { AgentHarness, type AgentHarnessTool, Session } from "@earendil-works/pi-agent-core";
+import {
+  AgentHarness,
+  type AgentHarnessTool,
+  InMemorySessionRepo,
+  Session,
+} from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import { defaultModel, models as defaultModels } from "@petrel/ai";
 import type { Database } from "@petrel/database";
@@ -49,4 +54,12 @@ export function createHarness(options: CreateHarnessOptions): AgentHarness {
     tools: options.tools ?? [currentTime],
     systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
   });
+}
+
+/**
+ * 一次性的内存会话，用于会话表不可用时的降级。
+ * 进程重启即丢——这正是「本轮不落库」想要的效果。
+ */
+export function createMemorySession(sessionId: string): Promise<Session> {
+  return new InMemorySessionRepo().create({ id: sessionId });
 }

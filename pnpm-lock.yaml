@@ -51,6 +51,9 @@ importers:
         specifier: ^4.12.32
         version: 4.12.32
     devDependencies:
+      '@earendil-works/pi-agent-core':
+        specifier: 0.83.0
+        version: 0.83.0(supports-color@7.2.0)(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-ai':
         specifier: 0.83.0
         version: 0.83.0(supports-color@7.2.0)(ws@8.21.1)(zod@4.4.3)
