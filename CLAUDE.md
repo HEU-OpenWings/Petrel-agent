@@ -34,7 +34,7 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
 
 - `apps/server`（`@petrel/server`）— Hono HTTP 应用。`src/http/app.ts` 挂载路由，
   当前有 `system`（health）、`auth`（注册/登录/登出/me）、`chat`（SSE）、
-  `sessions`（会话 CRUD）与 `admin`（用户管理）。
+  `sessions`（会话 CRUD）、`account`（用户偏好与改密码）与 `admin`（用户管理）。
   **`app.ts` 的挂载顺序有安全含义**：`system` 与 `auth` 是仅有的两个公开前缀，
   `app.use("/api/*", requireAuth)` 之下的路由自动受保护（`admin` 再叠一层 `requireAdmin`）。
 - `apps/web`（`@petrel/web`）— Vue 3 + Vite + Ant Design Vue + pinia，JS（尚未 TS 化）。
@@ -47,6 +47,8 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
   `AgentMessage` JSONB，消息用整数 `seq` 排序（同一轮的多条消息时间戳可能相同），
   `seq` 由数据库在插入时分配（`SELECT ... FOR UPDATE` + `MAX(seq)+1`），不由调用方传。
   测试用 PGlite 内存 Postgres，不需要 Docker。
+  `user_preferences` 一人一行（`user_id` 作主键），`default_model` 与 `system_prompt`
+  两列可空，`null` 表示跟随系统默认——不是空字符串，route 层会把空串归一成 `null`。
 - `packages/config` — **全仓唯一读取 `process.env` 的位置**，导出校验后的 `env`。
 - `packages/logger` — pino logger 与 Hono 的 `requestLogger` 中间件。
 
@@ -96,6 +98,13 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 **尚未实现（公开部署前必须先做）**：配额与 token 计量、注册限流、邮箱验证、密码重置。
 登录失败限流（同一邮箱 5 次失败锁 15 分钟）是单实例内存的，进程重启即失效、多副本部署下无效。
 
+改密码是 `POST /api/account/password`（挂在 `requireAuth` 之下，不在公开的 `/api/auth`
+前缀里——改凭据的端点靠 handler 手写校验，哪天漏了就等于认证绕过）。它**不失效其他
+设备上的旧 token**：JWT 无状态、7 天有效，只重新签发当前会话的 cookie。彻底解决要给
+`users` 加 `tokenVersion` 并让 `requireAuth` 比对。另外旧密码校验与登录**共用同一个
+失败计数器**，所以改密码连错 5 次也会连带锁住登录 15 分钟——有意的取舍，人已经在
+登录态里，锁住的只是重新登录。
+
 ### 消费 pi AgentEvent 的硬约束（已核对 pi 的 `types.d.ts`，勿凭文档记忆）
 
 1. `message_update` / `message_end` 带完整的（部分）`message`，直接覆盖，不要自己拼 delta。
@@ -142,6 +151,12 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
     浏览器会静默丢弃 cookie，表现为「登录接口返回 200 但下一个请求仍是未登录」。
 11. **Node 的 `scrypt` 默认 `maxmem` 是 32MB**，而 N=65536、r=8 需要 64MB，
     不显式调高会抛 `ERR_CRYPTO_INVALID_SCRYPT_PARAMS`，报错不指向根因。
+12. **compose 只挂 `src`，不挂 `packages/database/drizzle`，新增 migration 在容器里永不生效**。
+    `runMigrations()` 读的是 `packages/database/drizzle`，只挂 `src` 的话容器里用的是构建时
+    烘进镜像的旧副本，新加的 `.sql` 从来不会被应用——而启动日志照样打印
+    `database migrations applied`，排查时极具误导性（表现为接口 500：
+    `relation "xxx" does not exist`）。已在 `docker-compose.yml` 给 api 补上这个挂载。
+    **改完 schema 生成 migration 后要 `docker compose up -d`**，让容器重启跑一遍迁移。
 
 ## 重构现状
 
