@@ -260,21 +260,27 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
           let outcome: Promise<void> | undefined;
           const started = held.chain.then(() => {
             if (held.running) {
-              // followUp 只是 push 队列 + emit，是瞬时的，等它返回再放行下一个。
+              // followUp 只是 push 队列 + emit，是瞬时的，几乎立刻 resolve——
+              // 但调用方（SSE 路由）需要等本轮真正结束才能收尾，否则并发的第二个
+              // 连接会在自己那条消息还没被处理完时就关流。等 waitForIdle() 让
+              // send() 的语义与 prompt 分支一致：都在整轮结束时才 resolve。
               // 它在 harness 内部 phase === "idle" 时会抛 invalid_state，而我们的 running
               // 与那个私有字段之间可能有一瞬不同步（比如上一轮刚好在这两句之间跑完），
               // 所以退回 prompt 而不是把错误抛给用户
-              outcome = held.harness.followUp(message).catch((error) => {
-                logger.warn({ err: error, sessionId }, "followUp rejected, falling back to prompt");
-                held.running = true;
-                return held.harness
-                  .prompt(message)
-                  .then(() => undefined)
-                  .finally(() => {
-                    held.running = false;
-                    held.lastUsedAt = now();
-                  });
-              });
+              outcome = held.harness
+                .followUp(message)
+                .then(() => held.harness.waitForIdle())
+                .catch((error) => {
+                  logger.warn({ err: error, sessionId }, "followUp rejected, falling back to prompt");
+                  held.running = true;
+                  return held.harness
+                    .prompt(message)
+                    .then(() => undefined)
+                    .finally(() => {
+                      held.running = false;
+                      held.lastUsedAt = now();
+                    });
+                });
               return outcome;
             }
             held.running = true;

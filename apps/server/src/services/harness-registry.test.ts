@@ -213,8 +213,8 @@ describe("createHarnessRegistry", () => {
 
     const first = handle.send("第一个问题");
     const second = handle.send("第二个问题");
+    // send() 现在自己会等到整轮真正结束才 resolve（followUp 分支内部等了 waitForIdle）
     await Promise.all([first, second]);
-    await handle.harness.waitForIdle();
     handle.release();
 
     const text = JSON.stringify(await handle.session.getEntries());
