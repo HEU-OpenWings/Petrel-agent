@@ -97,24 +97,23 @@ export interface ModelSummary {
 }
 
 /**
- * 已注册模型的单一来源，listModels() 与 findModel() 都从这里派生。
+ * 从 models 注册表派生，不另存一份清单。
  *
- * 不去翻 pi 的 Models 有没有枚举 API：本地静态数组更简单、可测，而且模型对象
- * 本来就在这个文件里定义。新增模型时只加到这里，两个函数自动跟上。
+ * 早先的写法是手抄一个 { model, providerName } 数组，但那样往 provider 的
+ * models: [...] 里加模型时必须记得同步两处，漏了就是「模型能跑但前端选不到」，
+ * 且类型检查与测试都拦不住。providerName 也不必再抄一遍字面量——
+ * Provider 自己就带 name。
  */
-const REGISTERED: readonly { model: Model<Api>; providerName: string }[] = [
-  { model: deepseekV4Flash, providerName: "DeepSeek" },
-  { model: deepseekV3, providerName: "SiliconFlow" },
-];
-
 export function listModels(): ModelSummary[] {
-  return REGISTERED.map(({ model, providerName }) => ({
-    id: model.id,
-    name: model.name,
-    provider: model.provider,
-    providerName,
-    isDefault: model.id === DEFAULT_MODEL_ID,
-  }));
+  return models.getProviders().flatMap((provider) =>
+    provider.getModels().map((model) => ({
+      id: model.id,
+      name: model.name,
+      provider: provider.id,
+      providerName: provider.name,
+      isDefault: model.id === DEFAULT_MODEL_ID,
+    })),
+  );
 }
 
 /**
@@ -122,5 +121,5 @@ export function listModels(): ModelSummary[] {
  * 偏好里只存一个字符串，多带一个 provider 只是让前端多存一份能推出来的信息。
  */
 export function findModel(id: string): Model<Api> | undefined {
-  return REGISTERED.find((entry) => entry.model.id === id)?.model;
+  return models.getModels().find((model) => model.id === id);
 }

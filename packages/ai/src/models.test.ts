@@ -9,14 +9,18 @@ describe("listModels", () => {
     expect(ids).toContain("deepseek-ai/DeepSeek-V3");
   });
 
-  it("每一项都带展示用的名字与 provider", () => {
+  // 用 toEqual 而不是 toMatchObject：后者允许对象带额外字段，正好放过
+  // 「意外多吐了 baseUrl / cost 等内部信息」这个本条要守的场景。
+  // 摘要会被 HTTP 响应直接返回给前端，字段边界就是这里钉住的
+  it("摘要恰好是这 5 个字段，不泄漏内部信息", () => {
     const model = listModels().find((item) => item.id === DEFAULT_MODEL_ID);
 
-    expect(model).toMatchObject({
+    expect(model).toEqual({
       id: DEFAULT_MODEL_ID,
       name: "DeepSeek V4 Flash",
       provider: "deepseek",
       providerName: "DeepSeek",
+      isDefault: true,
     });
   });
 
@@ -26,12 +30,6 @@ describe("listModels", () => {
     const defaults = listModels().filter((model) => model.isDefault);
 
     expect(defaults.map((model) => model.id)).toEqual([DEFAULT_MODEL_ID]);
-  });
-
-  // 摘要是给 HTTP 响应用的，不该把 baseUrl / cost / 内部开关吐给前端
-  it("摘要里没有 baseUrl 与 cost", () => {
-    expect(JSON.stringify(listModels())).not.toContain("baseUrl");
-    expect(JSON.stringify(listModels())).not.toContain("cost");
   });
 });
 
