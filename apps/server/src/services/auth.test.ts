@@ -218,17 +218,20 @@ describe("changePassword", () => {
     });
   });
 
-  // 长度校验排在旧密码校验之前：否则改成一个 3 位新密码要先白跑一次 scrypt，
-  // 而且这种输入错误不该计进失败次数
-  it("新密码太短时不消耗失败次数", async () => {
+  // 必须用「错误的旧密码 + 过短的新密码」才测得到顺序：
+  // 长度校验在前 → 根本走不到 verifyPassword，所以既拿到 400、也不计失败次数；
+  // 若有人把顺序调换 → verifyPassword 先失败，拿到的是 401 而不是 400，这条立刻红。
+  // 只用正确的旧密码是测不出来的：那样 verifyPassword 成功，两种顺序下都不会计数
+  it("新密码太短时先报 400，且不消耗失败次数", async () => {
     const user = await seedUser();
 
     for (let i = 0; i < 6; i += 1) {
-      await expect(service.changePassword(user, OLD, "short")).rejects.toMatchObject({
+      await expect(service.changePassword(user, "wrong-password", "short")).rejects.toMatchObject({
         status: 400,
       });
     }
 
+    // 失败次数没被消耗：正确的旧密码仍然改得动，而不是撞上 429
     await expect(service.changePassword(user, OLD, NEW)).resolves.toBeUndefined();
   });
 
