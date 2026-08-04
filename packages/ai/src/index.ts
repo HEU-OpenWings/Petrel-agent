@@ -1,4 +1,4 @@
-import { createModels, createProvider, envApiKeyAuth, type Model } from "@earendil-works/pi-ai";
+import { type Api, createModels, createProvider, envApiKeyAuth, type Model } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 
@@ -84,4 +84,43 @@ export function defaultModel(): Model<"openai-responses"> {
   const model = models.getModel(DEFAULT_PROVIDER_ID, DEFAULT_MODEL_ID);
   if (!model) throw new Error(`模型未注册：${DEFAULT_MODEL_ID}`);
   return model as Model<"openai-responses">;
+}
+
+/** 给 HTTP 响应用的模型摘要。不含 baseUrl / cost / 内部开关 */
+export interface ModelSummary {
+  id: string;
+  name: string;
+  provider: string;
+  providerName: string;
+  /** 偏好为 null（跟随系统默认）时，前端靠这个知道实际用的是哪个 */
+  isDefault: boolean;
+}
+
+/**
+ * 已注册模型的单一来源，listModels() 与 findModel() 都从这里派生。
+ *
+ * 不去翻 pi 的 Models 有没有枚举 API：本地静态数组更简单、可测，而且模型对象
+ * 本来就在这个文件里定义。新增模型时只加到这里，两个函数自动跟上。
+ */
+const REGISTERED: readonly { model: Model<Api>; providerName: string }[] = [
+  { model: deepseekV4Flash, providerName: "DeepSeek" },
+  { model: deepseekV3, providerName: "SiliconFlow" },
+];
+
+export function listModels(): ModelSummary[] {
+  return REGISTERED.map(({ model, providerName }) => ({
+    id: model.id,
+    name: model.name,
+    provider: model.provider,
+    providerName,
+    isDefault: model.id === DEFAULT_MODEL_ID,
+  }));
+}
+
+/**
+ * 按 model id 查。两个 provider 的 id 不重名，所以不需要同时传 provider——
+ * 偏好里只存一个字符串，多带一个 provider 只是让前端多存一份能推出来的信息。
+ */
+export function findModel(id: string): Model<Api> | undefined {
+  return REGISTERED.find((entry) => entry.model.id === id)?.model;
 }
