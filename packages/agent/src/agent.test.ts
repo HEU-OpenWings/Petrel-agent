@@ -6,6 +6,7 @@ import {
   fauxText,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
+import { DEFAULT_MODEL_ID } from "@petrel/ai";
 import { describe, expect, it } from "vitest";
 import { type CreateAgentOptions, createAgent } from "./index.ts";
 
@@ -93,5 +94,36 @@ describe("agent loop", () => {
     expect(JSON.stringify(seen?.messages)).toContain("上一轮回答");
     // sessionId 是 pi Agent 的顶层选项，会随每次请求下发给 provider
     expect(seen?.sessionId).toBe("session-1");
+  });
+});
+
+describe("模型选择", () => {
+  it("未注册的 modelId 抛错，而不是静默用默认模型", () => {
+    // 静默回落最坏：用户在设置里选的模型被换掉，账单和输出都变了却没有任何信号
+    expect(() => createAgent({ modelId: "gpt-does-not-exist" })).toThrow("模型未注册");
+  });
+
+  it("modelId 传 undefined 时用系统默认模型", () => {
+    const agent = createAgent();
+
+    expect(agent.state.model.id).toBe(DEFAULT_MODEL_ID);
+  });
+
+  it("modelId 命中注册表时用该模型", () => {
+    const agent = createAgent({ modelId: "deepseek-ai/DeepSeek-V3" });
+
+    expect(agent.state.model.id).toBe("deepseek-ai/DeepSeek-V3");
+  });
+
+  // chat.test.ts / isolation.test.ts 的 faux provider 注入靠这条优先级：
+  // 它们把 model 铺在 options 之上，此时 modelId 必须让位
+  it("显式的 model 优先于 modelId", () => {
+    const faux = fauxProvider({ tokensPerSecond: 10_000 });
+    const models = createModels();
+    models.setProvider(faux.provider);
+
+    const agent = createAgent({ modelId: DEFAULT_MODEL_ID, models, model: faux.getModel() });
+
+    expect(agent.state.model.id).toBe(faux.getModel().id);
   });
 });
