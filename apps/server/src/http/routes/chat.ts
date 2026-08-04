@@ -74,6 +74,80 @@ function requireSessionId(body: unknown): string {
   return sessionId;
 }
 
+interface SseFrame {
+  event: string;
+  data: string;
+}
+
+/**
+ * 有界队列 + 独立写出循环，把「pi 事件到达」和「SSE 真正写出」解耦。
+ *
+ * pi 的 subscribe 是 `for (const listener of handlers) await listener(event)`
+ * （@earendil-works/pi-agent-core 的 agent-harness.js emitAny/emitOwn）：串行 await、
+ * 没有超时。listener 如果直接 `await stream.writeSSE(...)`，客户端不读流时 hono
+ * streamSSE 底层 TransformStream（highWaterMark 1）的 writer.write() 就不会 resolve，
+ * 直接冻死整条 agent loop——不止这一个连接：registry 那份维护 running 标记的常驻订阅
+ * 收不到 settled、running 永远真、refCount 不释放、同会话其他连接的 send() 卡在
+ * held.chain 上、abort() 内部的 waitForIdle() 也解不开。慢客户端因此能把整个会话、
+ * 乃至（占满 200 个槽位后）整个进程冻住。
+ *
+ * 修法：传给 subscribe() 的回调只做同步入队，绝不 await 任何 I/O；真正的
+ * stream.writeSSE() 全部挪到 pump() 这个独立循环里——慢的是这个循环，不会
+ * 反向传染给 harness。
+ */
+function createSseQueue() {
+  /**
+   * 上限按事件条数，不按字节：chunked 逐字流的一条长回答能拆成几百到上千个
+   * delta 事件（token size 越小拆得越碎）。2000 留了几倍余量，正常回答不会碰到；
+   * 顶到这个数只可能是客户端完全不读，直接判定为死连接。
+   */
+  const MAX_QUEUE_EVENTS = 2000;
+  const items: SseFrame[] = [];
+  let waiter: (() => void) | undefined;
+  let closed = false;
+  let overflowed = false;
+
+  function wake() {
+    const resolve = waiter;
+    waiter = undefined;
+    resolve?.();
+  }
+
+  return {
+    /** 订阅回调调用：同步，不能在这里 await 任何 I/O。返回 false 表示已经溢出 */
+    push(frame: SseFrame): boolean {
+      if (overflowed) return false;
+      if (items.length >= MAX_QUEUE_EVENTS) {
+        overflowed = true;
+        wake();
+        return false;
+      }
+      items.push(frame);
+      wake();
+      return true;
+    },
+    /** 停止接收新事件；已经排队的不清空，pump() 会先写完它们再退出（要求 5：不丢尾部事件） */
+    close(): void {
+      closed = true;
+      wake();
+    },
+    /** 写出循环：写到队列空且（已 close 或已溢出）为止 */
+    async pump(write: (frame: SseFrame) => Promise<void>): Promise<void> {
+      for (;;) {
+        const frame = items.shift();
+        if (frame !== undefined) {
+          await write(frame);
+          continue;
+        }
+        if (closed || overflowed) return;
+        await new Promise<void>((resolve) => {
+          waiter = resolve;
+        });
+      }
+    },
+  };
+}
+
 export const chat = new Hono<AppEnv>()
   .post("/", async (c) => {
     const body: unknown = await c.req.json().catch(() => {
@@ -88,32 +162,56 @@ export const chat = new Hono<AppEnv>()
       .catch(toHttpException);
 
     return streamSSE(c, async (stream) => {
+      const queue = createSseQueue();
+      let torn = false;
+      let unsubscribe: () => void = () => undefined;
+
+      // 幂等：溢出、client abort、正常收尾三条路径都会走到这里，只处理一次
+      function teardown() {
+        if (torn) return;
+        torn = true;
+        unsubscribe();
+        handle.release();
+        queue.close();
+      }
+
       // pi 的事件原样透传，前端按事件类型归约为消息状态。
       // 订阅是会话级的，所以同一会话的另一个连接的输出也会流过来——
-      // 它们本来就是这个会话的消息，前端按消息 id 归约，多标签页因此自动同步
-      const unsubscribe = handle.harness.subscribe(async (event) => {
-        await stream.writeSSE({ event: "agent", data: JSON.stringify(event) });
+      // 它们本来就是这个会话的消息，前端按消息 id 归约，多标签页因此自动同步。
+      //
+      // 这个回调必须保持同步（不能 async/await 任何 I/O），见 createSseQueue 顶部注释
+      unsubscribe = handle.harness.subscribe((event) => {
+        const accepted = queue.push({ event: "agent", data: JSON.stringify(event) });
+        if (!accepted) {
+          logger.error({ sessionId }, "chat SSE 队列溢出，客户端疑似不读流，断开这一个连接");
+          teardown();
+          // 强制结束这一路 HTTP 响应：writer 一旦被 abort，pump() 里卡住的
+          // writeSSE 会立刻结束等待（write() 内部吞掉错误），不必等它自然写完
+          stream.abort();
+        }
       });
 
       // 连接断开只退订，不 abort：harness 常驻，回答继续跑完并落库。
       // 用户主动停止走 POST /api/chat/abort
-      stream.onAbort(() => {
-        unsubscribe();
-        handle.release();
-      });
+      stream.onAbort(teardown);
+
+      const pumpDone = queue.pump((frame) => stream.writeSSE(frame));
 
       try {
         await handle.send(message);
       } catch (error) {
         logger.error({ err: error, sessionId }, "agent run failed");
-        await stream.writeSSE({
+        queue.push({
           event: "error",
           data: JSON.stringify({ message: error instanceof Error ? error.message : String(error) }),
         });
       } finally {
-        unsubscribe();
-        handle.release();
+        teardown();
       }
+
+      // 队列里可能还有没写出的事件（包括 agent_end）：收尾前先等 pump() 写完，
+      // 否则一个读得不慢、只是没读到最后的正常客户端也会丢掉结尾几帧
+      await pumpDone;
     });
   })
 

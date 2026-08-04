@@ -375,6 +375,32 @@ describe("POST /api/chat 会话持久化", () => {
     }, 5000);
   });
 
+  /**
+   * 核心回归用例：曾经 subscribe 回调里直接 `await stream.writeSSE(...)`，
+   * 客户端完全不读流时 hono streamSSE 的 TransformStream 背压会让 writer.write()
+   * 永不 resolve，直接冻死 pi 的 emitAny/emitOwn（串行 await、无超时），
+   * 进而冻住 registry 维护 running 标记的常驻订阅——同会话的 abort 会跟着永远挂住。
+   *
+   * 故意不读 postChat() 返回的响应体，模拟「连上了但从不读流」的客户端
+   * （比如 curl 不接 --no-buffer，或者只是挂着的浏览器标签页），
+   * 断言同会话的 abort 请求仍能在默认的测试超时内返回 200。
+   */
+  it("慢客户端不读流也不会卡住 harness：同会话的 abort 仍然及时返回", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+
+    // 不读它的 body，故意留着背压
+    await postChat({ message: "讲个长故事", sessionId: SESSION_ID });
+
+    const aborted = await app.request("/api/chat/abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ sessionId: SESSION_ID }),
+    });
+
+    expect(aborted.status).toBe(200);
+  });
+
   it("abort 别人的会话返回 403", async () => {
     const otherCookie = await registerAndLogin("other@example.com");
     const response = await app.request("/api/chat/abort", {
