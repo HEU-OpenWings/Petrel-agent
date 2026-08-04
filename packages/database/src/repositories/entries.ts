@@ -73,12 +73,19 @@ export function createEntryRepository(db: Database) {
         .orderBy(asc(sessionEntries.entrySeq));
     },
 
-    /** 最后写入的 leaf 条目，即当前活跃末端的记录 */
-    async latestLeaf(sessionId: string): Promise<StoredEntry | undefined> {
+    /**
+     * 最后写入的一条条目，不限类型。
+     *
+     * 用于推导「当前叶子」：pi 的会话树里，叶子指针在每次 appendEntry 之后都隐式前移到
+     * 刚写入的那条（`leaf` 类型条目例外——它的 payload.targetId 才是新叶子）。这与 pi 自带的
+     * jsonl/内存实现同构（两者的 appendEntry 都在方法末尾重算 currentLeafId /
+     * leafId，而不是只在收到显式 `leaf` 条目时才更新）。
+     */
+    async latestEntry(sessionId: string): Promise<StoredEntry | undefined> {
       const rows = await db
         .select(COLUMNS)
         .from(sessionEntries)
-        .where(and(eq(sessionEntries.sessionId, sessionId), eq(sessionEntries.type, "leaf")))
+        .where(eq(sessionEntries.sessionId, sessionId))
         .orderBy(desc(sessionEntries.entrySeq))
         .limit(1);
       return rows[0];

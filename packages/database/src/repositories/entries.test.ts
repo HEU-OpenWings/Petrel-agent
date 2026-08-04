@@ -124,20 +124,14 @@ describe("createEntryRepository", () => {
     expect(leaves.map((e) => e.id)).toEqual([entryId(2), entryId(3)]);
   });
 
-  it("latestLeaf 取最后写入的 leaf 条目，且按 sessionId 收窄", async () => {
+  it("latestEntry 取最后写入的一条条目（不限类型），且按 sessionId 收窄", async () => {
     await appendMessage(1, null);
-    await repo.append({
-      id: entryId(2),
-      sessionId: SESSION_ID,
-      parentId: entryId(1),
-      type: "leaf",
-      payload: { targetId: entryId(1) },
-    });
+    await appendMessage(2, 1);
 
-    expect((await repo.latestLeaf(SESSION_ID))?.id).toEqual(entryId(2));
-    expect(await repo.latestLeaf(OTHER_SESSION_ID)).toBeUndefined();
+    expect((await repo.latestEntry(SESSION_ID))?.id).toEqual(entryId(2));
+    expect(await repo.latestEntry(OTHER_SESSION_ID)).toBeUndefined();
 
-    // 另一个会话之后才写入 leaf：不应改变 SESSION_ID 的结果
+    // 另一个会话之后才写入：不应改变 SESSION_ID 的结果
     await repo.append({
       id: otherEntryId(1),
       sessionId: OTHER_SESSION_ID,
@@ -146,8 +140,19 @@ describe("createEntryRepository", () => {
       payload: { targetId: otherEntryId(1) },
     });
 
-    expect((await repo.latestLeaf(SESSION_ID))?.id).toEqual(entryId(2));
-    expect((await repo.latestLeaf(OTHER_SESSION_ID))?.id).toEqual(otherEntryId(1));
+    expect((await repo.latestEntry(SESSION_ID))?.id).toEqual(entryId(2));
+    expect((await repo.latestEntry(OTHER_SESSION_ID))?.id).toEqual(otherEntryId(1));
+
+    // leaf 条目也算数：写入之后它就是最后一条
+    await repo.append({
+      id: entryId(3),
+      sessionId: SESSION_ID,
+      parentId: entryId(2),
+      type: "leaf",
+      payload: { targetId: entryId(1) },
+    });
+
+    expect((await repo.latestEntry(SESSION_ID))?.id).toEqual(entryId(3));
   });
 
   it("listAll 按 entry_seq 升序，listAfter 按游标续读，且都按 sessionId 收窄", async () => {
