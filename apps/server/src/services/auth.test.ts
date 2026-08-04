@@ -176,3 +176,85 @@ describe("登录失败限流", () => {
     await expect(service.login("b@x.io", "hunter2hunter2")).resolves.toMatchObject({ email: "b@x.io" });
   });
 });
+
+describe("changePassword", () => {
+  const OLD = "hunter2hunter2";
+  const NEW = "correcthorsebattery";
+
+  async function seedUser() {
+    return service.register("a@x.io", OLD);
+  }
+
+  it("旧密码正确时换掉密码", async () => {
+    const user = await seedUser();
+
+    await service.changePassword(user, OLD, NEW);
+
+    await expect(service.login("a@x.io", NEW)).resolves.toMatchObject({ email: "a@x.io" });
+  });
+
+  it("换完之后旧密码登不进来", async () => {
+    const user = await seedUser();
+    await service.changePassword(user, OLD, NEW);
+
+    await expect(service.login("a@x.io", OLD)).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("旧密码不正确时 401 且不改动密码", async () => {
+    const user = await seedUser();
+
+    await expect(service.changePassword(user, "wrong-password", NEW)).rejects.toMatchObject({
+      status: 401,
+      message: "当前密码不正确",
+    });
+    await expect(service.login("a@x.io", OLD)).resolves.toMatchObject({ email: "a@x.io" });
+  });
+
+  it("新密码太短返回 400", async () => {
+    const user = await seedUser();
+
+    await expect(service.changePassword(user, OLD, "short")).rejects.toMatchObject({
+      status: 400,
+    });
+  });
+
+  // 长度校验排在旧密码校验之前：否则改成一个 3 位新密码要先白跑一次 scrypt，
+  // 而且这种输入错误不该计进失败次数
+  it("新密码太短时不消耗失败次数", async () => {
+    const user = await seedUser();
+
+    for (let i = 0; i < 6; i += 1) {
+      await expect(service.changePassword(user, OLD, "short")).rejects.toMatchObject({
+        status: 400,
+      });
+    }
+
+    await expect(service.changePassword(user, OLD, NEW)).resolves.toBeUndefined();
+  });
+
+  it("旧密码连错 5 次后返回 429", async () => {
+    const user = await seedUser();
+    for (let i = 0; i < 5; i += 1) {
+      await expect(service.changePassword(user, "wrong-password", NEW)).rejects.toMatchObject({
+        status: 401,
+      });
+    }
+
+    await expect(service.changePassword(user, "wrong-password", NEW)).rejects.toMatchObject({
+      status: 429,
+    });
+  });
+
+  // 计数器与 login 共用，这是有意的取舍：人已经在登录态里，锁住的只是重新登录，
+  // 代价小于为它单开一套计数与清理逻辑。行为要有测试钉住，不然以后会被当成 bug 改掉
+  it("改密码打满失败次数会连带锁住登录", async () => {
+    const user = await seedUser();
+    for (let i = 0; i < 5; i += 1) {
+      await expect(service.changePassword(user, "wrong-password", NEW)).rejects.toMatchObject({
+        status: 401,
+      });
+    }
+
+    await expect(service.login("a@x.io", OLD)).rejects.toMatchObject({ status: 429 });
+  });
+});
