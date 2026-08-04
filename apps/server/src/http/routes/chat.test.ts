@@ -596,7 +596,18 @@ describe("模型选择", () => {
     expect(state.seenAgentOptions).toBeUndefined();
   });
 
-  it("不传 model 时也不传 modelId，由 createAgent 用系统默认", async () => {
+  /**
+   * 守的是「兜默认值是 createAgent 的职责，路由不许注入默认模型」。
+   *
+   * 注意这条不由 TDD 驱动——实现之前它就是绿的（那时压根不解析 model）。
+   * 它的价值在于能被有意义的变异打红：若有人把 parseChatRequest 改成
+   * `model = rawModel ?? DEFAULT_MODEL_ID` 之类，这里就会拿到一个非 undefined 的
+   * modelId 而变红。路由一旦自己兜默认，createAgent 里
+   * 「modelId === undefined → defaultModel()」那条分支就永远走不到，
+   * 将来改 @petrel/ai 的 DEFAULT_MODEL_ID 会出现「改了却不生效」的怪问题。
+   * 别因为它「看起来是恒真的」就删掉。
+   */
+  it("不传 model 时路由不注入 modelId，默认值交给 createAgent 兜", async () => {
     faux.setResponses([fauxAssistantMessage([fauxText("好")])]);
 
     const response = await app.request("/api/chat", {
