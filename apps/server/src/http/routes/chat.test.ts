@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   /** 打开后只有会话仓储的查询失败，鉴权用的用户查询照常，用来模拟「已登录但会话表读写不了」 */
   sessionRepoBroken: false,
   agentOptions: undefined as CreateAgentOptions | undefined,
+  /** 记录路由实际传给 createAgent 的选项，用来断言 model 有没有透传 */
+  seenAgentOptions: undefined as CreateAgentOptions | undefined,
 }));
 
 /**
@@ -60,8 +62,10 @@ vi.mock("@petrel/agent", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@petrel/agent")>();
   return {
     ...actual,
-    createAgent: (options: CreateAgentOptions = {}) =>
-      actual.createAgent({ ...options, ...state.agentOptions }),
+    createAgent: (options: CreateAgentOptions = {}) => {
+      state.seenAgentOptions = options;
+      return actual.createAgent({ ...options, ...state.agentOptions });
+    },
   };
 });
 
@@ -119,6 +123,7 @@ beforeEach(async () => {
   const user = await registerUser("a@x.io");
   cookie = user.cookie;
   service = createSessionService(state.db!, user.id);
+  state.seenAgentOptions = undefined;
 });
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
@@ -552,5 +557,55 @@ describe("POST /api/chat SSE 协议", () => {
       "turn_end",
       "agent_end",
     ]);
+  });
+});
+
+describe("模型选择", () => {
+  it("合法的 model 透传给 createAgent", async () => {
+    faux.setResponses([fauxAssistantMessage([fauxText("好")])]);
+
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        message: "你好",
+        sessionId: SESSION_ID,
+        model: "deepseek-ai/DeepSeek-V3",
+      }),
+    });
+    // SSE 响应读干净才意味着 handler 已经跑完
+    await response.text();
+
+    expect(response.status).toBe(200);
+    expect(state.seenAgentOptions?.modelId).toBe("deepseek-ai/DeepSeek-V3");
+  });
+
+  // 静默回落最坏：用户在设置里选的模型被换掉，账单和输出都变了却没有任何信号
+  it("未注册的 model 返回 400，且压根不进 agent", async () => {
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        message: "你好",
+        sessionId: SESSION_ID,
+        model: "gpt-does-not-exist",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(state.seenAgentOptions).toBeUndefined();
+  });
+
+  it("不传 model 时也不传 modelId，由 createAgent 用系统默认", async () => {
+    faux.setResponses([fauxAssistantMessage([fauxText("好")])]);
+
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ message: "你好", sessionId: SESSION_ID }),
+    });
+    await response.text();
+
+    expect(state.seenAgentOptions?.modelId).toBeUndefined();
   });
 });
