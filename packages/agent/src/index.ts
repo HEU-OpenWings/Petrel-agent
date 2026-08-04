@@ -40,4 +40,7 @@ export function createAgent(options: CreateAgentOptions = {}): Agent {
   });
 }
 
+export type { AgentHarness, AgentHarnessEvent, Session } from "@earendil-works/pi-agent-core";
+export { type CreateHarnessOptions, createHarness, createPgSession } from "./harness.ts";
+export { PgSessionStorage } from "./session/pg-storage.ts";
 export { currentTime };
