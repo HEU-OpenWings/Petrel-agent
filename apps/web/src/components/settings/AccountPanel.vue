@@ -72,6 +72,8 @@ async function onSubmit() {
   try {
     await changePassword(form.currentPassword, form.newPassword)
     message.success('密码已修改')
+    // 成功后清空三个字段，包含 currentPassword——不让密码明文停留在输入框。
+    // 失败时故意不清空，用户要能改一下重试
     formRef.value?.resetFields()
   } catch (error) {
     // 后端的文案更有用（「当前密码不正确」/「尝试次数过多」），原样显示。

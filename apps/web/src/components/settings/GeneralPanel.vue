@@ -17,6 +17,7 @@
         id="settings-default-model"
         v-model:value="draftModel"
         class="control"
+        :disabled="saving"
         placeholder="跟随系统默认"
       >
         <a-select-option :value="null">跟随系统默认（{{ systemDefaultName }}）</a-select-option>
@@ -34,6 +35,7 @@
         class="control"
         :rows="6"
         :maxlength="SYSTEM_PROMPT_LIMIT"
+        :disabled="saving"
         show-count
         placeholder="留空则使用系统默认提示词"
       />
@@ -77,6 +79,13 @@ const theme = useThemeStore()
  */
 const draftModel = ref(null)
 const draftPrompt = ref('')
+/**
+ * saving 期间要禁用两个输入控件，不只是给按钮加 loading。
+ *
+ * 否则有个窄窗口：请求在飞时用户继续改草稿 → 请求返回后 applyPreferences 把 store
+ * 写成「点击那一刻」的值 → watch 触发 syncDraft 把草稿覆盖回旧值，
+ * 用户在这期间的输入被静默丢弃，且没有任何提示。
+ */
 const saving = ref(false)
 
 const systemDefaultName = computed(
