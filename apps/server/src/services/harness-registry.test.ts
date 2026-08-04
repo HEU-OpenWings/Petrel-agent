@@ -2,7 +2,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@ear
 import { createHarness, createMemorySession } from "@petrel/agent";
 import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createHarnessRegistry } from "./harness-registry.ts";
+import { createHarnessRegistry, HarnessRegistryError } from "./harness-registry.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 const OTHER_USER_ID = "00000000-0000-0000-0000-0000000000ff";
@@ -69,13 +69,35 @@ describe("createHarnessRegistry", () => {
     expect(factory.created).toBe(1);
   });
 
+  it("并发 acquire 同一个新会话时只装配一次，两者拿到同一个实例", async () => {
+    const factory = fauxFactory();
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+
+    // 同一个尚未缓存的 sessionId 被并发两次 acquire（模拟浏览器重试 / 多标签页）：
+    // entries.get 判空 → findById → build() 之间都有 await 点，去重前两者都会
+    // 各自 build 一个 harness，entries.set 只留下后者，前者成为孤儿实例但仍
+    // 持有 session 引用继续写——这是「会话意外分叉」。去重后两次应拿到同一实例。
+    const [first, second] = await Promise.all([
+      registry.acquire(SESSION_ID, TEST_USER_ID, "你好"),
+      registry.acquire(SESSION_ID, TEST_USER_ID, "你好"),
+    ]);
+    first.release();
+    second.release();
+
+    expect(second.harness).toBe(first.harness);
+    expect(factory.created).toBe(1);
+  });
+
   it("会话 id 属于别人时拒绝，且不装配实例", async () => {
     const factory = fauxFactory();
     const registry = createHarnessRegistry({ db, createHarness: factory.create });
     const owned = await registry.acquire(SESSION_ID, TEST_USER_ID, "你好");
     owned.release();
 
-    await expect(registry.acquire(SESSION_ID, OTHER_USER_ID, "偷看")).rejects.toThrow(/不存在或无权访问/);
+    const rejection = registry.acquire(SESSION_ID, OTHER_USER_ID, "偷看");
+    await expect(rejection).rejects.toThrow(/不存在或无权访问/);
+    await expect(rejection).rejects.toBeInstanceOf(HarnessRegistryError);
+    await expect(rejection).rejects.toMatchObject({ kind: "forbidden" });
     // 关键断言：越权请求不能拿到别人的活实例
     expect(factory.created).toBe(1);
   });
@@ -134,7 +156,10 @@ describe("createHarnessRegistry", () => {
     // 第一个不释放，占满容量
     await registry.acquire(SESSION_ID, TEST_USER_ID, "你好");
 
-    await expect(registry.acquire(second, TEST_USER_ID, "另一个会话")).rejects.toThrow(/容量/);
+    const rejection = registry.acquire(second, TEST_USER_ID, "另一个会话");
+    await expect(rejection).rejects.toThrow(/容量/);
+    await expect(rejection).rejects.toBeInstanceOf(HarnessRegistryError);
+    await expect(rejection).rejects.toMatchObject({ kind: "capacity" });
   });
 
   it("容量到顶但有 idle 实例时，淘汰最旧的那个", async () => {
@@ -206,7 +231,10 @@ describe("createHarnessRegistry", () => {
     const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "你好");
     handle.release();
 
-    await expect(registry.abort(SESSION_ID, OTHER_USER_ID)).rejects.toThrow(/不存在或无权访问/);
+    const rejection = registry.abort(SESSION_ID, OTHER_USER_ID);
+    await expect(rejection).rejects.toThrow(/不存在或无权访问/);
+    await expect(rejection).rejects.toBeInstanceOf(HarnessRegistryError);
+    await expect(rejection).rejects.toMatchObject({ kind: "forbidden" });
     // 属于自己时幂等成功，即使当前没在跑
     await expect(registry.abort(SESSION_ID, TEST_USER_ID)).resolves.toBeUndefined();
   });
