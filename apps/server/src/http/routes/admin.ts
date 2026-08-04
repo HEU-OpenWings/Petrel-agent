@@ -1,4 +1,5 @@
 import { createSessionRepository, createUserRepository, getDb } from "@petrel/database";
+import { logger } from "@petrel/logger";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "../../types.ts";
@@ -46,10 +47,26 @@ export const admin = new Hono<AppEnv>()
     }
 
     // 被禁用者的下一个请求会被 requireAuth 拦住，但正在跑的那一轮不会自己停。
-    // 立即生效是认证那一轮定下的原则，所以这里主动停掉他所有活实例
+    // 立即生效是认证那一轮定下的原则，所以这里主动停掉他所有活实例。
+    //
+    // 用户已经禁用成功了：清内存实例是收尾，不是这次请求成功与否的一部分。
+    // 每个 evict 单独 catch，不用 Promise.all 直接包——否则一个失败就让整批
+    // 判定为 reject，其余原本已经并发跑完的 evict 也被连累报错。
+    // evict() 内部先摘除 Map 条目再 abort，抛错也不代表实例还留在 registry 里。
     if (disabled) {
       const owned = await createSessionRepository(getDb()).listByUser(id);
-      await Promise.all(owned.map((session) => getRegistry().evict(session.id)));
+      await Promise.all(
+        owned.map((session) =>
+          getRegistry()
+            .evict(session.id)
+            .catch((error: unknown) => {
+              logger.error(
+                { err: error, userId: id, sessionId: session.id },
+                "用户已禁用，但清理其常驻 harness 实例失败",
+              );
+            }),
+        ),
+      );
     }
 
     return c.json({ ok: true });

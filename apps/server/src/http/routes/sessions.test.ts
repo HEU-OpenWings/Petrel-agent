@@ -3,7 +3,7 @@ import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService } from "../../services/session.ts";
 import { app } from "../app.ts";
-import { __resetRegistry } from "./chat.ts";
+import { __resetRegistry, getRegistry } from "./chat.ts";
 
 /**
  * 路由里的 getDb() 建的是 node-postgres 连接池，连不到 PGlite，
@@ -253,6 +253,29 @@ describe("DELETE /api/sessions/:id", () => {
       headers: { Cookie: cookie },
     });
     expect(second.status).toBe(404);
+  });
+
+  /**
+   * 守的是「主操作成功不该被清理失败拖垮」：会话已经从库里删掉了，
+   * evict 这一步只是收尾，它失败不该让客户端看到 500——那会让前端以为
+   * 删除没生效，继续展示这个会话或重试（重试还会撞 404，体验更乱）。
+   */
+  it("evict 失败不影响响应：会话仍按删除成功处理", async () => {
+    await service.ensureSession(SESSION_ID, "会话");
+
+    const evictSpy = vi.spyOn(getRegistry(), "evict").mockRejectedValueOnce(new Error("evict 炸了"));
+
+    const response = await app.request(`/api/sessions/${SESSION_ID}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    // 会话确实已经删除，不是「假装成功」
+    expect(await service.list()).toEqual([]);
+
+    evictSpy.mockRestore();
   });
 
   it("会话不存在返回 404", async () => {
