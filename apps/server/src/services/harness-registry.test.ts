@@ -1,6 +1,5 @@
-import { InMemorySessionRepo } from "@earendil-works/pi-agent-core";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import { createHarness } from "@petrel/agent";
+import { createHarness, createMemorySession } from "@petrel/agent";
 import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createHarnessRegistry } from "./harness-registry.ts";
@@ -50,7 +49,7 @@ function fauxFactory(chunked = false) {
      *  而 harness 不对外暴露它自己的 session */
     async create(sessionId: string) {
       created += 1;
-      const session = await new InMemorySessionRepo().create({ id: sessionId });
+      const session = await createMemorySession(sessionId);
       return { harness: createHarness({ session, models, model: faux.getModel() }), session };
     },
   };
