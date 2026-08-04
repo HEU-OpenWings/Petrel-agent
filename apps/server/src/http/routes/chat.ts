@@ -48,7 +48,14 @@ function parseChatRequest(body: unknown) {
   const rawModel = fields?.model;
   const model = typeof rawModel === "string" && rawModel !== "" ? rawModel : undefined;
   if (model !== undefined && !listModels().some((item) => item.id === model)) {
-    throw new HTTPException(400, { message: `模型未注册：${model}` });
+    // 附上可选值：只说「未注册」的话，客户端不知道该改成什么。
+    // 这条是客户端实际会看到的那一条——createAgent 里 resolveModel 的同类错误
+    // 因为本函数先校验过而不可达
+    throw new HTTPException(400, {
+      message: `模型未注册：${model}，可选值为 ${listModels()
+        .map((item) => item.id)
+        .join(" | ")}`,
+    });
   }
 
   return { message, sessionId, systemPrompt, model };

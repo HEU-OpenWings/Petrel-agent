@@ -41,8 +41,10 @@ function resolveModel(options: CreateAgentOptions): Model<Api> {
 
   const model = findModel(options.modelId);
   if (!model) {
-    // 列出可选值：这个错误会经 routes/chat.ts 变成 400 给到客户端，
-    // 只说「未注册」的话对方不知道该改成什么
+    // 列出可选值：只说「未注册」的话调用方不知道该改成什么。
+    // 注意经 routes/chat.ts 的请求走不到这里——那边在进 streamSSE 之前
+    // 已经用同一份白名单校验过并返回 400 了。这条兜的是其他调用方
+    // （或将来忘了预校验的新调用方）
     throw new Error(
       `模型未注册：${options.modelId}，可选值为 ${listModels()
         .map((item) => item.id)
