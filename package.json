@@ -8,9 +8,9 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "nodemon --legacy-watch --watch apps/api --watch packages --ext ts --exec \"tsx --tsconfig tsconfig.base.json apps/api/src/index.ts\"",
+    "dev": "nodemon --legacy-watch --watch apps/server --watch packages --ext ts --exec \"tsx --tsconfig tsconfig.base.json apps/server/src/index.ts\"",
     "build": "pnpm --recursive --if-present run build",
-    "start": "pnpm --filter @petrel/api start",
+    "start": "pnpm --filter @petrel/server start",
     "typecheck": "pnpm --recursive --if-present run typecheck",
     "lint": "biome check .",
     "format": "biome check --write .",

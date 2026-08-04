@@ -1,4 +1,4 @@
-import { type AgentMessage, createAgent } from "@petrel/agent-core";
+import { type AgentMessage, createAgent } from "@petrel/agent";
 import { getDb } from "@petrel/database";
 import { logger } from "@petrel/logger";
 import { Hono } from "hono";

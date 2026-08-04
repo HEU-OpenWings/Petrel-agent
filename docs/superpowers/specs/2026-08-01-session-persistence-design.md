@@ -1,6 +1,6 @@
 # 数据层与会话持久化设计
 
-给 `apps/api` 补上 Postgres 数据层，把 pi 的对话记录落库，让前端左栏的会话列表从静态骨架变成真实功能。
+给 `apps/server` 补上 Postgres 数据层，把 pi 的对话记录落库，让前端左栏的会话列表从静态骨架变成真实功能。
 
 关联文档：[backend-plan.md](../../backend-plan.md) · [frontend-plan.md](../../frontend-plan.md)
 对应 Linear issue：HEU-6（数据层）+ HEU-10（会话持久化）
@@ -35,7 +35,7 @@
 | session id | **前端生成**（`crypto.randomUUID()`），随 `POST /api/chat` 发送，后端 upsert |
 | 中断语义 | 半截回答**保留并标记** `interrupted`，刷新后仍可见 |
 | 落库失败 | 只记 error 日志，**不中断对话**，不通知前端 |
-| 分层 | `packages/database` 出 schema + client + repository，`apps/api` 出 service + routes |
+| 分层 | `packages/database` 出 schema + client + repository，`apps/server` 出 service + routes |
 | 数据层测试 | PGlite 内存 Postgres，不用 testcontainers |
 | pi 的 sessionId | 复用同一个 id 传给 `Agent({ sessionId })` |
 
@@ -66,7 +66,7 @@ OpenAI SDK 加 `id` 做次级排序，本质是在打这个补丁。`seq` 一步
 
 ## 3. 架构
 
-依赖方向 `api → database → config`，与仓库既定约定一致。
+依赖方向 `server → database → config`，与仓库既定约定一致。
 
 ```
 packages/database/
@@ -80,7 +80,7 @@ packages/database/
 │     └─ messages.ts
 └─ drizzle/                  # drizzle-kit 生成的 migration SQL，提交进仓库
 
-apps/api/src/
+apps/server/src/
 ├─ services/session.ts       # 会话业务逻辑（标题、历史回灌、事件订阅落库）
 └─ http/routes/
    ├─ sessions.ts            # 会话 CRUD
@@ -148,7 +148,7 @@ migration 里插入一条固定 UUID 的记录（`username: 'default'`），常�
   包含恢复时回灌的历史，一次性写会重复
 - `state.streamingMessage` 是流式中的半截消息，**不在** `state.messages` 里
 - `state.errorMessage` 的注释明确覆盖 "failed or **aborted**" 两种情况
-- **用户消息也走 `message_start` / `message_end`**。`agent-core` 现有测试实测的单轮序列：
+- **用户消息也走 `message_start` / `message_end`**。`agent` 现有测试实测的单轮序列：
   `agent_start → turn_start → message_start/message_end`（用户消息）
   `→ message_start/message_end`（助手消息）`→ turn_end → agent_end`
 
@@ -266,11 +266,11 @@ upsert session 失败 → 跳过；加载历史失败 → 按空历史处理；�
 | --- | --- |
 | repository | CRUD、级联删除、`seq` 唯一约束、按 `updated_at` 排序 |
 | service | 标题截断、历史回灌、`seq` 递增连续性 |
-| 持久化流程 | 用 `agent-core` 的 `fauxProvider` 跑真实 agent loop + PGlite，验证消息落库顺序与内容 |
+| 持久化流程 | 用 `agent` 的 `fauxProvider` 跑真实 agent loop + PGlite，验证消息落库顺序与内容 |
 | 中断路径 | abort 后 `streamingMessage` 落库且 `interrupted = true` |
 | 路由 | 四个会话接口的状态码与归属校验 |
 
-沿用仓库既有模式：`agent-core` 的测试用 `fauxProvider` 跑真实 agent loop，不 mock 内部。
+沿用仓库既有模式：`agent` 的测试用 `fauxProvider` 跑真实 agent loop，不 mock 内部。
 
 ## 10. 验收
 

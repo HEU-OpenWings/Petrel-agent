@@ -1,6 +1,6 @@
 # 认证系统设计
 
-给 `apps/api` 补上邮箱密码认证，把当前硬编码的 `DEFAULT_USER_ID` 换成真实用户，
+给 `apps/server` 补上邮箱密码认证，把当前硬编码的 `DEFAULT_USER_ID` 换成真实用户，
 并修掉会话链路上已经埋着的三处越权。
 
 关联文档：[backend-plan.md](../../backend-plan.md) · [frontend-plan.md](../../frontend-plan.md)
@@ -29,7 +29,7 @@
 | --- | --- |
 | 邮箱密码注册 / 登录 / 登出 / me | 邮箱真实性验证（需要邮件发送基础设施） |
 | JWT 存 httpOnly cookie，`requireAuth` 中间件 | 密码自助重置（同上） |
-| 密码强度校验 + 登录失败限流 | 配额与 token 计量（要动 chat 链路与 agent-core） |
+| 密码强度校验 + 登录失败限流 | 配额与 token 计量（要动 chat 链路与 agent） |
 | `role` 列 + 最小 admin（用户列表 / 禁用用户） | 注册限流与机器人防护（要 Redis） |
 | 修掉会话链路的三处越权 | OAuth / 第三方登录 |
 | 前端登录注册页、守卫翻开、store 重写 | v0.4 遗留页面（知识库 / Dashboard / 评测）的修复 |
@@ -45,7 +45,7 @@
 | 认证自身防护 | 密码强度校验 + 登录失败限流；**不做账户锁定** |
 | 角色模型 | `role` 列 + 最小 admin 能力（列表 / 禁用），无 superadmin 二级 |
 | 首个 admin | 环境变量 `ADMIN_EMAILS`，注册与每次登录时生效 |
-| 实现方式 | 自己写，**零新增依赖**，代码全部落在 `apps/api` |
+| 实现方式 | 自己写，**零新增依赖**，代码全部落在 `apps/server` |
 | 老数据 | migration 删除 `DEFAULT_USER_ID` 及其级联会话 |
 
 ## 2. 技术选型
@@ -388,7 +388,7 @@ rename / delete 用 404 而非 403 是有意的：这两个操作的「不存在
 
 | 项 | 依赖 |
 | --- | --- |
-| 配额与 token 计量 | 要动 chat 链路与 agent-core |
+| 配额与 token 计量 | 要动 chat 链路与 agent |
 | 注册限流、机器人防护 | Redis 或同类共享计数 |
 | 邮箱验证、密码重置 | 邮件发送基础设施 |
 | OAuth / 第三方登录 | 届时重新评估是否值得迁移到认证框架 |

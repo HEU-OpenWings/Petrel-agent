@@ -22,15 +22,15 @@ services:
   api:
     build:
       context: .
-      dockerfile: apps/api/Dockerfile
+      dockerfile: apps/server/Dockerfile
       target: development
     image: petrel-api:0.5.dev
     container_name: petrel-api-dev
     working_dir: /app
     # 逐个挂 src 而不是整个 apps/packages：挂目录会覆盖容器内 pnpm 的符号链接
     volumes:
-      - ./apps/api/src:/app/apps/api/src
-      - ./packages/agent-core/src:/app/packages/agent-core/src
+      - ./apps/server/src:/app/apps/server/src
+      - ./packages/agent/src:/app/packages/agent/src
       - ./packages/ai/src:/app/packages/ai/src
       - ./packages/config/src:/app/packages/config/src
       - ./packages/logger/src:/app/packages/logger/src

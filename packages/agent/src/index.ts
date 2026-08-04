@@ -3,8 +3,8 @@ import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import { defaultModel, models as defaultModels } from "@petrel/ai";
 import { currentTime } from "./tools/current-time.ts";
 
-// 供上层（apps/api 等）引用 Agent 类型而不直接依赖 @earendil-works/*：
-// pnpm 严格 node_modules 下 apps/api 解析不到 pi 包，也守住「pi 接线只在 agent-core/ai」的约束。
+// 供上层（apps/server 等）引用 Agent 类型而不直接依赖 @earendil-works/*：
+// pnpm 严格 node_modules 下 apps/server 解析不到 pi 包，也守住「pi 接线只在 agent/ai」的约束。
 export type { Agent, AgentMessage } from "@earendil-works/pi-agent-core";
 
 export const DEFAULT_SYSTEM_PROMPT = "你是 Petrel 智能助手。回答简洁准确，需要实时信息时调用工具。";

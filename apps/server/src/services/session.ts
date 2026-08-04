@@ -1,4 +1,4 @@
-import type { Agent } from "@petrel/agent-core";
+import type { Agent } from "@petrel/agent";
 import { createMessageRepository, createSessionRepository, type Database } from "@petrel/database";
 import { logger } from "@petrel/logger";
 import { isUniqueViolation } from "./db-errors.ts";

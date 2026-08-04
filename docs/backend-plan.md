@@ -1,4 +1,4 @@
-# 后端（apps/api）重构升级计划
+# 后端（apps/server）重构升级计划
 
 Petrel（原 Yuxi）v0.4（Python + FastAPI + LangGraph）→ v0.5（TypeScript + Hono + pi agent harness）的后端重构计划与进度。
 前端计划见 [frontend-plan.md](frontend-plan.md)。
@@ -32,10 +32,10 @@ Petrel（原 Yuxi）v0.4（Python + FastAPI + LangGraph）→ v0.5（TypeScript 
 ```
 petrel-agent/
 ├─ apps/
-│  ├─ api/                     # Hono HTTP 应用
+│  ├─ server/                  # Hono HTTP 应用
 │  └─ web/                     # Vue 3 前端
 ├─ packages/
-│  ├─ agent-core/              # pi Agent 装配与内置工具
+│  ├─ agent/              # pi Agent 装配与内置工具
 │  ├─ ai/                      # 模型 provider 注册（SiliconFlow，OpenAI 兼容）
 │  ├─ config/                  # 环境配置；全仓唯一读取 process.env
 │  ├─ database/                # Drizzle schema 与 repository；测试用 PGlite
@@ -45,9 +45,9 @@ petrel-agent/
 ```
 
 依赖方向固定为 `apps → packages`，package 之间只允许指向更底层的 package。当前是
-`api → agent-core → ai → config`、`api → database → config` 与 `api → logger → config`。
+`server → agent → ai → config`、`server → database → config` 与 `server → logger → config`。
 
-**pi 的接线只出现在 `agent-core` 与 `ai` 两个 package**，上层只依赖 `createAgent()` 与 Agent 的
+**pi 的接线只出现在 `agent` 与 `ai` 两个 package**，上层只依赖 `createAgent()` 与 Agent 的
 事件流。这层薄封装是有意为之：pi 仍在快速演进（包名近期从 `@mariozechner/*` 迁到
 `@earendil-works/*`），将来换内核时改动范围可控。
 
@@ -64,7 +64,7 @@ pnpm + TS(ESM) + Hono + pino + Biome + vitest + 多阶段 Dockerfile + compose�
 
 - **`packages/ai`**：SiliconFlow 不在 pi 内置的 30 个 provider 里，用 `createProvider` +
   `openai-completions.lazy` + `envApiKeyAuth` 注册，默认模型 `deepseek-ai/DeepSeek-V3`
-- **`packages/agent-core`**：`createAgent()` 装配 pi `Agent`，内置极简工具 `get_current_time`
+- **`packages/agent`**：`createAgent()` 装配 pi `Agent`，内置极简工具 `get_current_time`
 - **`POST /api/chat`**：SSE，事件体为 pi 的 `AgentEvent` 原样透传，`stream.onAbort → agent.abort()`
 - **测试**：用 pi 自带的 `fauxProvider` 跑真实 agent loop，不需要模型凭据也不 mock 内部，
   覆盖单轮流式事件序列与工具循环
@@ -162,7 +162,7 @@ insert + touch 会让刚 touch 过的会话**排到后面**，正好打在「在
 - 数据层并发正确性：真实 Postgres 上 12 路并发 append 同一会话，seq 连续无洞一条不丢；
   把 `FOR UPDATE` 删掉后集成测试立刻变红
 - **migration 链路已验证，但只在宿主机上**：新建一个空库 `petrel_migtest`，用
-  `DATABASE_URL=…/petrel_migtest tsx apps/api/src/index.ts` 直接起 api，日志输出
+  `DATABASE_URL=…/petrel_migtest tsx apps/server/src/index.ts` 直接起 api，日志输出
   `database migrations applied` 与 `agent-server listening`，三张表被自动建出、默认用户被播种
   （**「默认用户播种」这段已随 HEU-7 废止**：认证落地时删掉了默认用户与 `username` 列，
   现在只建表不播种）。
@@ -373,7 +373,7 @@ Dashboard SQL 聚合（HEU-28）· 评测 runner（HEU-29）· 数据迁移（HE
 ## 7. 风险
 
 1. **pi 生态成熟度**：包名近期迁移过，`pi-server` 标注 experimental。→ 锁死精确版本、
-   只依赖 `pi-ai` 与 `pi-agent-core`、把 pi 的接线收在 `agent-core` 一层内。
+   只依赖 `pi-ai` 与 `pi-agent-core`、把 pi 的接线收在 `agent` 一层内。
 2. **HITL 语义降级**：LangGraph 的 `interrupt` 是图级中断，pi 只能在工具边界暂停。
    → HEU-8 先审计触发点，存在无法映射的场景就升级为阻塞项。
 3. **pgvector 的规模上限**：百万级 chunk 以上不如 Milvus。→ 当前单机场景足够，

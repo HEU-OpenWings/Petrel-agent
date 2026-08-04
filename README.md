@@ -47,7 +47,7 @@ pnpm run dev         # 仅后端，宿主机调试用
 ```
 petrel-agent/
 ├─ apps/
-│  ├─ api/                     # Hono HTTP 应用（@petrel/api）
+│  ├─ server/                  # Hono HTTP 应用（@petrel/server）
 │  │  ├─ src/http/routes/      # system · chat（SSE）· sessions（会话 CRUD）
 │  │  └─ src/services/         # 会话业务逻辑与 agent 事件订阅落库
 │  └─ web/                     # Vue 3 前端（@petrel/web）
@@ -57,7 +57,7 @@ petrel-agent/
 │        ├─ stores/session.js               # 会话列表与当前会话
 │        └─ views/ChatView.vue
 ├─ packages/
-│  ├─ agent-core/              # pi Agent 装配与内置工具（@petrel/agent-core）
+│  ├─ agent/              # pi Agent 装配与内置工具（@petrel/agent）
 │  ├─ ai/                      # 模型 provider 注册；默认 deepseek-v4-flash（@petrel/ai）
 │  ├─ config/                  # 环境配置；全仓唯一读取 process.env（@petrel/config）
 │  ├─ database/                # Drizzle schema 与 repository（@petrel/database）
@@ -68,12 +68,12 @@ petrel-agent/
 ```
 
 依赖方向固定为 `apps → packages`，package 之间只允许指向更底层的 package。当前是
-`api → agent-core → ai → config`、`api → database → config` 与 `api → logger → config`。
+`server → agent → ai → config`、`server → database → config` 与 `server → logger → config`。
 
-**pi 的接线只出现在 `agent-core` 与 `ai`**，上层只依赖 `createAgent()` 与 Agent 的事件流，
+**pi 的接线只出现在 `agent` 与 `ai`**，上层只依赖 `createAgent()` 与 Agent 的事件流，
 将来换 agent 内核不影响 HTTP 层与前端。
 
-`agent-core` 的测试用 pi 自带的 faux provider 跑真实 agent loop，不需要模型凭据。
+`agent` 的测试用 pi 自带的 faux provider 跑真实 agent loop，不需要模型凭据。
 `database` 的测试用 PGlite（Node 内的 WASM Postgres），也不需要 Docker——但它是单后端、
 会把并发语句排队串行，所以测不出并发问题；并发正确性另有一份连真实 Postgres 的集成测试
 （`messages.integration.test.ts`），给了 `DATABASE_URL` 才跑，默认跳过。

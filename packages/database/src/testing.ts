@@ -12,7 +12,7 @@ const MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
 /**
  * 测试夹具用户。
  *
- * 数据层的测试需要一个能挂会话的用户，但建它不该依赖 apps/api 的注册流程
+ * 数据层的测试需要一个能挂会话的用户，但建它不该依赖 apps/server 的注册流程
  * （那是反方向的依赖）。passwordHash 存 "!"：它不是合法的哈希格式，scrypt 校验
  * 必然失败，所以这个账号登不进来，不用于登录测试；
  * 需要真实登录的用例走 /api/auth/register。

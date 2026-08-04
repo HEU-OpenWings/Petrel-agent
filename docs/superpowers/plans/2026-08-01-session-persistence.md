@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 给 `apps/api` 补上 Postgres 数据层并把 pi 的对话记录落库，让前端左栏的会话列表从静态骨架变成真实功能。
+**Goal:** 给 `apps/server` 补上 Postgres 数据层并把 pi 的对话记录落库，让前端左栏的会话列表从静态骨架变成真实功能。
 
-**Architecture:** 新增 `packages/database`（Drizzle schema + 连接 + repository），`apps/api` 加一层 `services/session.ts` 承担会话业务逻辑与 agent 事件订阅落库，路由保持薄。session id 由前端生成，SSE 协议不变。
+**Architecture:** 新增 `packages/database`（Drizzle schema + 连接 + repository），`apps/server` 加一层 `services/session.ts` 承担会话业务逻辑与 agent 事件订阅落库，路由保持薄。session id 由前端生成，SSE 协议不变。
 
 **Tech Stack:** Drizzle ORM 0.45 · Postgres 17（pgvector 镜像）· PGlite（测试用内存 Postgres）· Hono · vitest
 
@@ -199,8 +199,8 @@ tie 用的，生产不需要。
 - **相对导入必须带 `.ts` 后缀**（`allowImportingTsExtensions` + `rewriteRelativeImportExtensions`），例如 `import { x } from "./schema.ts"`
 - **`noUncheckedIndexedAccess: true`**：数组下标访问返回 `T | undefined`，必须处理
 - **`@petrel/config` 是全仓唯一读取 `process.env` 的位置**。唯一例外是 pi-ai 从 `SILICONFLOW_API_KEY` 解析模型凭据。数据库连接串必须走 config
-- **依赖方向** `api → database → config`，不允许反向或跨层
-- **pi 的接线只允许出现在 `agent-core` 与 `ai` 两个 package**，本次不碰这条
+- **依赖方向** `server → database → config`，不允许反向或跨层
+- **pi 的接线只允许出现在 `agent` 与 `ai` 两个 package**，本次不碰这条
 - 注释用中文，解释「为什么」而不是「做了什么」
 - LF 换行
 - **每次 commit 的 message 结尾必须加一行**：
@@ -214,7 +214,7 @@ tie 用的，生产不需要。
 2. `vitest.config.ts` 的 `alias`
 3. `docker-compose.yml` 里 api 服务的 src 挂载
 
-`apps/api/Dockerfile` **不用改**——它用 `pnpm fetch` 依据 lockfile 预取，不逐个 COPY package.json。
+`apps/server/Dockerfile` **不用改**——它用 `pnpm fetch` 依据 lockfile 预取，不逐个 COPY package.json。
 
 ### 命令
 
@@ -249,9 +249,9 @@ docker logs petrel-api-dev --tail 50
 | `packages/database/src/repositories/sessions.test.ts` | 会话 repository 测试 |
 | `packages/database/src/repositories/messages.test.ts` | 消息 repository 测试 |
 | `packages/database/drizzle/*.sql` | drizzle-kit 生成的 migration，提交进仓库 |
-| `apps/api/src/services/session.ts` | 会话业务逻辑与持久化订阅 |
-| `apps/api/src/services/session.test.ts` | 服务层测试（含 fauxProvider 跑真实 agent loop） |
-| `apps/api/src/http/routes/sessions.ts` | 会话 CRUD 路由 |
+| `apps/server/src/services/session.ts` | 会话业务逻辑与持久化订阅 |
+| `apps/server/src/services/session.test.ts` | 服务层测试（含 fauxProvider 跑真实 agent loop） |
+| `apps/server/src/http/routes/sessions.ts` | 会话 CRUD 路由 |
 | `apps/web/src/apis/session_api.js` | 前端会话接口调用 |
 | `apps/web/src/stores/session.js` | 前端会话状态 |
 
@@ -260,10 +260,10 @@ docker logs petrel-api-dev --tail 50
 | 文件 | 改动 |
 | --- | --- |
 | `packages/config/src/index.ts` | 新增 `databaseUrl` |
-| `apps/api/package.json` | 依赖加 `@petrel/database` |
-| `apps/api/src/index.ts` | 启动时跑 migration |
-| `apps/api/src/http/app.ts` | 挂载 `/api/sessions` |
-| `apps/api/src/http/routes/chat.ts` | 接 `sessionId`、历史回灌、持久化订阅、降级 |
+| `apps/server/package.json` | 依赖加 `@petrel/database` |
+| `apps/server/src/index.ts` | 启动时跑 migration |
+| `apps/server/src/http/app.ts` | 挂载 `/api/sessions` |
+| `apps/server/src/http/routes/chat.ts` | 接 `sessionId`、历史回灌、持久化订阅、降级 |
 | `tsconfig.base.json` | paths 加 `@petrel/database` |
 | `vitest.config.ts` | alias 加 `@petrel/database` |
 | `docker-compose.yml` | 加 db 服务、api 挂载 database/src、api 加 DATABASE_URL 与 depends_on |
@@ -1025,8 +1025,8 @@ git commit -m "feat(database): 消息 repository"
 - Create: `packages/database/src/migrate.ts`
 - Modify: `packages/database/src/index.ts`
 - Modify: `packages/config/src/index.ts`
-- Modify: `apps/api/package.json`
-- Modify: `apps/api/src/index.ts`
+- Modify: `apps/server/package.json`
+- Modify: `apps/server/src/index.ts`
 - Modify: `docker-compose.yml`
 - Modify: `.env.template`
 
@@ -1116,13 +1116,13 @@ export * from "./migrate.ts";
 
 - [ ] **Step 5: api 依赖 database 并在启动时跑 migration**
 
-`apps/api/package.json` 的 `dependencies` 加一条（字母序，在 `@petrel/config` 之后）：
+`apps/server/package.json` 的 `dependencies` 加一条（字母序，在 `@petrel/config` 之后）：
 
 ```json
     "@petrel/database": "workspace:*",
 ```
 
-`apps/api/src/index.ts` 整份替换为：
+`apps/server/src/index.ts` 整份替换为：
 
 ```ts
 import { serve } from "@hono/node-server";
@@ -1226,7 +1226,7 @@ Expected: PASS，62 个用例（48 已有 + 7 + 9 + 6）
 - [ ] **Step 10: Commit**
 
 ```bash
-git add packages/database packages/config apps/api docker-compose.yml .env.template pnpm-lock.yaml
+git add packages/database packages/config apps/server docker-compose.yml .env.template pnpm-lock.yaml
 git commit -m "feat: Postgres 服务与启动时 migration"
 ```
 
@@ -1235,8 +1235,8 @@ git commit -m "feat: Postgres 服务与启动时 migration"
 ## Task 5: 会话服务
 
 **Files:**
-- Create: `apps/api/src/services/session.ts`
-- Test: `apps/api/src/services/session.test.ts`
+- Create: `apps/server/src/services/session.ts`
+- Test: `apps/server/src/services/session.test.ts`
 
 **Interfaces:**
 - Consumes: `createSessionRepository` / `createMessageRepository` / `DEFAULT_USER_ID`（Task 2·3）、`createTestDb`（Task 1）
@@ -1249,7 +1249,7 @@ git commit -m "feat: Postgres 服务与启动时 migration"
 
 - [ ] **Step 1: 写失败的测试**
 
-创建 `apps/api/src/services/session.test.ts`：
+创建 `apps/server/src/services/session.test.ts`：
 
 ```ts
 import { createTestDb, type TestDb } from "@petrel/database/testing";
@@ -1366,12 +1366,12 @@ describe("CRUD", () => {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `pnpm vitest run apps/api/src/services/session.test.ts`
+Run: `pnpm vitest run apps/server/src/services/session.test.ts`
 Expected: FAIL，无法解析 `./session.ts`
 
 - [ ] **Step 3: 实现服务**
 
-创建 `apps/api/src/services/session.ts`：
+创建 `apps/server/src/services/session.ts`：
 
 ```ts
 import {
@@ -1469,13 +1469,13 @@ export function createSessionService(db: Database) {
 
 - [ ] **Step 5: 运行测试确认通过**
 
-Run: `pnpm vitest run apps/api/src/services/session.test.ts`
+Run: `pnpm vitest run apps/server/src/services/session.test.ts`
 Expected: PASS，12 个用例通过
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/api/src/services vitest.config.ts tsconfig.base.json
+git add apps/server/src/services vitest.config.ts tsconfig.base.json
 git commit -m "feat(api): 会话服务"
 ```
 
@@ -1484,11 +1484,11 @@ git commit -m "feat(api): 会话服务"
 ## Task 6: agent 事件订阅落库
 
 **Files:**
-- Modify: `apps/api/src/services/session.ts`
-- Test: `apps/api/src/services/session.test.ts`（追加 describe 块）
+- Modify: `apps/server/src/services/session.ts`
+- Test: `apps/server/src/services/session.test.ts`（追加 describe 块）
 
 **Interfaces:**
-- Consumes: `createSessionService`（Task 5）、`createAgent`（`@petrel/agent-core`）
+- Consumes: `createSessionService`（Task 5）、`createAgent`（`@petrel/agent`）
 - Produces: `attachPersistence(agent, sessionId, startSeq)` — 订阅 agent 事件并落库，返回取消订阅函数
 
 **这段是本次最容易出错的地方**，四条经过核实的事实决定了实现方式：
@@ -1499,7 +1499,7 @@ git commit -m "feat(api): 会话服务"
    一次性写会重复，所以按 `message_end` 增量写
 3. `state.streamingMessage` 是流式中的半截消息，**不在** `state.messages` 里，
    中断时只能从这里取
-4. **用户消息也走 `message_start` / `message_end`**。`packages/agent-core/src/agent.test.ts`
+4. **用户消息也走 `message_start` / `message_end`**。`packages/agent/src/agent.test.ts`
    里实测的单轮事件序列是：
    ```
    agent_start → turn_start → message_start/message_end（用户消息）
@@ -1510,10 +1510,10 @@ git commit -m "feat(api): 会话服务"
 
 - [ ] **Step 1: 写失败的测试**
 
-`apps/api/src/services/session.test.ts` 顶部的 import 追加：
+`apps/server/src/services/session.test.ts` 顶部的 import 追加：
 
 ```ts
-import { createAgent } from "@petrel/agent-core";
+import { createAgent } from "@petrel/agent";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { attachPersistence } from "./session.ts";
 ```
@@ -1523,7 +1523,7 @@ import { attachPersistence } from "./session.ts";
 ```ts
 /**
  * 用 pi 自带的 faux provider 跑真实 agent loop，不需要模型凭据也不 mock 内部。
- * 这个装配方式与 packages/agent-core/src/agent.test.ts 里的一致。
+ * 这个装配方式与 packages/agent/src/agent.test.ts 里的一致。
  */
 function fauxAgent() {
   const faux = fauxProvider({ tokensPerSecond: 10_000 });
@@ -1580,16 +1580,16 @@ describe("attachPersistence", () => {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `pnpm vitest run apps/api/src/services/session.test.ts -t attachPersistence`
+Run: `pnpm vitest run apps/server/src/services/session.test.ts -t attachPersistence`
 Expected: FAIL，`attachPersistence` 未导出
 
 > 如果报 `Cannot find module '@earendil-works/pi-ai/faux'`，先查
-> `packages/agent-core/src/agent.test.ts` 里 faux provider 的实际导入方式并照抄——
+> `packages/agent/src/agent.test.ts` 里 faux provider 的实际导入方式并照抄——
 > 那个文件里已经在用它。
 
 - [ ] **Step 3: 实现订阅**
 
-`apps/api/src/services/session.ts` 追加（文件末尾）：
+`apps/server/src/services/session.ts` 追加（文件末尾）：
 
 ```ts
 import type { Agent } from "@earendil-works/pi-agent-core";
@@ -1643,13 +1643,13 @@ export function attachPersistence(
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `pnpm vitest run apps/api/src/services/session.test.ts`
+Run: `pnpm vitest run apps/server/src/services/session.test.ts`
 Expected: PASS，14 个用例通过
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/src/services
+git add apps/server/src/services
 git commit -m "feat(api): agent 事件订阅落库"
 ```
 
@@ -1658,9 +1658,9 @@ git commit -m "feat(api): agent 事件订阅落库"
 ## Task 7: 会话 CRUD 路由
 
 **Files:**
-- Create: `apps/api/src/http/routes/sessions.ts`
-- Modify: `apps/api/src/http/app.ts`
-- Test: `apps/api/src/http/app.test.ts`（追加 describe 块）
+- Create: `apps/server/src/http/routes/sessions.ts`
+- Modify: `apps/server/src/http/app.ts`
+- Test: `apps/server/src/http/app.test.ts`（追加 describe 块）
 
 **Interfaces:**
 - Consumes: `createSessionService`（Task 5）、`getDb`（Task 4）
@@ -1672,7 +1672,7 @@ git commit -m "feat(api): agent 事件订阅落库"
 
 - [ ] **Step 1: 写失败的测试**
 
-`apps/api/src/http/app.test.ts` 末尾追加：
+`apps/server/src/http/app.test.ts` 末尾追加：
 
 ```ts
 describe("session routes", () => {
@@ -1719,12 +1719,12 @@ describe("session routes", () => {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `pnpm vitest run apps/api/src/http/app.test.ts`
+Run: `pnpm vitest run apps/server/src/http/app.test.ts`
 Expected: FAIL，`/api/sessions` 返回 404（路由还没挂）
 
 - [ ] **Step 3: 实现路由**
 
-创建 `apps/api/src/http/routes/sessions.ts`：
+创建 `apps/server/src/http/routes/sessions.ts`：
 
 ```ts
 import { getDb } from "@petrel/database";
@@ -1785,7 +1785,7 @@ export const sessions = new Hono()
 
 - [ ] **Step 4: 挂载路由**
 
-`apps/api/src/http/app.ts`：import 追加
+`apps/server/src/http/app.ts`：import 追加
 
 ```ts
 import { sessions } from "./routes/sessions.ts";
@@ -1801,7 +1801,7 @@ app.route("/api/sessions", sessions);
 
 ```bash
 docker compose up -d
-pnpm vitest run apps/api/src/http/app.test.ts
+pnpm vitest run apps/server/src/http/app.test.ts
 ```
 
 Expected: PASS，6 个用例（2 已有 + 4 新增）
@@ -1809,7 +1809,7 @@ Expected: PASS，6 个用例（2 已有 + 4 新增）
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/api/src/http
+git add apps/server/src/http
 git commit -m "feat(api): 会话 CRUD 路由"
 ```
 
@@ -1818,7 +1818,7 @@ git commit -m "feat(api): 会话 CRUD 路由"
 ## Task 8: /api/chat 接入持久化
 
 **Files:**
-- Modify: `apps/api/src/http/routes/chat.ts`
+- Modify: `apps/server/src/http/routes/chat.ts`
 
 **Interfaces:**
 - Consumes: `createSessionService` / `attachPersistence`（Task 5·6）、`getDb`（Task 4）
@@ -1826,10 +1826,10 @@ git commit -m "feat(api): 会话 CRUD 路由"
 
 - [ ] **Step 1: 整份重写 chat 路由**
 
-`apps/api/src/http/routes/chat.ts` 全文替换为：
+`apps/server/src/http/routes/chat.ts` 全文替换为：
 
 ```ts
-import { createAgent } from "@petrel/agent-core";
+import { createAgent } from "@petrel/agent";
 import { getDb } from "@petrel/database";
 import { logger } from "@petrel/logger";
 import { Hono } from "hono";
@@ -1919,7 +1919,7 @@ export const chat = new Hono().post("/", async (c) => {
 
 - [ ] **Step 2: 让 createAgent 支持 messages 与 sessionId**
 
-`packages/agent-core/src/index.ts` 的 `CreateAgentOptions` 追加两个可选字段：
+`packages/agent/src/index.ts` 的 `CreateAgentOptions` 追加两个可选字段：
 
 ```ts
   /** 恢复会话时回灌的历史消息 */
@@ -1951,7 +1951,7 @@ import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-age
 
 - [ ] **Step 3: 验证空 message 仍被挡下**
 
-Run: `pnpm vitest run apps/api/src/http/app.test.ts`
+Run: `pnpm vitest run apps/server/src/http/app.test.ts`
 Expected: PASS，已有的「rejects an empty message」用例仍通过
 
 - [ ] **Step 4: 全量测试**
@@ -1980,7 +1980,7 @@ Expected: 会话列表里有这条会话；messages 表里有 user 与 assistant
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/api/src packages/agent-core/src
+git add apps/server/src packages/agent/src
 git commit -m "feat(api): chat 接入会话持久化与历史回灌"
 ```
 
@@ -2572,7 +2572,7 @@ CI 不需要 Docker，而外键、级联、唯一约束、事务这些语义都�
 
 ```markdown
 依赖方向固定为 `apps → packages`，package 之间只能指向更底层的 package：
-`api → agent-core → ai → config`、`api → database → config`、`api → logger → config`。
+`server → agent → ai → config`、`server → database → config`、`server → logger → config`。
 ```
 
 「### 对话链路」小节的请求体说明改为：

@@ -21,7 +21,7 @@ pnpm run test            # vitest run
 pnpm run dev             # 仅后端，宿主机调试用（nodemon --legacy-watch + tsx）
 ```
 
-单个测试：`pnpm vitest run packages/agent-core/src/agent.test.ts`，
+单个测试：`pnpm vitest run packages/agent/src/agent.test.ts`，
 单个用例加 `-t "runs the tool loop"`。
 
 `apps/web` 的 `pnpm run lint` 目前不可用（v0.4 遗留：eslint 9 只认 `eslint.config.js`，
@@ -32,13 +32,13 @@ pnpm run dev             # 仅后端，宿主机调试用（nodemon --legacy-wat
 TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
 [pi](https://github.com/earendil-works/pi)。
 
-- `apps/api`（`@petrel/api`）— Hono HTTP 应用。`src/http/app.ts` 挂载路由，
+- `apps/server`（`@petrel/server`）— Hono HTTP 应用。`src/http/app.ts` 挂载路由，
   当前有 `system`（health）、`auth`（注册/登录/登出/me）、`chat`（SSE）、
   `sessions`（会话 CRUD）与 `admin`（用户管理）。
   **`app.ts` 的挂载顺序有安全含义**：`system` 与 `auth` 是仅有的两个公开前缀，
   `app.use("/api/*", requireAuth)` 之下的路由自动受保护（`admin` 再叠一层 `requireAdmin`）。
 - `apps/web`（`@petrel/web`）— Vue 3 + Vite + Ant Design Vue + pinia，JS（尚未 TS 化）。
-- `packages/agent-core` — `createAgent()` 装配 pi `Agent`，内置工具在 `src/tools/`。
+- `packages/agent` — `createAgent()` 装配 pi `Agent`，内置工具在 `src/tools/`。
 - `packages/ai` — 模型 provider 注册。DeepSeek 官方与 SiliconFlow 都不在 pi 内置 provider 里，
   用 `createProvider` 自行注册。默认模型是 DeepSeek 官方的 `deepseek-v4-flash`，走
   **Responses API**（`openai-responses.lazy`，DeepSeek 官方不提供 chat/completions）；
@@ -51,9 +51,9 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
 - `packages/logger` — pino logger 与 Hono 的 `requestLogger` 中间件。
 
 依赖方向固定为 `apps → packages`，package 之间只能指向更底层的 package：
-`api → agent-core → ai → config`、`api → database → config`、`api → logger → config`。
+`server → agent → ai → config`、`server → database → config`、`server → logger → config`。
 
-**pi 的接线只允许出现在 `agent-core` 与 `ai` 两个 package**，上层只依赖 `createAgent()`
+**pi 的接线只允许出现在 `agent` 与 `ai` 两个 package**，上层只依赖 `createAgent()`
 与 Agent 的事件流，便于将来替换内核。
 
 后续 package（`knowledge` · 共享 `contracts` 等）在对应业务首次落地时创建，
@@ -114,7 +114,7 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 
 ### 测试
 
-`agent-core` 用 pi 自带的 `fauxProvider` 跑真实 agent loop，不需要模型凭据也不 mock 内部。
+`agent` 用 pi 自带的 `fauxProvider` 跑真实 agent loop，不需要模型凭据也不 mock 内部。
 新增 agent 行为优先按这个模式写测试。vitest 在仓库根统一配置，`@petrel/*` 别名直接指向
 `src/index.ts`（`vitest.config.ts` 与 `tsconfig.base.json` 各有一份，新增 package 要同步加）。
 
@@ -122,7 +122,7 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 
 1. **改 `.env` 后必须 `docker compose up -d`，不能 `restart`**。源码热重载，环境变量不热重载。
    前端一直收到 `Provider is not configured` 先查这个。
-2. **新增 package 要同步改三处**：`apps/api/Dockerfile` 无需改（用 `pnpm fetch`），但要改
+2. **新增 package 要同步改三处**：`apps/server/Dockerfile` 无需改（用 `pnpm fetch`），但要改
    compose 的 src 挂载、`tsconfig.base.json` 的 paths、`vitest.config.ts` 的 alias。
    漏改会让容器启动即崩（`Cannot find package '@petrel/xxx'`），而宿主机 `pnpm dev` 一切正常。
 3. **compose 逐个挂 `src` 而不是整个 `packages`**：挂目录会覆盖容器内 pnpm 的符号链接。

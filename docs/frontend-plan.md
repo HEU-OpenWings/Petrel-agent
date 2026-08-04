@@ -77,7 +77,7 @@ src/
 2. **判断知识库结果不再读 `agentStore` 里的工具 metadata**，改为纯数据结构判断
    （数组且每项有 `content` / `score` / `metadata`）。原来那条路径要打 v0.4 的 Python 接口。
 
-注意富渲染现在还看不到效果：`agent-core` 内置工具只有 `get_current_time`，返回纯文本，
+注意富渲染现在还看不到效果：`agent` 内置工具只有 `get_current_time`，返回纯文本，
 走的是默认的 `<pre>` 分支。要等 HEU-13 的 `kb_search` / `web_search` 落地，那几张卡片才有
 数据可渲染——现在接进来是为了工具就位时不用再动渲染层。
 

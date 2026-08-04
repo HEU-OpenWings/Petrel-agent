@@ -330,7 +330,7 @@ Expected: PASS，10 个用例全绿
 - [ ] **Step 6: 确认没有破坏已有测试**
 
 Run: `pnpm test`
-Expected: PASS，`agent-core` 与 `api` 的 4 个用例仍然通过
+Expected: PASS，`agent` 与 `api` 的 4 个用例仍然通过
 
 - [ ] **Step 7: Commit**
 

@@ -4,7 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
-      "@petrel/agent-core": fileURLToPath(new URL("./packages/agent-core/src/index.ts", import.meta.url)),
+      "@petrel/agent": fileURLToPath(new URL("./packages/agent/src/index.ts", import.meta.url)),
       "@petrel/ai": fileURLToPath(new URL("./packages/ai/src/index.ts", import.meta.url)),
       "@petrel/config": fileURLToPath(new URL("./packages/config/src/index.ts", import.meta.url)),
       "@petrel/database/testing": fileURLToPath(

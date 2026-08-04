@@ -1,5 +1,5 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import { createAgent } from "@petrel/agent-core";
+import { createAgent } from "@petrel/agent";
 import { createMessageRepository, users } from "@petrel/database";
 import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
 import { logger } from "@petrel/logger";
@@ -139,7 +139,7 @@ describe("CRUD", () => {
 
 /**
  * 用 pi 自带的 faux provider 跑真实 agent loop，不需要模型凭据也不 mock 内部。
- * 这个装配方式与 packages/agent-core/src/agent.test.ts 里的一致。
+ * 这个装配方式与 packages/agent/src/agent.test.ts 里的一致。
  */
 function fauxAgent(fauxOptions: Parameters<typeof fauxProvider>[0] = { tokensPerSecond: 10_000 }) {
   const faux = fauxProvider(fauxOptions);

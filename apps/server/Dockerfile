@@ -20,7 +20,7 @@ CMD ["pnpm", "dev"]
 FROM deps AS build
 COPY . .
 RUN pnpm install --offline --frozen-lockfile
-RUN pnpm --filter @petrel/api... run build
+RUN pnpm --filter @petrel/server... run build
 
 FROM base AS production
 ENV NODE_ENV=production

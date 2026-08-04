@@ -59,7 +59,7 @@ describe('request', () => {
     // mock 必须分两段：第一个响应是业务请求的 401，第二个是 401 分支里 logout()
     // 顺带发出的 POST /api/auth/logout。如果简化成「所有请求都返 401」，那次 logout
     // 请求也会撞进 401 分支再次调 logout()，测试里会无限递归。
-    // 生产不会这样：/api/auth/logout 挂在 requireAuth 之前（apps/api/src/http/app.ts），永不返 401。
+    // 生产不会这样：/api/auth/logout 挂在 requireAuth 之前（apps/server/src/http/app.ts），永不返 401。
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ detail: '无效令牌' }, 401))

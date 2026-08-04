@@ -1,5 +1,5 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import { type CreateAgentOptions, DEFAULT_SYSTEM_PROMPT } from "@petrel/agent-core";
+import { type CreateAgentOptions, DEFAULT_SYSTEM_PROMPT } from "@petrel/agent";
 import { createMessageRepository } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,8 +56,8 @@ vi.mock("@petrel/database", async (importOriginal) => {
  * 改成在模块边界包一层——底下调的仍是真的 createAgent，只是补上 faux 的 models/model，
  * 所以 agent loop、事件序列、attachPersistence 都是真在跑，没有 mock agent 内部。
  */
-vi.mock("@petrel/agent-core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@petrel/agent-core")>();
+vi.mock("@petrel/agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@petrel/agent")>();
   return {
     ...actual,
     createAgent: (options: CreateAgentOptions = {}) =>

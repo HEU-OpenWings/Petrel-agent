@@ -7,7 +7,7 @@
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],
   "references": [
-    { "path": "../../packages/agent-core" },
+    { "path": "../../packages/agent" },
     { "path": "../../packages/config" },
     { "path": "../../packages/database" },
     { "path": "../../packages/logger" }

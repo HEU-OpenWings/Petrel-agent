@@ -1,5 +1,5 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import type { CreateAgentOptions } from "@petrel/agent-core";
+import type { CreateAgentOptions } from "@petrel/agent";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
@@ -23,8 +23,8 @@ vi.mock("@petrel/database", async (importOriginal) => {
  * 替身一旦少发或错序地发事件，「读不到别人的历史」就会退化成
  * 「两边都是空数组」的恒真断言，测不出任何东西。
  */
-vi.mock("@petrel/agent-core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@petrel/agent-core")>();
+vi.mock("@petrel/agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@petrel/agent")>();
   return {
     ...actual,
     createAgent: (options: CreateAgentOptions = {}) =>
