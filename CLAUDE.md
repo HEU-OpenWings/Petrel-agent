@@ -21,8 +21,8 @@ pnpm run test            # vitest run
 pnpm run dev             # 仅后端，宿主机调试用（nodemon --legacy-watch + tsx）
 ```
 
-单个测试：`pnpm vitest run packages/agent/src/agent.test.ts`，
-单个用例加 `-t "runs the tool loop"`。
+单个测试：`pnpm vitest run packages/agent/src/harness.test.ts`，
+单个用例加 `-t "工具循环"`。全仓跑测试建议加 `--exclude '**/.claude/**'`（见「踩过的坑」12）。
 
 `apps/web` 的 `pnpm run lint` 目前不可用（v0.4 遗留：eslint 9 只认 `eslint.config.js`，
 仓库里是旧格式 `.eslintrc.cjs`），前端没有 typecheck。
@@ -38,23 +38,33 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
   **`app.ts` 的挂载顺序有安全含义**：`system` 与 `auth` 是仅有的两个公开前缀，
   `app.use("/api/*", requireAuth)` 之下的路由自动受保护（`admin` 再叠一层 `requireAdmin`）。
 - `apps/web`（`@petrel/web`）— Vue 3 + Vite + Ant Design Vue + pinia，JS（尚未 TS 化）。
-- `packages/agent` — `createAgent()` 装配 pi `Agent`，内置工具在 `src/tools/`。
+- `packages/agent` — `createHarness()` 装配 pi `AgentHarness`，内置工具在 `src/tools/`。
+  `src/session/pg-storage.ts` 是 pi `SessionStorage` 的 Postgres 实现——**全仓唯一懂
+  「pi 的 11 种会话树条目类型怎么拆进 `type` + `payload` 两列」的地方**。
+  `createPgSession()` 给生产用，`createMemorySession()` 给降级与测试用。
 - `packages/ai` — 模型 provider 注册。DeepSeek 官方与 SiliconFlow 都不在 pi 内置 provider 里，
   用 `createProvider` 自行注册。默认模型是 DeepSeek 官方的 `deepseek-v4-flash`，走
   **Responses API**（`openai-responses.lazy`，DeepSeek 官方不提供 chat/completions）；
   SiliconFlow 的 `deepseek-ai/DeepSeek-V3` 走 `openai-completions.lazy`，留作限流时的备选。
-- `packages/database` — Drizzle schema 与 repository。`sessions` / `messages` 存 pi 的
-  `AgentMessage` JSONB，消息用整数 `seq` 排序（同一轮的多条消息时间戳可能相同），
-  `seq` 由数据库在插入时分配（`SELECT ... FOR UPDATE` + `MAX(seq)+1`），不由调用方传。
+- `packages/database` — Drizzle schema 与 repository。`sessions` / `session_entries`。
+  **一条会话是一棵 append-only 的条目树**：顺序由 `parent_id` 链决定，`entry_seq`（bigserial）
+  只用于 `getEntries({ afterEntrySeq })` 的游标分页，不参与语义定序。条目有 11 种类型
+  （`message` 只是其一，还有 `compaction` / `model_change` / `active_tools_change` / `leaf` …），
+  除 `id` / `parent_id` / `timestamp` / `type` 之外的字段整份存 `payload` jsonb。
+  **这一层不 import 任何 pi 类型**（`payload` 是 `unknown`），翻译在 `packages/agent`。
   测试用 PGlite 内存 Postgres，不需要 Docker。
 - `packages/config` — **全仓唯一读取 `process.env` 的位置**，导出校验后的 `env`。
 - `packages/logger` — pino logger 与 Hono 的 `requestLogger` 中间件。
 
 依赖方向固定为 `apps → packages`，package 之间只能指向更底层的 package：
-`server → agent → ai → config`、`server → database → config`、`server → logger → config`。
+`server → agent → { ai, database }`、`server → database → config`、`server → logger → config`。
+（`agent → database` 这条边是为了让 `PgSessionStorage` 能落到 Postgres，无环。）
 
-**pi 的接线只允许出现在 `agent` 与 `ai` 两个 package**，上层只依赖 `createAgent()`
-与 Agent 的事件流，便于将来替换内核。
+**pi 的接线只允许出现在 `agent` 与 `ai` 两个 package**，上层只依赖 `createHarness()`
+与 harness 的事件流，便于将来替换内核。需要 pi 的类型时从 `@petrel/agent` 转导出拿，
+不要在上层直接 import `@earendil-works/*`。
+**既有例外（待收口）**：`apps/server` 的测试为了用 `fauxProvider` 直接依赖了
+`@earendil-works/pi-ai`（devDependency），这是本轮之前就有的破口。
 
 后续 package（`knowledge` · 共享 `contracts` 等）在对应业务首次落地时创建，
 不提前维护空 package。
@@ -74,12 +84,33 @@ event: error   data: { message }
 
 `sessionId` 由**前端生成**（`crypto.randomUUID()`）、后端 upsert，所以 SSE 不需要回传新会话 id。
 会话 CRUD 在 `/api/sessions`：`GET /` 列表 · `GET /:id/messages` 历史 · `PATCH /:id` 重命名 ·
-`DELETE /:id` 删除。消息按 `message_end` 增量落库，中断的半截回答在 `agent_end` 时补写并标
-`interrupted`。**落库失败不中断对话**——会话/消息仓储写失败时 SSE 照常输出，只在日志里报错
-（`chat.test.ts` 有用例守着）。注意挂上认证后**整个数据库不可用**不再是这个结果：
-`requireAuth` 要查库确认用户，整库挂掉时这一步先失败（`resolveUser` 的 try/catch 只包 `verify()`，
-`findById()` 的错误直接冒泡到 `onError` → **500**），请求根本进不到 handler。
-401 只对应「没 cookie / 验签失败或过期 / 用户不存在或已禁用」。
+`DELETE /:id` 删除。
+
+**harness 按 `sessionId` 常驻**（`services/harness-registry.ts`，进程内 Map + idle TTL 5 分钟 +
+容量上限 200，到顶且无空闲可淘汰则 503）。由此确立三条语义：
+
+1. **落库由 harness 自己完成**，路由不订阅事件写库（`attachPersistence` 那套已删除）。
+2. **连接断开不等于停止**：关页面/切走，agent 继续跑完并落库，用户回来能看到完整回答。
+   用户要真停下来走 **`POST /api/chat/abort`**（前端「停止」按钮调它；切换会话只断本地接收，
+   不调它）。
+3. **同一会话的第二个请求进 `followUp` 队列**，当轮结束后自动接上；registry 用一条 promise 链
+   保护「判断是否在跑 + 发起调用」这段临界区，**但绝不能把「等整轮跑完」也串进去**——
+   那样第二个请求会排到第一轮结束之后才发起，`followUp` 分支永远走不到。
+
+**归属校验在 `registry.acquire()` 的 `upsert`**，且必须在装配 harness 之前：缓存 key 只有
+`sessionId`，越权请求一旦走到装配就能拿到别人的活实例。注意区分 `upsert` 返回 `false`（越权 →
+403）与 `upsert` **抛错**（故障 → 降级成一次性内存会话，本轮照常对话但不落库）——
+两者共用一个返回值就等于把归属校验绕过去了。
+
+**开流后写 `session_entries` 失败则整轮失败**（发 `event: error`），不吞：harness 的后续上下文
+正是从这颗树读的，缺条目等于下一轮拿到有洞的历史。
+注意**整个数据库不可用**是另一个结果：`requireAuth` 要查库确认用户，整库挂掉时这一步先失败
+（`resolveUser` 的 try/catch 只包 `verify()`，`findById()` 的错误直接冒泡到 `onError` → **500**），
+请求根本进不到 handler。401 只对应「没 cookie / 验签失败或过期 / 用户不存在或已禁用」。
+
+`GET /:id/messages` 用 `entryRepo.listAll()` 过滤 `message` 条目投影出完整 transcript，
+**不能用 `session.buildContext()`**——后者会应用 compaction 变换，压缩发生后用户刷新会看到
+历史凭空消失。`buildContext()` 只用于喂模型（那里正需要压缩后的版本）。
 
 ### 认证
 
@@ -104,10 +135,19 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
    `errorMessage`（`stopReason: "error"`）。只处理 `event: error` 会显示一条空白助手消息。
 4. `text_start` / `toolcall_delta` 是 pi-ai 层 `assistantMessageEvent` 的子类型，嵌在
    `message_update` 里，不是顶层 `AgentEvent`。
-
-5. **模型报错那条消息同样走 `message_end`**（`stopReason: "error"`），只是没有 `message_end`
-   之外的信号。落库/去重逻辑若只把 `"aborted"` 当特例，就会把报错那条当成「没写完的半截」
-   重复处理一遍——`services/session.ts` 踩过这个。
+5. **`emitAny` / `emitOwn` 串行 `await` 每个订阅回调，且没有超时**
+   （`agent-harness.js`）。所以**订阅回调里绝不能做网络 I/O**——`await stream.writeSSE(...)`
+   在客户端不读流时会因背压永不 resolve，直接卡住整个 harness。`routes/chat.ts` 因此把回调
+   改成同步入队（`http/sse-queue.ts`），真正的写出交给独立的 pump 循环，队列溢出只断开
+   那一个连接。这条是本轮最贵的教训，见「踩过的坑」第 14 条。
+6. **`AgentHarness` 没有 `setSystemPrompt()`**（只有 `setModel` / `setTools` / `setResources` /
+   `setThinkingLevel` / `setStreamOptions`）。systemPrompt 只在装配时生效，常驻实例被复用时
+   请求里新传的会被静默忽略（`chat.test.ts` 有用例钉住）。要每轮改系统提示，正确挂点是
+   `before_agent_start` hook 的 `BeforeAgentStartResult.systemPrompt`，不是重建实例。
+7. **`harness.compact()` 只能手动调用、硬编码 `DEFAULT_COMPACTION_SETTINGS`、且要求
+   `phase === "idle"`**。文档里说的「超阈值自动触发」与 `settings.json` 都是 pi CLI 层的实现，
+   harness 里没有。另外 **`phase` 是私有字段没有 getter**，要判断是否在跑只能自己订阅
+   `agent_start` / `settled` 维护标记（`harness-registry.ts` 就是这么做的）。
 
 模型 API key 由 pi-ai 的 auth 机制从 `DEEPSEEK_API_KEY` / `SILICONFLOW_API_KEY` 解析，这是
 「`@petrel/config` 是唯一读 env 的位置」的**唯一例外**。
@@ -142,6 +182,17 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
     浏览器会静默丢弃 cookie，表现为「登录接口返回 200 但下一个请求仍是未登录」。
 11. **Node 的 `scrypt` 默认 `maxmem` 是 32MB**，而 N=65536、r=8 需要 64MB，
     不显式调高会抛 `ERR_CRYPTO_INVALID_SCRYPT_PARAMS`，报错不指向根因。
+12. **`vitest` 会把 `.claude/worktrees/` 里的旧副本一起跑掉**。全仓跑测试时加
+    `--exclude '**/.claude/**'`，否则会看到一批与当前代码无关的失败。
+13. **常驻 harness 的实例必须在会话删除与用户禁用时 `evict`**，但 **evict 失败不能让主操作
+    报错**：`DELETE /:id` 与 admin 禁用都是「先落库、再清理」，清理抛错时库里已经改完了，
+    冒泡成 500 会让客户端以为主操作失败（删除后重试撞 404、禁用后重复操作）。两处都 catch
+    住记日志。
+14. **pi 的订阅回调是被串行 `await` 的，回调里做网络 I/O 会卡死整个 harness**。
+    常驻实例把这个问题从「卡自己一个请求」放大成「卡整个会话」：一个不读流的客户端会让
+    该会话的其他连接、甚至 `POST /api/chat/abort` 一起挂住（abort 内部 `await waitForIdle()`），
+    且 `running` / `refCount` 都不复位，实例既不被 sweep 回收也不被容量淘汰。
+    修法见 `http/sse-queue.ts`：同步入队 + 独立 pump + 有界队列溢出即断开该连接。
 
 ## 重构现状
 

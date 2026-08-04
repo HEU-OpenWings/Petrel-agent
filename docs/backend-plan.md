@@ -250,7 +250,14 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
    `fauxAssistantMessage([], { stopReason: "error", errorMessage })` 造报错响应），
    修之前它复现出 3 条消息。**中断路径没有这个问题**——验收第 7 项与既有用例都确认只落一条。
 
-1. **中断后重发会让 transcript 的顺序错乱**——本轮最需要注意的一条。`seq` 反映的是「写入时刻」，
+1. ~~**中断后重发会让 transcript 的顺序错乱**~~ —— **已随 Agent 内核升级解决**（2026-08-04）。
+   根因是 `seq` 反映「写入时刻」而对话的逻辑顺序是「轮次」；换成会话树之后顺序由 `parent_id`
+   决定，与写入时刻无关，半截消息落库再晚也不会排到下一轮用户消息之后。
+   原先钉住错误行为的那条 `【已知问题】` 用例已随 `messages` 表一并删除。
+   **连带解除的风险**：Anthropic Messages API 严格要求 user / assistant 交替，原先换 provider 会
+   直接 400，现在不会。原记录如下：
+
+   `seq` 反映的是「写入时刻」，
    而对话的逻辑顺序是「轮次」。被打断的半截助手消息在 `agent_end` 才落库，那时 HTTP 响应早就关了，
    于是它必然排到**下一轮用户消息之后**，回灌给模型的序列变成 `user, user, assistant, assistant`。
    这不是「seq 改由数据库分配」带来的退化——改之前这一轮是整个丢掉的，比顺序错更糟；
@@ -292,6 +299,80 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
 - 接口：`POST /api/auth/register|login|logout` · `GET /api/auth/me` ·
   `GET /api/admin/users` · `PATCH /api/admin/users/:id`（禁用/解禁，不能禁自己）。
 
+### Agent 内核升级：AgentHarness + Postgres 会话树（2026-08-04 交付）
+
+设计文档见 [superpowers/specs/2026-08-04-agent-harness-session-design.md](superpowers/specs/2026-08-04-agent-harness-session-design.md)，
+实施计划见 [superpowers/plans/2026-08-04-agent-harness-session.md](superpowers/plans/2026-08-04-agent-harness-session.md)。
+
+起因是 pi 0.83 里有一整层 `AgentHarness` 我们没接，而**上下文压缩、skills、工具子集、hooks
+全都挂在它上面**：压缩吃的是 `SessionTreeEntry[]` 而不是 `AgentMessage[]`，所以后续的上下文
+管理、tool/skill 管理、记忆系统都必须先有这层地基。本轮只做内核替换，不新增用户可见功能。
+
+- **`messages` 表退役，换成 `session_entries`**：一条会话是一棵 append-only 条目树，
+  顺序由 `parent_id` 决定，`entry_seq` 只做游标分页。**那个 `SELECT ... FOR UPDATE` +
+  `MAX(seq)+1` 的事务因此整体消失**——树模型的 `parent_id` 在插入前就已知，不需要读-改-写。
+  dev 数据直接丢弃，只写了建表/删表 migration，没写数据搬运。
+- **`attachPersistence` 整体删除**（约 70 行）：落库由 harness 通过 `Session` 自己完成。
+  `partial` 变量、`aborted` 去重、模型报错重复落库那个修过的坑，连土壤一起没了。
+- **harness 按 `sessionId` 常驻**（`services/harness-registry.ts`）：idle TTL 5 分钟、
+  容量上限 200、归属校验在装配之前、会话表故障时降级成一次性内存会话。
+  换来「关页面不丢回答」，代价是新增 `POST /api/chat/abort` 作为唯一的停止入口。
+- **同会话并发进 `followUp` 队列**，registry 用 promise 链保护「判断 + 发起」临界区。
+- 分层：SQL 在 `packages/database`（不认识 pi）→ pi 语义在 `packages/agent`
+  （`PgSessionStorage`）→ 运行时状态在 `apps/server`（registry）。新增 `agent → database` 边。
+
+**这一轮的审查抓出 6 个真缺陷，其中 4 个出在实施计划自己的代码里**，值得记：
+
+1. `getLeafId()` 只读 `leaf` 类型条目是错的——pi 的 `appendEntry()` 对**任意**类型条目都会推进
+   leaf 指针（`leafIdAfterEntry`），而 `Session.appendMessage()` 从不调 `setLeafId()`。
+   照原样写会让 parent 链断掉、`buildContext()` 返回空。**双实现契约测试**（同一套断言同时跑
+   pi 自带的 `InMemorySessionRepo` 与 pg 版）就是为抓这类问题存在的，它确实抓到了。
+2. `getSessionStats()` 用的四个 usage 字段名全都不存在（真实的是 `input` / `output` /
+   `cacheRead` / `cacheWrite` / `cost.total`），`?? 0` 静默吞掉，方法永远返回全零。
+3. `acquire()` 首次装配有并发竞态：同一新会话被并发 acquire 会各自装配一个 harness，
+   `entries.set` 只留后者，前者成为孤儿却仍在写同一份历史——正是这个设计要避免的会话分叉。
+   修法是 in-flight 去重（`building` Map）。
+4. registry 在 service 层抛 `HTTPException`，与 `services/auth.ts` 的 `AuthError` 分层不一致，
+   改成纯错误类型由路由翻译。
+5. `evict` 失败会让**已经成功**的删除/禁用报 500，客户端据此重试撞 404。两处改成 catch 记日志。
+6. 前端 `abort()` 被切换会话的兜底路径共用，导致「切走就掐断上一轮」，与本轮
+   「关页面不丢回答」的语义直接矛盾。拆成「真正停止」与「只断本地接收」两个函数。
+
+#### 本轮修掉的一个可利用缺陷：SSE 背压卡死共享 harness
+
+pi 的 `emitAny` / `emitOwn` **串行 `await` 每个订阅回调且无超时**，而路由原本在回调里
+`await stream.writeSSE(...)`。hono 的 `streamSSE` 用 highWaterMark 为 1 的 `TransformStream`，
+所以客户端不读流时，一两个事件之后写入就永不 resolve，直接把 agent loop 卡住。
+
+连锁后果：`settled` 收不到 → `running` 永为 true；`send()` 不返回 → `refCount` 不释放 →
+sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上；**`POST /api/chat/abort` 也挂住**
+（它内部 `await waitForIdle()`，而 abort signal 解不开 `writer.write()` 的阻塞）。
+
+于是任何登录用户 `curl` 一个 `/api/chat` 不读流就能冻结该会话，重复 200 次占满容量后
+**所有用户的新会话一律 503**。旧架构（每请求一个 `Agent`）下同样的慢客户端只卡自己那一个 run——
+是常驻 harness 把局部问题放大成了全服务 DoS，所以本轮必须修。
+
+修法：`http/sse-queue.ts` —— 订阅回调只做同步入队，独立的 pump 循环做真正的 I/O，
+有界队列（2000 条）溢出时只断开那一个连接。**教训：pi 的订阅回调里永远不能有网络 I/O。**
+
+#### 本轮留下的已知问题
+
+1. **首轮以 `error` / `aborted` 收尾时，排队的 `followUp` 消息会丢**。pi 的 agent loop 在
+   `stopReason` 为这两者时提前 `return`，绕过了 `getFollowUpMessages()` 的抽干点
+   （`agent-loop.js`）。两个子情形不同：
+   - `error`：消息留在**内存**队列里（`followUp()` 不落库），下一次 `prompt()` 结束时才被消化，
+     于是它会排到「下一个问题的回答」之后，顺序错乱；进程重启则彻底丢失。
+   - `aborted`：`harness.abort()` 会 `followUpQueue = []`，**永久静默丢失**。
+
+   用户可见表现：第二条消息发出后流正常结束，界面上既没有回答也没有 `event: error`，
+   刷新历史里也没有它。**连接不会挂住**（`waitForIdle()` 正常 resolve），所以不是可用性问题。
+   要绕过就得接管 pi 的队列管理，属于另一个量级，留到后续。
+2. **常驻 harness 在多副本部署下需要会话亲和**。否则同一会话的两个请求落到不同副本，
+   各自持有一个实例并发写同一颗树——结果是分叉而非丢消息，但仍是缺陷。
+   当前单副本，§5 的容量上限与 TTL 是硬要求；**多副本部署前必须先解决亲和性**。
+3. **`session_entries` 的 `getEntries()` 在不带游标时会全量读**。前端历史展示本来就要全量，
+   当前可接受；将来会话很长时要么分页要么靠压缩收敛。
+
 ## 4. 待办
 
 ### M1 剩余
@@ -309,8 +390,18 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
   是否符合预期，需要产品侧确认；不符合的话就要在这一层做投影，并连带改前端归约
 
 ### M2 剩余
-- **HEU-10 会话持久化剩余部分**：落库与历史回灌已交付（见 §3），前端会话列表因此解锁。
-  剩下的是 SSE 的 `persisted` 事件与前端断线重连——两者要一起做，单独加事件没有消费方
+- **HEU-10 会话持久化剩余部分**：落库与历史读取已交付（见 §3，2026-08-04 起走会话树）。
+  剩下的是 SSE 的 `persisted` 事件与前端断线重连——两者要一起做，单独加事件没有消费方。
+  **地基已就位**：`SessionStorage.getEntries({ afterEntrySeq, limit })` 的游标就是为增量推送
+  准备的，而且现在「连接断开 agent 继续跑完」已经成立，重连只需要补齐 `afterEntrySeq` 之后的条目
+- **上下文管理（下一轮）**：`harness.compact()` 只能手动调且硬编码 `DEFAULT_COMPACTION_SETTINGS`、
+  要求 `phase === "idle"`，所以自动触发要自己写（在 `prompt()` 之前判断），自定义阈值只能通过
+  `session_before_compact` hook 接管摘要生成。用量数据来自 `estimateContextTokens` 与
+  `getSessionStats()`
+- **记忆系统（后续）**：pi 没有跨会话记忆。`custom` / `custom_message` 条目类型可以把记忆写进
+  会话树，`before_agent_start` 与 `context` hook 可在每轮注入；archival 检索走 pgvector
+  （compose 里已是 `pgvector/pgvector:pg17`）。业界共识是「工作记忆是上下文预算问题、
+  长期记忆才是检索问题」，两者别混
 - **HEU-12 agent 注册表**：从 v0.4 的「目录扫描 + metadata.toml」改为显式 TS 注册表，
   配置 schema 用 TypeBox 直接生成前端表单
 - **HEU-13 工具与 MCP**：`kb_search`、`web_search`、`sql`，以及 MCP server → `AgentTool` 适配
@@ -374,6 +465,10 @@ Dashboard SQL 聚合（HEU-28）· 评测 runner（HEU-29）· 数据迁移（HE
 
 1. **pi 生态成熟度**：包名近期迁移过，`pi-server` 标注 experimental。→ 锁死精确版本、
    只依赖 `pi-ai` 与 `pi-agent-core`、把 pi 的接线收在 `agent` 一层内。
+   **新增一条具体风险**：本轮依赖了四个从 dist 源码核出来、官方文档没写或写错的行为
+   （`appendEntry` 推进 leaf 指针、`Usage` 的字段名、`emitAny` 串行 await 回调、
+   `compact()` 硬编码 settings + `phase` 私有）。**升级 pi 版本时必须重新核对这四条**，
+   它们出错的方式都是静默的（上下文为空、统计全零、harness 卡死）。
 2. **HITL 语义降级**：LangGraph 的 `interrupt` 是图级中断，pi 只能在工具边界暂停。
    → HEU-8 先审计触发点，存在无法映射的场景就升级为阻塞项。
 3. **pgvector 的规模上限**：百万级 chunk 以上不如 Milvus。→ 当前单机场景足够，
@@ -386,3 +481,8 @@ Dashboard SQL 聚合（HEU-28）· 评测 runner（HEU-29）· 数据迁移（HE
    契约变更必须同 PR 更新两侧。
 7. **重构期间 v0.4 无法双跑**：数据模型与向量库都换了。v0.4 打 tag 冻结、只接 bugfix，
    M6 一次性切换。
+8. **常驻 harness 的进程内状态**（2026-08-04 新增）：容量上限与 idle TTL 是硬要求——
+   `refCount > 0` 或正在跑的实例不会被回收，所以任何「让实例卡住」的缺陷都会累积成容量耗尽
+   （SSE 背压那个缺陷就是这么从「卡一个连接」变成「全服务 503」的）。
+   → 容量到顶时明确返回 503 而不是无声增长；**多副本部署前必须解决会话亲和性**，
+   否则同一会话的两个副本会并发写同一颗树。

@@ -113,10 +113,11 @@ index (session_id, type)           -- findEntries(type)
 `PgSessionStorage implements SessionStorage`：把 pi 的 12 个方法翻译成 4.2 的调用。
 **这里是唯一懂「11 种条目类型怎么拆进 `type` + `payload`」的地方。**
 
-`PgSessionRepo implements SessionRepo`：`create` / `open` 真实现；
-`list` / `delete` 委托给现有 `sessionRepo`（它有 `userId` 收窄，是唯一该管归属的地方）；
-`fork` 抛 not supported——A 不做分支，等真要分支 UI 时再实现（见 §9、§11.2）。
-调用方（`HarnessRegistry`）实际只用到 `create` / `open`，另三个方法是为满足接口而存在。
+**~~`PgSessionRepo`~~ 最终没有实现**（实施时发现不需要）：`AgentHarnessOptions` 只吃
+`session: Session`，不吃 `SessionRepo`。会话列表与删除本来就走 `sessionRepo`（它有 `userId`
+收窄）。所以 `packages/agent` 只导出两个薄工厂——`createPgSession(db, sessionId, createdAt)`
+与 `createMemorySession(sessionId)`（后者供降级与测试用），registry 直接拿 `Session`。
+将来真要做分支 / fork 时再引入 repo 抽象。
 
 ### 4.4 `createHarness()`（`packages/agent`）
 
@@ -161,9 +162,9 @@ POST /api/chat { message, sessionId, systemPrompt? }
   ↓ registry.acquire(sessionId, userId)
       ├─ sessionRepo.upsert(id, userId, title)   ← 归属校验仍在这里，冲突 → 403
       ├─ 缓存命中 → 复用 harness
-      └─ 未命中 → PgSessionRepo.open/create → createHarness(session)
-  ↓ streamSSE 打开 → harness.subscribe(推事件)，退订函数存起来，refCount++
-  ↓ 经该会话的 promise 链：phase === "idle" ? prompt(message) : followUp(message)
+      └─ 未命中 → createPgSession() → createHarness(session)
+  ↓ streamSSE 打开 → harness.subscribe(同步入队，见 §6)，退订函数存起来，refCount++
+  ↓ 经该会话的 promise 链：running ? followUp(message) : prompt(message)
   ↓ 事件流 … message_end（harness 自己落库）… agent_end → settled
   ↓ 收到 settled → 退订、refCount--、关闭 SSE
 ```
@@ -172,6 +173,22 @@ SSE 事件体仍是 pi 的 `AgentEvent` 原样透传，前端 `useAgentStream` �
 
 **串行入口**：`prompt` / `followUp` 的判断与调用在同一条 promise 链上执行，
 第二个请求插不进中间，§2.2 的 `invalid_state` 竞态从结构上消失——不靠「捕获异常再重试」。
+
+> **实施时修正的三点**（本节原文写错了，以此处为准）：
+>
+> 1. **`AgentHarness.phase` 是私有字段、没有 getter**，外部读不到。registry 改为订阅一次 harness
+>    事件、用 `agent_start` / `settled` 自己维护 `running` 标记，并在发起 `prompt()` 时**同步**置位
+>    （不能等 `agent_start`——它异步发出，下一个请求可能在那之前就进临界区）。
+>    `followUp()` 的 `invalid_state` 兜底仍要保留：`running` 与那个私有字段之间仍有一瞬缝隙。
+> 2. **临界区只能覆盖「判断 + 发起」，绝不能包含「等整轮跑完」**。否则第二个请求会排到第一轮
+>    结束之后才发起，那时 `running` 已是 false，于是永远走 `prompt`，`followUp` 分支形同虚设。
+> 3. **`followUp()` 只 push 队列就返回**，所以 `send()` 在 followUp 分支要串上
+>    `harness.waitForIdle()` 再 resolve；否则路由会以为自己那轮完了、立刻关流，
+>    第二个 SSE 连接几乎空着收尾。
+>
+> 另外 **`acquire()` 的首次装配需要 in-flight 去重**：`entries.get` 判空、`findById`、装配之间都有
+> `await`，同一个新会话被并发 acquire 会各自装配一个 harness 并发写同一颗树。归属校验（`upsert`）
+> 仍对每个请求独立执行，只有装配被去重。
 
 **连接断开**：只退订，不 abort。harness 跑完并落库，用户刷新后 `GET /:id/messages` 拿到完整结果。
 
@@ -199,9 +216,13 @@ Map 容量上限 **200 个会话**（按单副本内部使用估：每实例常�
 压测后按实际内存调整，调整时同步改这里）。到顶时按 `lastUsedAt` 淘汰最旧的 idle 实例；
 **没有 idle 可淘汰就拒绝新会话（503）而不是无限增长**——否则这层缓存是个内存炸弹。
 
-**历史读取**：`GET /:id/messages` → `pathToRootOrCompaction(leafId)` → `buildSessionContext()`
-投影出 `AgentMessage[]`。返回体 `{ messages }`，去掉 `interruptedSeqs`。
+**历史读取**：`GET /:id/messages` → `entryRepo.listAll()` 过滤 `type === "message"` → `AgentMessage[]`。
+返回体 `{ messages }`，去掉 `interruptedSeqs`。
 会话不存在仍返回 200 + 空数组（理由不变：新会话 id 是前端本地生成的）。
+
+> **本节原文写的是 `pathToRootOrCompaction()` + `buildSessionContext()`，那是错的**：
+> 它们会应用 compaction 变换，于是压缩发生之后用户刷新页面会看到历史**凭空消失**。
+> 历史展示要完整 transcript，压缩只影响喂给模型的那份。两个用途不能共用一条路径。
 
 **title 生成**：仍在 `registry.acquire` 里的 `sessionRepo.upsert` 完成（首条消息前 30 字），
 不迁进 entries。
@@ -223,7 +244,14 @@ Map 容量上限 **200 个会话**（按单副本内部使用估：每实例常�
 
 - **模型报错**：`emitRunFailure` 造 failure 消息，走完整 `message_start → message_end →
   turn_end → agent_end` 并落库一条。行为与今天一致，但**不再需要任何去重代码**。
-- **`busy`**：串行入口已消除竞态，保留一层兜底 → 409。
+- **`busy`**：串行入口已消除竞态。~~保留一层兜底 → 409~~ ——**做不到**：归属校验之后就进了
+  `streamSSE`，响应头已发出、改不了状态码。真出现时表现为 SSE 的 `event: error`。
+- **SSE 背压（实施时新发现，已修）**：pi 的 `emitAny` 串行 `await` 每个订阅回调且无超时，
+  所以**回调里绝不能做网络 I/O**——客户端不读流时 `await stream.writeSSE(...)` 因背压永不 resolve，
+  会卡住整个共享 harness（连带同会话其他连接与 `abort` 端点一起挂住，`running` / `refCount`
+  都不复位，实例既不被 sweep 也不被容量淘汰）。任何登录用户 `curl` 不读流即可冻结会话，
+  重复到容量上限后全服务 503。修法：`http/sse-queue.ts` —— 回调同步入队、独立 pump 循环写出、
+  有界队列（2000 条）溢出只断开那一个连接。
 - **会话删除 / 用户禁用**：`DELETE /:id` 与 admin 禁用路径必须 `registry.evict`，
   否则内存里还有个活 harness 往已删会话写，报错发生在没有请求上下文的地方，日志极难查。
 - **越权**：缓存 key 是 `sessionId`，`acquire` 必须先过 `upsert` 的 `userId` 检查才返回实例。
