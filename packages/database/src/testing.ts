@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import * as schema from "./schema.ts";
-import { messages, sessions, users } from "./schema.ts";
+import { messages, sessionEntries, sessions, users } from "./schema.ts";
 
 /** migration 目录是包内的相对位置，测试从仓库根跑，所以要解析成绝对路径 */
 const MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
@@ -54,10 +54,12 @@ export async function createTestDb(): Promise<{
   return {
     db,
     async reset() {
-      // CASCADE 是必需的：三张表之间有外键，单独 TRUNCATE users 会被拒绝。
-      // RESTART IDENTITY 当前是空操作（本 schema 没有 serial/identity 列），
-      // 留着是为了以后真加了自增列时不会漏掉复位
-      await db.execute(sql`TRUNCATE ${users}, ${sessions}, ${messages} RESTART IDENTITY CASCADE`);
+      // CASCADE 是必需的：表之间有外键，单独 TRUNCATE users 会被拒绝。
+      // RESTART IDENTITY 现在不再是空操作：session_entries.entry_seq 是 bigserial，
+      // 不复位的话跨用例的游标断言会依赖上一个用例留下的序号
+      await db.execute(
+        sql`TRUNCATE ${users}, ${sessions}, ${messages}, ${sessionEntries} RESTART IDENTITY CASCADE`,
+      );
       await seedTestUser();
     },
     close: () => client.close(),
