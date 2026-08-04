@@ -27,9 +27,13 @@ describe("createPreferencesRepository", () => {
     });
   });
 
-  it("save 会懒创建这一行", async () => {
-    await repo.save(TEST_USER_ID, { defaultModel: "m-1", systemPrompt: "你是助手" });
+  // 返回值断言必须和「库里真的是这些内容」贴在一起：save 是全量覆盖写，
+  // 单独断言它的返回值只是「函数返回自己的入参」的恒等式，证明不了任何落库行为。
+  // Task 7 的路由把这个返回值直接当 HTTP 响应体，所以契约本身值得钉住
+  it("save 懒创建这一行，返回值与落库内容一致", async () => {
+    const saved = await repo.save(TEST_USER_ID, { defaultModel: "m-1", systemPrompt: "你是助手" });
 
+    expect(saved).toEqual({ defaultModel: "m-1", systemPrompt: "你是助手" });
     await expect(repo.findByUserId(TEST_USER_ID)).resolves.toEqual({
       defaultModel: "m-1",
       systemPrompt: "你是助手",
@@ -57,11 +61,5 @@ describe("createPreferencesRepository", () => {
       defaultModel: null,
       systemPrompt: null,
     });
-  });
-
-  it("save 返回落库后的值，调用方不用再查一次", async () => {
-    await expect(
-      repo.save(TEST_USER_ID, { defaultModel: "m-1", systemPrompt: null }),
-    ).resolves.toEqual({ defaultModel: "m-1", systemPrompt: null });
   });
 });
