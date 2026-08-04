@@ -35,22 +35,20 @@ export function createPreferencesRepository(db: Database) {
     /**
      * 全量写入：传进来的 null 会真的把库里的值清掉，这是「清回系统默认」的唯一途径。
      * 懒创建——没改过设置的用户一行都不占。
+     *
+     * 这里没有 setWhere，冲突目标是主键 userId 本身，所以 INSERT/UPDATE 分支必然
+     * 有一个成立，落库的内容恒等于 values——不用 returning() 回查，失败直接抛异常。
      */
     async save(userId: string, values: UserPreferences): Promise<UserPreferences> {
-      // 0 参 returning()：TS 在 NodePgDatabase | PgliteDatabase 联合上调用带泛型的
-      // returning(fields) 会误解析到 0 参重载而报 TS2554（同 sessions.ts 的说明）
-      const rows = await db
+      await db
         .insert(userPreferences)
         .values({ userId, ...values })
         .onConflictDoUpdate({
           target: userPreferences.userId,
           set: { ...values, updatedAt: NOW },
-        })
-        .returning();
+        });
 
-      const row = rows[0];
-      if (!row) return EMPTY;
-      return { defaultModel: row.defaultModel, systemPrompt: row.systemPrompt };
+      return values;
     },
   };
 }
