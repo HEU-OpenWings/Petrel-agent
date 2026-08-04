@@ -1,51 +1,20 @@
-import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
-import type { Api, Model, Models } from "@earendil-works/pi-ai";
-import { defaultModel, models as defaultModels } from "@petrel/ai";
 import { currentTime } from "./tools/current-time.ts";
 
-// 供上层（apps/server 等）引用 Agent 类型而不直接依赖 @earendil-works/*：
+// 供上层（apps/server 等）引用这些 pi 类型而不直接依赖 @earendil-works/*：
 // pnpm 严格 node_modules 下 apps/server 解析不到 pi 包，也守住「pi 接线只在 agent/ai」的约束。
-export type { Agent, AgentMessage } from "@earendil-works/pi-agent-core";
-
-export const DEFAULT_SYSTEM_PROMPT = "你是 Petrel 智能助手。回答简洁准确，需要实时信息时调用工具。";
-
-export interface CreateAgentOptions {
-  systemPrompt?: string;
-  tools?: AgentTool[];
-  /** 模型集合与模型，默认取 @petrel/ai 注册的 SiliconFlow；测试可注入 faux provider。 */
-  models?: Models;
-  model?: Model<Api>;
-  /** 恢复会话时回灌的历史消息，pi 会把它当作已有 transcript 继续。 */
-  messages?: AgentMessage[];
-  /** 透传给 pi，最终随每次请求下发给 provider，供缓存感知的后端做会话亲和。 */
-  sessionId?: string;
-}
-
-/**
- * 装配一个 pi Agent。所有 pi 的接线都收在这里，上层只依赖本函数与 Agent 的事件流，
- * 便于将来替换 agent 内核。
- */
-export function createAgent(options: CreateAgentOptions = {}): Agent {
-  const models = options.models ?? defaultModels;
-  return new Agent({
-    initialState: {
-      systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      model: options.model ?? defaultModel(),
-      tools: options.tools ?? [currentTime],
-      // 不传时给 undefined 就行：pi 内部是 initialState?.messages?.slice() ?? []
-      messages: options.messages,
-    },
-    sessionId: options.sessionId,
-    streamFn: models.streamSimple.bind(models),
-  });
-}
-
-export type { AgentHarness, AgentHarnessEvent, Session } from "@earendil-works/pi-agent-core";
+export type {
+  Agent,
+  AgentHarness,
+  AgentHarnessEvent,
+  AgentMessage,
+  Session,
+} from "@earendil-works/pi-agent-core";
 export {
   type CreateHarnessOptions,
   createHarness,
   createMemorySession,
   createPgSession,
+  DEFAULT_SYSTEM_PROMPT,
 } from "./harness.ts";
 export { PgSessionStorage } from "./session/pg-storage.ts";
 export { currentTime };
