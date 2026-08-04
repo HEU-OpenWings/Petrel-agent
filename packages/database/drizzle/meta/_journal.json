@@ -22,6 +22,13 @@
       "when": 1785762641650,
       "tag": "0002_aromatic_captain_cross",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785824945641,
+      "tag": "0003_bored_william_stryker",
+      "breakpoints": true
     }
   ]
 }
