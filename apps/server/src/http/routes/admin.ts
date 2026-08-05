@@ -1,4 +1,9 @@
-import { createSessionRepository, createUserRepository, getDb } from "@petrel/database";
+import {
+  createQuotaLimitsRepository,
+  createSessionRepository,
+  createUserRepository,
+  getDb,
+} from "@petrel/database";
 import { logger } from "@petrel/logger";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -19,6 +24,19 @@ function requireDisabled(body: unknown): boolean {
   const raw = (body as { disabled?: unknown } | null)?.disabled;
   if (typeof raw !== "boolean") {
     throw new HTTPException(400, { message: "disabled 必须是布尔值" });
+  }
+  return raw;
+}
+
+/**
+ * HEU-40：解析配额覆盖 body。{ tokenLimit: 非负整数 | null }。
+ * null 表示恢复系统默认（删覆盖）。缺失或非整数 → 400。
+ */
+function requireTokenLimit(body: unknown): number | null {
+  const raw = (body as { tokenLimit?: unknown } | null)?.tokenLimit;
+  if (raw === null) return null;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+    throw new HTTPException(400, { message: "tokenLimit 必须是非负整数或 null" });
   }
   return raw;
 }
@@ -69,5 +87,39 @@ export const admin = new Hono<AppEnv>()
       );
     }
 
+    return c.json({ ok: true });
+  })
+
+  /**
+   * HEU-40：设置某用户的 token 配额覆盖。挂 requireAdmin 之下。
+   * body { tokenLimit: 非负整数 | null }。null = 恢复系统默认。
+   * 不存在用户返回 404。
+   */
+  .put("/users/:id/quota", async (c) => {
+    const id = requireUuid(c.req.param("id"));
+    const body: unknown = await c.req.json().catch(() => {
+      throw new HTTPException(400, { message: "请求体必须是 JSON" });
+    });
+    const tokenLimit = requireTokenLimit(body);
+
+    const userRepo = createUserRepository(getDb());
+    if (!(await userRepo.findById(id))) {
+      throw new HTTPException(404, { message: "用户不存在" });
+    }
+
+    const limitsRepo = createQuotaLimitsRepository(getDb());
+    if (tokenLimit === null) {
+      await limitsRepo.deleteLimit(id);
+    } else {
+      await limitsRepo.upsertLimit(id, tokenLimit);
+    }
+    return c.json({ ok: true });
+  })
+
+  /** HEU-40：删除某用户的配额覆盖，恢复系统默认。无覆盖时幂等成功。 */
+  .delete("/users/:id/quota", async (c) => {
+    const id = requireUuid(c.req.param("id"));
+    const limitsRepo = createQuotaLimitsRepository(getDb());
+    await limitsRepo.deleteLimit(id);
     return c.json({ ok: true });
   });

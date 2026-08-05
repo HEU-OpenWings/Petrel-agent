@@ -10,6 +10,7 @@ import {
   type HarnessNotice,
   HarnessRegistryError,
 } from "../../services/harness-registry.ts";
+import { getQuotaService, QuotaError } from "../../services/quota.ts";
 import type { AppEnv } from "../../types.ts";
 import { createSseQueue } from "../sse-queue.ts";
 
@@ -144,6 +145,23 @@ export const chat = new Hono<AppEnv>()
     const handle = await getRegistry()
       .acquire(sessionId, c.get("currentUser").id, message, { systemPrompt, modelId: model })
       .catch(toHttpException);
+
+    // HEU-40：配额检查。挂在 acquire 之后、streamSSE 之前——
+    // acquire 之后：归属校验已完成（不会把越权也当超配额拒绝，泄漏会话是否存在）；
+    // streamSSE 之前：开流后只能用 event:error，无法用 HTTP 状态码区分「超配额」与「错误」。
+    //
+    // 任何拒绝都必须先 release：acquire 内部已经 refCount+=1，不释放会泄漏，最终耗尽容量（registry 503）。
+    // memory 降级（会话表故障）和配额查询失败一律 fail-closed → 不调用模型（QuotaError unavailable → 503）。
+    try {
+      if (handle.persistence === "memory") {
+        throw new QuotaError("配额服务暂不可用，请稍后重试", "unavailable");
+      }
+      await getQuotaService().check(c.get("currentUser"));
+    } catch (error) {
+      handle.release();
+      // QuotaError 由 onError 翻译成 429/503 + Retry-After；其它错误（不该发生）冒泡成 500
+      throw error;
+    }
 
     return streamSSE(c, async (stream) => {
       const queue = createSseQueue();

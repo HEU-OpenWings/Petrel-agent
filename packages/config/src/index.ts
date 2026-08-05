@@ -32,12 +32,17 @@ function port(name: string, raw: string | undefined, fallback: number): number {
 }
 
 /**
- * 以下三个函数（bool / ratio / positiveInt）对空串的处理与同文件的
+ * 以下四个函数（bool / ratio / positiveInt / nonNegativeInt）对空串的处理与同文件的
  * `port()` / `oneOf()` 不同：空串按「未设置」处理，返回默认值，不抛错。
  * `.env` 里把值留空是「未设置」的惯用写法，为此让进程起不来是过度严格；
  * `port()` 对空串抛错（`Number("") === 0` 越界）是历史行为，不值得为了
  * 与它一致而传染过来。真正危险的是「看起来合理但非法的值」
  * （如 `0` / `1` / `yes` / `1.5`），那些仍然一律抛错。
+ *
+ * 特别地，`nonNegativeInt` 也必须判空串：否则 `QUOTA_TOKEN_LIMIT=`（dotenv 下是
+ * `""` 而非 `undefined`）→ `Number("") === 0` → 通过整数校验 → 额度 0，enforcement
+ * 开启后表现为全员被拒且提示「联系管理员」，排查方向完全被带偏；
+ * `QUOTA_WINDOW_HOURS=` 同理 → 窗口 0 → 配额永不生效（静默失效）。
  */
 
 /**
@@ -70,6 +75,29 @@ function positiveInt(name: string, raw: string | undefined, fallback: number): n
     throw new Error(`环境变量 ${name} 非法：${raw}，应为正整数`);
   }
   return value;
+}
+
+/** 非负整数（含 0）。HEU-40 配额参数：token 上限、窗口小时数都用它。 */
+function nonNegativeInt(name: string, raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`环境变量 ${name} 非法：${raw}，应为非负整数`);
+  }
+  return value;
+}
+
+/**
+ * 布尔开关。接受 "true"/"false"（大小写不敏感），缺失走 fallback。
+ * HEU-40 的 enforcement 用它：分阶段上线——先部署计量（off，只落库不拦截），
+ * 验证事实一致后再开 on 拦截，最后才开放注册。
+ */
+function booleanEnv(name: string, raw: string | undefined, fallback: boolean): boolean {
+  if (raw === undefined || raw === "") return fallback;
+  const lower = raw.toLowerCase();
+  if (lower === "true") return true;
+  if (lower === "false") return false;
+  throw new Error(`环境变量 ${name} 非法：${raw}，应为 true 或 false`);
 }
 
 /** 开发与测试环境的回落密钥。生产环境不允许走到这里，见 jwtSecret() */
@@ -121,6 +149,12 @@ export const env = {
     thresholdRatio: ratio("COMPACTION_THRESHOLD_RATIO", process.env.COMPACTION_THRESHOLD_RATIO, 0.8),
     absoluteCap: positiveInt("COMPACTION_ABSOLUTE_CAP", process.env.COMPACTION_ABSOLUTE_CAP, 120_000),
   },
+  // HEU-40 配额。默认值是 dev 占位：生产开放注册前必须据真实用量分布重新配置，
+  // 不能靠这个默认值上线。enforcement=false 时只计量（双写 token_usage）不拦截，
+  // 便于分阶段验证事实一致性后再开拦截。
+  quotaTokenLimit: nonNegativeInt("QUOTA_TOKEN_LIMIT", process.env.QUOTA_TOKEN_LIMIT, 1_000_000),
+  quotaWindowHours: nonNegativeInt("QUOTA_WINDOW_HOURS", process.env.QUOTA_WINDOW_HOURS, 24),
+  quotaEnforcement: booleanEnv("QUOTA_ENFORCEMENT", process.env.QUOTA_ENFORCEMENT, false),
 } as const;
 
 export const isProduction = nodeEnv === "production";

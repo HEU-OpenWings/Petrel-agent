@@ -202,3 +202,101 @@ describe("PATCH /api/admin/users/:id", () => {
     expect(getRegistry().size()).toBe(0);
   });
 });
+
+describe("HEU-40 PUT/DELETE /api/admin/users/:id/quota", () => {
+  function putQuota(id: string, tokenLimit: unknown, cookie: string) {
+    return app.request(`/api/admin/users/${id}/quota`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ tokenLimit }),
+    });
+  }
+  function deleteQuota(id: string, cookie: string) {
+    return app.request(`/api/admin/users/${id}/quota`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+  }
+
+  it("admin 设置覆盖额度，普通用户随后按它被拦", async () => {
+    const admin = await registerAdmin("boss@x.io");
+    const victim = await registerUser("victim@x.io");
+
+    // 设为 0：禁止该用户调用模型
+    const put = await putQuota(victim.id, 0, admin.cookie);
+    expect(put.status).toBe(200);
+
+    // 直接读库确认覆盖生效（quota-limits repository）
+    const { createQuotaLimitsRepository } = await import("@petrel/database");
+    const limit = await createQuotaLimitsRepository(state.db!).getLimit(victim.id);
+    expect(limit).toBe(0);
+  });
+
+  it("tokenLimit 为 null 时恢复系统默认（删除覆盖）", async () => {
+    const admin = await registerAdmin("boss@x.io");
+    const victim = await registerUser("victim@x.io");
+    await putQuota(victim.id, 500, admin.cookie);
+    expect(
+      await (await import("@petrel/database")).createQuotaLimitsRepository(state.db!).getLimit(victim.id),
+    ).toBe(500);
+
+    const putNull = await putQuota(victim.id, null, admin.cookie);
+    expect(putNull.status).toBe(200);
+    // 删除覆盖后 getLimit 返回 undefined（跟随系统默认）
+    expect(
+      await (await import("@petrel/database")).createQuotaLimitsRepository(state.db!).getLimit(victim.id),
+    ).toBeUndefined();
+  });
+
+  it("DELETE 删除覆盖，无覆盖时幂等成功", async () => {
+    const admin = await registerAdmin("boss@x.io");
+    const victim = await registerUser("victim@x.io");
+
+    const del = await deleteQuota(victim.id, admin.cookie);
+    expect(del.status).toBe(200);
+  });
+
+  it("目标用户不存在返回 404", async () => {
+    const admin = await registerAdmin("boss@x.io");
+    const ghost = "00000000-0000-0000-0000-000000000099";
+
+    const put = await putQuota(ghost, 1000, admin.cookie);
+    expect(put.status).toBe(404);
+  });
+
+  it.each([
+    { name: "tokenLimit 是负数", value: -1 },
+    { name: "tokenLimit 是小数", value: 1.5 },
+    { name: "tokenLimit 是字符串", value: "1000" },
+    { name: "缺 tokenLimit 字段", value: undefined },
+  ])("$name 返回 400", async ({ value }) => {
+    const admin = await registerAdmin("boss@x.io");
+    const victim = await registerUser("victim@x.io");
+    // value 为 undefined 时 body 不含 tokenLimit 字段
+    const body = value === undefined ? {} : { tokenLimit: value };
+    const response = await app.request(`/api/admin/users/${victim.id}/quota`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: admin.cookie },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it("普通用户不能设置配额（403）", async () => {
+    const attacker = await registerUser("a@x.io");
+    const victim = await registerUser("b@x.io");
+
+    const response = await putQuota(victim.id, 1000, attacker.cookie);
+    expect(response.status).toBe(403);
+  });
+
+  it("未登录返回 401", async () => {
+    const victim = await registerUser("a@x.io");
+    const response = await app.request(`/api/admin/users/${victim.id}/quota`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tokenLimit: 1000 }),
+    });
+    expect(response.status).toBe(401);
+  });
+});

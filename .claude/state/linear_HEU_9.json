@@ -1,0 +1,33 @@
+{
+  "data": {
+    "issue": {
+      "identifier": "HEU-9",
+      "title": "models/catalog：pi-ai provider 注册与 OpenAI 兼容端点",
+      "description": "用 `@earendil-works/pi-ai` 替代 v0.4 的 `src/models/chat.py`。\n\n范围：\n\n* `createModels()` + 按需注册 provider（DeepSeek / OpenAI / Anthropic / Google / Moonshot / ZAI / MiniMax / 阿里）\n* 自定义 OpenAI 兼容 provider：SiliconFlow、Ollama、vLLM\n* 模型列表接口（供前端模型选择器）\n* **锁定精确版本号**，lockfile 提交（风险 1：包名近期从 `@mariozechner/*` 迁至 `@earendil-works/*`）\n\n验收：脚本对 DeepSeek 与本地 vLLM 各跑一次 `streamSimple` 成功，并能读到 token / 成本统计。",
+      "state": {
+        "name": "Done"
+      },
+      "assignee": {
+        "name": "WS"
+      },
+      "parent": null,
+      "labels": {
+        "nodes": []
+      },
+      "comments": {
+        "nodes": [
+          {
+            "body": "部分完成，见 `packages/ai`（commit `a069953`）。\n\n**已完成**：SiliconFlow 注册（pi-ai 未内置，用 `createProvider` + `openai-completions.lazy` + `envApiKeyAuth`），默认模型 `deepseek-ai/DeepSeek-V3`；版本按风险 1 的要求锁死为 `0.83.0`，lockfile 已提交。真实调用验证通过（2 轮 turn、19 个 text_delta、工具循环完整、零错误）。\n\n**剩余**：\n- 其余 provider 未注册（DeepSeek / OpenAI / Anthropic / Google / Moonshot / ZAI / MiniMax / 阿里 / Ollama / vLLM）\n- **模型列表接口未做**（前端模型选择器要用）\n- token / 成本统计未接出到接口（pi-ai 自带，Dashboard 会用到）\n\n实现说明：API key 走 pi-ai 的标准 auth 机制从 `SILICONFLOW_API_KEY` 解析，是「`@yuxi/config` 是唯一读 `process.env` 的位置」这条约定的例外——凭据解析还要兼顾凭据存储与 OAuth，绕过 pi 反而更易错。已在代码注释说明。\n\n一个踩过的坑：**key 值含非 ASCII 字符时 pi 报 `Cannot convert argument to a ByteString`**（中文进了 Authorization header），错误信息完全不指向根因。",
+            "user": {
+              "name": "zb F"
+            },
+            "createdAt": "2026-07-30T06:04:18.165Z"
+          }
+        ]
+      },
+      "relations": {
+        "nodes": []
+      }
+    }
+  }
+}

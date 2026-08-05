@@ -1,0 +1,41 @@
+{
+  "data": {
+    "issue": {
+      "identifier": "HEU-23",
+      "title": "useAgentStream：SSE 事件归约为消息状态",
+      "description": "**整个前端的心脏。** 把 pi AgentEvent 序列归约为 `messages: AgentMessage[]`，其余组件只做纯渲染。\n\n范围：\n\n* `fetch` + `ReadableStream` 消费 SSE（非 EventSource，需带 Authorization 头）\n* 事件归约：`message_start/update/end` · `tool_execution_*` · `turn_*` · `agent_*` · `persisted` · `error`\n* 断线重连与 `persisted.seq` 幂等去重\n* abort 调用\n* 类型来源：`import type` 自 `@earendil-works/pi-ai` / `pi-agent-core`（devDependency，仅类型，零运行时依赖）\n\n替代 v0.4 `AgentChatComponent.vue` / `AgentMessageComponent.vue` 中手写的 chunk 拼接逻辑（全部废弃）。\n\n验收：文本流式增量渲染无抖动/丢字；工具调用状态正确流转；网络中断后重连不产生重复消息。",
+      "state": {
+        "name": "Done"
+      },
+      "assignee": {
+        "name": "zb F"
+      },
+      "parent": null,
+      "labels": {
+        "nodes": []
+      },
+      "comments": {
+        "nodes": [
+          {
+            "body": "主体完成，见 `src/composables/useAgentStream.js` + `src/apis/chat_api.js`（commit `0015eb7`）。\n\n**已完成**：`fetch` + `ReadableStream` 消费 SSE（需要 POST，所以不用 EventSource）；帧解析容忍 CRLF；AgentEvent 归约为 `messages` + `toolCalls`；`abort` 调用。真实模型实测通过：2 轮 turn、25 个 `message_update` 流式增量、工具状态正确流转、零错误。\n\n**剩余**：\n- **断线重连与 `persisted.seq` 幂等去重未做** —— 后端还没发 `persisted` 事件（阻塞于 HEU-10），验收里「网络中断后重连不产生重复消息」尚未满足\n- **仍是 JS，未 `import type` 自 pi 包**（按决策先用 JS 跑通，TS 化独立任务）\n\n两处按 pi `types.d.ts` 核实过的关键契约（文档有歧义，值得记录）：\n1. **`message_update` 带完整的部分 `message`**，不只是 `assistantMessageEvent` delta → 归约直接覆盖整条消息，不用自己拼 delta，省掉了 v0.4 里最易错的那块逻辑。\n2. `tool_execution_end` 的 **`isError` 在事件顶层**，不在 `result` 里（我第一版写错，已修）。\n\n另外：`text_start` / `text_end` / `toolcall_*` 是 pi-ai 层的 `assistantMessageEvent` 子类型（嵌在 `message_update` 内），不是顶层 `AgentEvent`。归约直接覆盖整条 `message` 因此不受影响。",
+            "user": {
+              "name": "zb F"
+            },
+            "createdAt": "2026-07-30T06:05:21.312Z"
+          }
+        ]
+      },
+      "relations": {
+        "nodes": [
+          {
+            "type": "related",
+            "relatedIssue": {
+              "identifier": "HEU-10",
+              "title": "agents/session：Agent 装配、消息落库与会话回灌"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
