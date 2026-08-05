@@ -148,7 +148,7 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
    （`agent-harness.js`）。所以**订阅回调里绝不能做网络 I/O**——`await stream.writeSSE(...)`
    在客户端不读流时会因背压永不 resolve，直接卡住整个 harness。`routes/chat.ts` 因此把回调
    改成同步入队（`http/sse-queue.ts`），真正的写出交给独立的 pump 循环，队列溢出只断开
-   那一个连接。这条是本轮最贵的教训，见「踩过的坑」第 14 条。
+   那一个连接。这条是本轮最贵的教训，见「踩过的坑」第 15 条。
 6. **`AgentHarness` 没有 `setSystemPrompt()`**（只有 `setModel` / `setTools` / `setResources` /
    `setThinkingLevel` / `setStreamOptions`）。常驻实例要在每个新 run 使用最新提示，正确挂点是
    `before_agent_start` hook 的 `BeforeAgentStartResult.systemPrompt`，不是重建实例；

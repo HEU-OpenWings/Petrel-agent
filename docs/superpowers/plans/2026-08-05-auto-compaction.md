@@ -1981,7 +1981,7 @@ user 消息。"
           /**
            * 同步入队，绝不能在这里 await stream.writeSSE：pi 的订阅回调被串行
            * await 且没有超时，客户端不读流时会因背压永不 resolve，卡住整个 harness
-           * （CLAUDE.md 坑 14）。真正的写出交给 queue.pump()。
+           * （CLAUDE.md 坑 15）。真正的写出交给 queue.pump()。
            */
           onNotice: (notice) => {
             queue.push({ event: "compaction", data: JSON.stringify(toCompactionFrame(notice)) });

@@ -315,7 +315,7 @@ send(message, { onNotice }):
 - **`followUp` 分支不压缩**：正在跑，`phase !== "idle"`，`compact()` 必抛。
   这一轮的上下文压力留给下一轮的 pre-prompt 判定。
 - **前端信号**：`onNotice` 是**同步**回调，route 把它 push 进已有的 `sse-queue`
-  （不能 `await stream.writeSSE`，CLAUDE.md 坑 14）。压缩结束时 pi 自己会发
+  （不能 `await stream.writeSSE`，CLAUDE.md 坑 15）。压缩结束时 pi 自己会发
   `session_compact` 事件，经现有的 `harness.subscribe` 透传，前端能拿到摘要内容；
   `onNotice` 只负责「开始」「失败」「被守卫阻塞」这三个 pi 不给的信号。
 
