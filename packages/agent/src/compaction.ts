@@ -99,9 +99,11 @@ async function estimateForDecision(session: Session, messages: AgentMessage[]): 
   const latest = compactions.at(-1);
   if (!latest) return estimate.tokens;
 
+  // noUncheckedIndexedAccess 要求的边界检查，不是给 union 类型做防御：
+  // lastUsageIndex 来自 estimateContextTokens 自己的返回值，必然落在 messages 范围内。
   const usageMessage = messages[estimate.lastUsageIndex];
-  const usageTimestamp = (usageMessage as { timestamp?: number }).timestamp ?? 0;
-  if (usageTimestamp > Date.parse(latest.timestamp)) return estimate.tokens;
+  if (!usageMessage) return estimate.tokens;
+  if (usageMessage.timestamp > Date.parse(latest.timestamp)) return estimate.tokens;
 
   return pureEstimate(messages);
 }

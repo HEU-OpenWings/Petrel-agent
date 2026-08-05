@@ -306,4 +306,28 @@ describe("maybeCompact 的抗抖动守卫", () => {
 
     expect(state.ineffectiveStreak).toBe(0);
   });
+
+  /**
+   * 覆盖 ineffectiveStreak 递增分支本身（上面两条用例都是直接赋值构造前置状态，
+   * 从未真的走过 `+1` 那条路）。刻意把会话长度只造得比 pi 的 keepRecentTokens
+   * （硬编码 20000）多一点：压缩后 retainedTail 几乎保留全部内容，回收比例必然
+   * 低于 REQUIRED_RECLAIM_RATIO（实测 pureBefore=22000、pureAfter≈20003，回收
+   * ≈9.1%）。`absoluteCap` 调到很小以确保能过阈值判定——实际会话本身没到默认
+   * 阈值 32000，不然阈值判定会先挡在前面，走不到这条低回收压缩。
+   */
+  it("低回收的一次压缩把 ineffectiveStreak 从 0 加到 1", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 22_000);
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(harness, session, state, { ...POLICY, absoluteCap: 1000 }, {});
+
+    expect(outcome.kind).toBe("compacted");
+    if (outcome.kind !== "compacted") return;
+    const reclaimed = (outcome.pureBefore - outcome.pureAfter) / outcome.pureBefore;
+    // 哨兵：保证这条用例真的走在低回收路径上。pi 若改了 keepRecentTokens，
+    // 这里会先失败并指明要重新校准会话长度，而不是让下面那条断言静默失去意义
+    expect(reclaimed).toBeLessThan(0.1);
+    expect(state.ineffectiveStreak).toBe(1);
+  });
 });
