@@ -25,10 +25,7 @@ export function createPgSession(db: Database, sessionId: string, createdAt: Date
 export interface CreateHarnessOptions {
   /** 会话状态的载体。生产用 createPgSession()，测试用 InMemorySessionRepo。 */
   session: Session;
-  /**
-   * 系统提示。只在装配时生效——AgentHarness 没有 setSystemPrompt()，
-   * 常驻实例被复用时后续请求传的 systemPrompt 不会生效（见 spec §5）。
-   */
+  /** 初始系统提示；常驻实例后续可通过 before_agent_start hook 按 run 覆盖。 */
   systemPrompt?: string;
   tools?: AgentHarnessTool<undefined>[];
   /** 模型集合，测试注入 faux provider。 */
@@ -50,8 +47,7 @@ export interface CreateHarnessOptions {
  * 包一层 createHarness，把 faux provider 的 models/model 铺在调用方 options 之上，
  * 所以它必须能盖掉 modelId。
  *
- * 导出它是因为 harness 常驻：`AgentHarness` 有 `setModel()`，所以调用方能在复用
- * 实例时按新的 modelId 换模型（与 systemPrompt 不同，那个只能在装配时给）。
+ * 导出它是因为 harness 常驻：调用方可在复用实例时按新的 modelId 调 `setModel()`。
  */
 export function resolveModel(options: { model?: Model<Api>; modelId?: string }): Model<Api> {
   if (options.model) return options.model;

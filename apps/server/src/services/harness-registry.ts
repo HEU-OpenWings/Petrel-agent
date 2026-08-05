@@ -3,6 +3,7 @@ import {
   createMemorySession,
   createPgSession,
   createHarness as createRealHarness,
+  DEFAULT_SYSTEM_PROMPT,
   resolveModel,
 } from "@petrel/agent";
 import { createSessionRepository, type Database } from "@petrel/database";
@@ -41,6 +42,10 @@ const DEFAULT_MAX_SESSIONS = 200;
 interface Entry {
   harness: AgentHarness;
   session: Session;
+  /** 下一次新 run 使用的系统提示；before_agent_start hook 会读取它。 */
+  systemPrompt: string;
+  /** 当前 harness 对应的模型偏好；undefined 表示跟随系统默认。 */
+  modelId: string | undefined;
   /** 有几个 SSE 连接正在用它。> 0 时不回收。 */
   refCount: number;
   lastUsedAt: number;
@@ -59,9 +64,8 @@ interface Entry {
 /**
  * 装配 harness 时才用得上的选项。
  *
- * 两者的生效范围不同，别混：`systemPrompt` **只在首次装配时生效**
- * （`AgentHarness` 没有 `setSystemPrompt()`），而 `modelId` 在复用实例时
- * 也能生效（`setModel()` 存在），见 `acquire()`。
+ * 两者都能在复用实例时更新：systemPrompt 由 `before_agent_start` hook
+ * 在每个新 run 开始时注入，modelId 通过 `setModel()` 更新，见 `acquire()`。
  */
 export interface HarnessAssemblyOptions {
   systemPrompt?: string;
@@ -142,8 +146,8 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       ? await options.createHarness(sessionId)
       : (() => {
           const session = createPgSession(db, sessionId, createdAt);
-          // systemPrompt 只有这一次机会生效：AgentHarness 没有 setSystemPrompt()。
-          // modelId 不同：harness 有 setModel()，所以复用实例时还能换，见 acquire()
+          // 首次装配先给初始值；缓存命中后的 systemPrompt 由 before_agent_start
+          // hook 注入，modelId 通过 setModel() 更新，见 acquire()。
           return {
             harness: createRealHarness({
               session,
@@ -158,6 +162,8 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     const entry: Entry = {
       harness,
       session,
+      systemPrompt: assembly.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      modelId: assembly.modelId,
       refCount: 0,
       lastUsedAt: now(),
       running: false,
@@ -175,6 +181,9 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         entry.lastUsedAt = now();
       }
     });
+    // AgentHarness 没有 setSystemPrompt()，但这个 hook 会在每个新 run 开始时执行。
+    // 读取 entry 上的可变值，让常驻实例复用时也能应用用户刚保存的偏好。
+    harness.on("before_agent_start", () => ({ systemPrompt: entry.systemPrompt }));
 
     return entry;
   }
@@ -199,8 +208,13 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     if (inFlight) return inFlight;
 
     const promise = (async () => {
-      if (entries.size >= maxSessions && !evictOldestIdle()) {
-        logger.error({ sessionId, size: entries.size }, "harness registry at capacity");
+      // building 里的实例已经占用了容量名额。不同 sessionId 的并发装配会在
+      // 第一个 await 处交错；只看 entries.size 会让它们全部通过检查并突破上限。
+      if (entries.size + building.size >= maxSessions && !evictOldestIdle()) {
+        logger.error(
+          { sessionId, size: entries.size, building: building.size },
+          "harness registry at capacity",
+        );
         throw new HarnessRegistryError("服务繁忙，请稍后重试（会话容量已满）", "capacity");
       }
       const row = await sessionRepo.findById(sessionId, userId);
@@ -282,18 +296,20 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       held.refCount += 1;
       held.lastUsedAt = now();
 
-      // 复用已有实例时按请求里的 modelId 换模型。systemPrompt 换不了
-      // （没有 setSystemPrompt），但模型可以——用户在设置里改了模型，
-      // 不该等到实例被回收才生效。
+      // systemPrompt 由 before_agent_start hook 在下一次新 run 开始时读取。
+      // 当前正在跑时这里只更新下一轮的值，不会改变已开始的 run（含 followUp）。
+      held.systemPrompt = assembly.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+
+      // 复用已有实例时按请求里的 modelId 换模型。undefined 也是一个明确状态：
+      // 表示用户清空了显式选择、恢复系统默认，不能直接跳过。
       //
       // 只在确实变化时调：setModel 会往会话树写一条 model_change 条目，
       // 每轮无脑调会写一堆无用条目。
       // 正在跑时跳过：当轮（含 followUp 排队的消息）已经在用旧模型了。
-      if (assembly.modelId !== undefined && !held.running) {
+      if (!held.running && held.modelId !== assembly.modelId) {
         const desired = resolveModel({ modelId: assembly.modelId });
-        if (held.harness.getModel().id !== desired.id) {
-          await held.harness.setModel(desired);
-        }
+        await held.harness.setModel(desired);
+        held.modelId = assembly.modelId;
       }
 
       let released = false;
@@ -335,7 +351,9 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
                       held.lastUsedAt = now();
                     });
                 });
-              return outcome;
+              // 只等 followUp 完成入队，不把 waitForIdle 串进 held.chain；否则第三个
+              // 并发请求会等整轮结束后才进入临界区，无法加入当前 run。
+              return undefined;
             }
             held.running = true;
             outcome = held.harness

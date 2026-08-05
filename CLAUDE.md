@@ -150,9 +150,9 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
    改成同步入队（`http/sse-queue.ts`），真正的写出交给独立的 pump 循环，队列溢出只断开
    那一个连接。这条是本轮最贵的教训，见「踩过的坑」第 14 条。
 6. **`AgentHarness` 没有 `setSystemPrompt()`**（只有 `setModel` / `setTools` / `setResources` /
-   `setThinkingLevel` / `setStreamOptions`）。systemPrompt 只在装配时生效，常驻实例被复用时
-   请求里新传的会被静默忽略（`chat.test.ts` 有用例钉住）。要每轮改系统提示，正确挂点是
-   `before_agent_start` hook 的 `BeforeAgentStartResult.systemPrompt`，不是重建实例。
+   `setThinkingLevel` / `setStreamOptions`）。常驻实例要在每个新 run 使用最新提示，正确挂点是
+   `before_agent_start` hook 的 `BeforeAgentStartResult.systemPrompt`，不是重建实例；
+   `harness-registry.ts` 用可变的 entry 状态给该 hook 提供本轮值。
 7. **`harness.compact()` 只能手动调用、硬编码 `DEFAULT_COMPACTION_SETTINGS`、且要求
    `phase === "idle"`**。文档里说的「超阈值自动触发」与 `settings.json` 都是 pi CLI 层的实现，
    harness 里没有。另外 **`phase` 是私有字段没有 getter**，要判断是否在跑只能自己订阅

@@ -513,11 +513,7 @@ describe("POST /api/chat systemPrompt", () => {
     expect(seen).toEqual([DEFAULT_SYSTEM_PROMPT]);
   });
 
-  /**
-   * AgentHarness 没有 setSystemPrompt()，常驻实例被复用时第二次的提示不生效。
-   * 这条用例存在的意义就是把这个行为钉住，否则将来有人传了新提示却查不出为什么没用
-   */
-  it("systemPrompt 只在会话首次装配时生效", async () => {
+  it("复用常驻实例时使用最新的 systemPrompt", async () => {
     const seen: (string | undefined)[] = [];
     faux.setResponses([
       (context) => {
@@ -528,13 +524,19 @@ describe("POST /api/chat systemPrompt", () => {
         seen.push(context.systemPrompt);
         return fauxAssistantMessage([fauxText("二")]);
       },
+      (context) => {
+        seen.push(context.systemPrompt);
+        return fauxAssistantMessage([fauxText("三")]);
+      },
     ]);
 
     await readAll(await postChat({ message: "一", sessionId: SESSION_ID, systemPrompt: "第一个提示" }));
     await readAll(await postChat({ message: "二", sessionId: SESSION_ID, systemPrompt: "第二个提示" }));
+    await readAll(await postChat({ message: "三", sessionId: SESSION_ID }));
 
     expect(seen[0]).toBe("第一个提示");
-    expect(seen[1]).toBe("第一个提示");
+    expect(seen[1]).toBe("第二个提示");
+    expect(seen[2]).toBe(DEFAULT_SYSTEM_PROMPT);
   });
 });
 

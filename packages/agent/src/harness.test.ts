@@ -151,8 +151,7 @@ describe("createHarness 的模型解析", () => {
     expect(harness.getModel().id).toBe(faux.getModel().id);
   });
 
-  // harness 常驻，所以模型能在复用实例时换掉——这是 systemPrompt 做不到的
-  // （没有 setSystemPrompt），harness-registry 的 acquire 依赖这条
+  // harness 常驻，所以模型要能在复用实例时换掉，harness-registry 的 acquire 依赖这条
   it("setModel 能换掉已装配实例的模型", async () => {
     const harness = createHarness({ session: await memorySession() });
     expect(harness.getModel().id).toBe(DEFAULT_MODEL_ID);

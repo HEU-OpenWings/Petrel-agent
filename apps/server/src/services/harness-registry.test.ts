@@ -1,5 +1,5 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import { createHarness, createMemorySession } from "@petrel/agent";
+import { createHarness, createMemorySession, resolveModel } from "@petrel/agent";
 import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createHarnessRegistry, HarnessRegistryError } from "./harness-registry.ts";
@@ -67,6 +67,19 @@ describe("createHarnessRegistry", () => {
 
     expect(second.harness).toBe(first.harness);
     expect(factory.created).toBe(1);
+  });
+
+  it("清空显式模型偏好后恢复系统默认模型", async () => {
+    const registry = createHarnessRegistry({ db });
+    const selected = await registry.acquire(SESSION_ID, TEST_USER_ID, "你好", {
+      modelId: "deepseek-ai/DeepSeek-V3",
+    });
+    expect(selected.harness.getModel().id).toBe("deepseek-ai/DeepSeek-V3");
+    selected.release();
+
+    const restored = await registry.acquire(SESSION_ID, TEST_USER_ID, "再问");
+    expect(restored.harness.getModel().id).toBe(resolveModel({}).id);
+    restored.release();
   });
 
   it("并发 acquire 同一个新会话时只装配一次，两者拿到同一个实例", async () => {
@@ -162,6 +175,42 @@ describe("createHarnessRegistry", () => {
     await expect(rejection).rejects.toMatchObject({ kind: "capacity" });
   });
 
+  it("并发装配不同会话时仍然守住容量上限", async () => {
+    const factory = fauxFactory();
+    let notifyBuildStarted: () => void = () => undefined;
+    let unblockBuild: () => void = () => undefined;
+    const buildStarted = new Promise<void>((resolve) => {
+      notifyBuildStarted = resolve;
+    });
+    const buildGate = new Promise<void>((resolve) => {
+      unblockBuild = resolve;
+    });
+    const registry = createHarnessRegistry({
+      db,
+      maxSessions: 1,
+      createHarness: async (sessionId) => {
+        notifyBuildStarted();
+        await buildGate;
+        return factory.create(sessionId);
+      },
+    });
+    const second = "22222222-2222-2222-2222-222222222222";
+
+    const firstPromise = registry.acquire(SESSION_ID, TEST_USER_ID, "第一个会话");
+    await buildStarted;
+    const secondPromise = registry.acquire(second, TEST_USER_ID, "第二个会话");
+    try {
+      await expect(secondPromise).rejects.toMatchObject({ kind: "capacity" });
+    } finally {
+      unblockBuild();
+    }
+
+    const first = await firstPromise;
+    first.release();
+    expect(registry.size()).toBe(1);
+    expect(factory.created).toBe(1);
+  });
+
   it("容量到顶但有 idle 实例时，淘汰最旧的那个", async () => {
     const factory = fauxFactory();
     const time = clock();
@@ -200,8 +249,8 @@ describe("createHarnessRegistry", () => {
     expect(factory.created).toBe(2);
   });
 
-  it("运行中的第二条消息走 followUp，在同一个 run 内被消化", async () => {
-    // 慢速吐字，保证第二个 send 进临界区时第一轮真的还在跑
+  it("运行中的后续消息都走 followUp，在同一个 run 内被消化", async () => {
+    // 慢速吐字，保证后续 send 进临界区时第一轮真的还在跑
     const factory = fauxFactory(true);
     const registry = createHarnessRegistry({ db, createHarness: factory.create });
 
@@ -213,13 +262,15 @@ describe("createHarnessRegistry", () => {
 
     const first = handle.send("第一个问题");
     const second = handle.send("第二个问题");
+    const third = handle.send("第三个问题");
     // send() 现在自己会等到整轮真正结束才 resolve（followUp 分支内部等了 waitForIdle）
-    await Promise.all([first, second]);
+    await Promise.all([first, second, third]);
     handle.release();
 
     const text = JSON.stringify(await handle.session.getEntries());
     expect(text).toContain("第一个问题");
     expect(text).toContain("第二个问题");
+    expect(text).toContain("第三个问题");
     // 这条才是真正区分 followUp 与 prompt 的断言：followUp 的消息在同一个 run 内，
     // 所以整个过程只有一次 agent_end。两条都走 prompt 的话这里会是 2
     expect(types.filter((type) => type === "agent_end")).toHaveLength(1);

@@ -107,8 +107,8 @@ export const chat = new Hono<AppEnv>()
     // 放在 streamSSE 之外：一旦开了流就只能在流里报错了。
     //
     // model 是前端从 stores/preferences 读出来的默认模型，校验已在 parseChatRequest
-    // 做过，到这里一定在注册表里。它与 systemPrompt 的生效范围不同：模型在复用
-    // 已有实例时也能换（harness 有 setModel），系统提示只在首次装配时生效。
+    // 做过，到这里一定在注册表里。缓存命中时，模型通过 setModel 更新，
+    // systemPrompt 通过 before_agent_start hook 在下一次新 run 开始时注入。
     const handle = await getRegistry()
       .acquire(sessionId, c.get("currentUser").id, message, { systemPrompt, modelId: model })
       .catch(toHttpException);

@@ -62,7 +62,7 @@ filePath），官方文档明说 `models don't always do this`。服务端不会
 | --- | --- | --- |
 | 数据模型 | 新建 `session_entries`，**废弃 `messages` 表** | 树模型与线性 `seq` 模型不兼容，硬塞会同时破坏两边 |
 | 旧数据 | 直接丢弃重建，**不写数据搬运**（schema migration 照常有：建 `session_entries` + 删 `messages`） | dev 库里是测试数据 |
-| 请求里的 `systemPrompt` | 只在**首次装配**该会话的 harness 时生效，缓存命中时忽略 | `AgentHarness` 没有 `setSystemPrompt()`，见 §5 |
+| 请求里的 `systemPrompt` | 每个新 run 使用该会话最新请求值 | 通过 `before_agent_start` hook 注入，见 §5 |
 | `PgSessionStorage` 放哪 | `packages/agent`，新增 `agent → database` 边 | 它是 pi 接口的实现，按「pi 接线只在 agent/ai」就该在这；`database` 更底层，无环 |
 | harness 生命周期 | 按 `sessionId` 缓存常驻实例 | 换来「关页面不丢回答」与并发天然串行化 |
 | 连接断开 | **不 abort**，跑完并落库 | 断线/关页面不再丢回答 |
@@ -200,14 +200,10 @@ SSE 事件体仍是 pi 的 `AgentEvent` 原样透传，前端 `useAgentStream` �
 **事件推送范围**：`subscribe` 是会话级的，两个连接都会看到彼此那一轮的事件。
 **有意接受**：它们本来就是同一会话的消息，前端按消息 id 归约，多标签页因此自动同步。
 
-**`systemPrompt` 的作用范围**：`AgentHarness` 只在构造时接受 `systemPrompt`，**没有
-`setSystemPrompt()`**（`agent-harness.d.ts` 已核对；它只有 `setModel` / `setTools` /
-`setResources` / `setThinkingLevel` / `setStreamOptions`）。所以请求体里的 `systemPrompt`
-只在该会话首次装配 harness 时生效，缓存命中时被忽略。
-这是常驻实例带来的行为变化，必须在 `chat.test.ts` 里显式钉住一条用例，
-否则将来有人传了不同的 systemPrompt 却查不出为什么没生效。
-（若 B/C 需要每轮改系统提示，正确的挂点是 `before_agent_start` hook 的
-`BeforeAgentStartResult.systemPrompt`，不是重建实例。）
+**`systemPrompt` 的作用范围**：`AgentHarness` 没有 `setSystemPrompt()`，但
+`before_agent_start` hook 可返回 `BeforeAgentStartResult.systemPrompt`。registry 在 entry 上
+保存最新请求值，并在每个新 run 开始时通过该 hook 注入；缓存命中不再忽略更新。
+运行中的 followUp 仍沿用当前 run 的提示，下一次新 run 才读取新值。
 
 **实例回收**：`settled` 后开始计 idle，超 TTL（5 分钟）移除；`refCount > 0` 不回收；
 会话被删除或用户被禁用时立即 `abort` + `evict`。

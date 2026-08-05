@@ -401,11 +401,10 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
    （snapshot 链会断）。重新生成时 drizzle-kit 会因为「`messages` 消失 + `session_entries`
    出现」而弹交互提示问是不是 rename，非交互环境直接崩——**分两步生成**可以绕开：
    先只加新表（`0004_add_session_entries`），再只删旧表（`0005_drop_messages`）。
-2. **`modelId` 与常驻实例**。偏好那轮让 `/api/chat` 每轮带 `model`，而本轮 harness 是常驻的。
-   两者的生效范围不同：**`setModel()` 存在，所以模型能在复用实例时换**（`acquire()` 里只在
-   确实变化且当前不在跑时调，避免每轮往会话树写无用的 `model_change` 条目）；
-   而 `systemPrompt` 没有对应的 setter，只在首次装配时生效。这条差异在
-   `CLAUDE.md` 的 pi 事件契约一节与 `HarnessAssemblyOptions` 的注释里都写明了。
+2. **偏好与常驻实例**。偏好那轮让 `/api/chat` 每轮带 `model` 与 `systemPrompt`，而本轮 harness
+   是常驻的。模型在偏好确实变化且当前不在跑时调 `setModel()`；`undefined` 也表示明确恢复
+   系统默认。systemPrompt 没有 setter，改由 `before_agent_start` hook 在每个新 run 注入，
+   因此两种偏好都不必等实例回收才生效。
 
 ## 4. 待办
 
