@@ -1,4 +1,4 @@
-import { type AgentMessage, createAgent } from "@petrel/agent";
+import { type AgentMessage, createAgent, listModels } from "@petrel/agent";
 import { getDb } from "@petrel/database";
 import { logger } from "@petrel/logger";
 import { Hono } from "hono";
@@ -19,7 +19,12 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * 先报它也让「message 不能为空」这个既有契约不受新增的 sessionId 校验影响。
  */
 function parseChatRequest(body: unknown) {
-  const fields = body as { message?: unknown; sessionId?: unknown; systemPrompt?: unknown } | null;
+  const fields = body as {
+    message?: unknown;
+    sessionId?: unknown;
+    systemPrompt?: unknown;
+    model?: unknown;
+  } | null;
 
   const message = typeof fields?.message === "string" ? fields.message.trim() : "";
   if (!message) {
@@ -38,7 +43,22 @@ function parseChatRequest(body: unknown) {
   const rawSystemPrompt = fields?.systemPrompt;
   const systemPrompt = typeof rawSystemPrompt === "string" ? rawSystemPrompt : undefined;
 
-  return { message, sessionId, systemPrompt };
+  // model 同样可选。但传了一个不认识的 id 时直接 400，不静默回落到默认模型——
+  // 用户在设置里选的模型被悄悄换掉，账单和输出都变了却没有任何信号
+  const rawModel = fields?.model;
+  const model = typeof rawModel === "string" && rawModel !== "" ? rawModel : undefined;
+  if (model !== undefined && !listModels().some((item) => item.id === model)) {
+    // 附上可选值：只说「未注册」的话，客户端不知道该改成什么。
+    // 这条是客户端实际会看到的那一条——createAgent 里 resolveModel 的同类错误
+    // 因为本函数先校验过而不可达
+    throw new HTTPException(400, {
+      message: `模型未注册：${model}，可选值为 ${listModels()
+        .map((item) => item.id)
+        .join(" | ")}`,
+    });
+  }
+
+  return { message, sessionId, systemPrompt, model };
 }
 
 /**
@@ -83,7 +103,7 @@ export const chat = new Hono<AppEnv>().post("/", async (c) => {
   const body: unknown = await c.req.json().catch(() => {
     throw new HTTPException(400, { message: "请求体必须是 JSON" });
   });
-  const { message, sessionId, systemPrompt } = parseChatRequest(body);
+  const { message, sessionId, systemPrompt, model } = parseChatRequest(body);
 
   const prepared = await prepareSession(sessionId, message, c.get("currentUser").id).catch((error) => {
     if (error instanceof SessionOwnedByOther) {
@@ -95,6 +115,9 @@ export const chat = new Hono<AppEnv>().post("/", async (c) => {
   return streamSSE(c, async (stream) => {
     const agent = createAgent({
       systemPrompt,
+      // 前端从 stores/preferences 读出来的默认模型。校验已在 parseChatRequest 做过，
+      // 到这里一定在注册表里
+      modelId: model,
       // 复用同一个 id 传给 pi，供 provider 做缓存感知
       sessionId,
       // 历史回灌：本轮之前的消息原样进 transcript，模型才看得到上下文

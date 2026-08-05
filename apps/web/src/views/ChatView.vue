@@ -42,7 +42,7 @@
             @keydown="onKeydown"
           >
             <template #actions-right>
-              <span class="model">{{ MODEL_NAME }}</span>
+              <span class="model">{{ modelLabel }}</span>
               <a-tooltip :title="canUseCommands ? '命令' : '清空输入后可使用命令'">
                 <a-button
                   type="text"
@@ -71,17 +71,20 @@ import { fetchMessages } from '@/apis/session_api'
 import { useAgentStream } from '@/composables/useAgentStream'
 import { useCommandPalette } from '@/composables/useCommandPalette'
 import { useLayoutStore } from '@/stores/layout'
+import { usePreferencesStore } from '@/stores/preferences'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
-
-/** packages/ai 目前只注册了这一个模型，所以这里是静态文字而不是下拉 */
-const MODEL_NAME = 'DeepSeek-V3'
 
 const { messages, toolCalls, running, error, send, abort, reset, loadHistory } = useAgentStream()
 
 const layout = useLayoutStore()
+const preferences = usePreferencesStore()
 const sessionStore = useSessionStore()
 const workspace = useWorkspaceStore()
+
+// 模型名以偏好为准：没选时 store 会取后端标了 isDefault 的那个，
+// 不再是写死的字符串（写死的那份已经和 packages/ai 的默认模型对不上了）
+const modelLabel = computed(() => preferences.modelName || '默认模型')
 
 // AppShell 用 key 强制重挂载来实现「新对话」，卸载时必须掐断在飞的请求，
 // 否则旧对话的 SSE 会继续跑到没有组件接收它为止
@@ -92,6 +95,9 @@ onUnmounted(abort)
 // 该接口对不存在的会话刻意返回 200 + 空数组（见 routes/sessions.ts），多打一次而已，
 // 换来的是「新建」和「切换」共用同一条加载路径，不用在两处各维护一套清空逻辑
 onMounted(() => {
+  // 幂等，SettingsModal 打开时也会调一次。拉不到不阻断对话：
+  // model / systemPrompt 保持 null，后端回落到系统默认值
+  void preferences.ensureLoaded()
   if (!sessionStore.currentId) sessionStore.startNew()
   else void loadSession(sessionStore.currentId)
 })
@@ -221,6 +227,14 @@ function onKeydown(event) {
 }
 
 async function submit() {
+  if (running.value) return
+
+  // 首次进入页面时偏好仍可能在加载。先等它结束再读取下面两个字段，避免首条消息
+  // 用系统默认值、后续消息却突然切到用户保存的模型与 prompt。
+  // ensureLoaded() 会吞掉加载错误；失败时字段保持 null，仍可按原契约回退系统默认。
+  await preferences.ensureLoaded()
+
+  // 等待期间可能重复触发 submit；第一个调用开始发送后，其余调用在这里退出。
   const text = draft.value.trim()
   if (!text || running.value) return
 
@@ -230,7 +244,13 @@ async function submit() {
   draft.value = ''
   // 必须在 send 之前自增：在飞的 loadSession 靠它判断「我拉的历史已经过期了」
   sendSeq += 1
-  await send(text, { sessionId })
+  await send(text, {
+    sessionId,
+    // ?? undefined：store 里「跟随系统默认」是 null，而请求体里不该出现
+    // model: null——后端的类型校验只认字符串或不传
+    model: preferences.defaultModel ?? undefined,
+    systemPrompt: preferences.systemPrompt ?? undefined
+  })
 
   // 首条消息会让后端 upsert 出这个会话，刷新列表才能把它显示出来；
   // 后续消息只改 updatedAt，同样要刷新，否则左栏的时间倒序是旧的
@@ -300,7 +320,7 @@ watch(
   position: relative;
 }
 
-// packages/ai 只注册了一个模型，这里是静态标识而不是可点的下拉
+// 显示当前生效的模型名，值来自 stores/preferences
 .model {
   margin-right: 4px;
   color: var(--gray-500);

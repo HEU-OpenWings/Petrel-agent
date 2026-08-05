@@ -1,7 +1,6 @@
-import { getDb } from "@petrel/database";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { AuthError, createAuthService } from "../../services/auth.ts";
+import { AuthError, getAuthService } from "../../services/auth.ts";
 import type { AppEnv } from "../../types.ts";
 import { clearToken, issueToken, resolveUser } from "../middleware/auth.ts";
 
@@ -38,15 +37,6 @@ function toHttpException(error: unknown): never {
 /** 只把这三个字段吐给前端。createdAt 与 disabled 前端用不到 */
 function publicView(user: { id: string; email: string; role: string }) {
   return { id: user.id, email: user.email, role: user.role };
-}
-
-let authService: ReturnType<typeof createAuthService> | undefined;
-
-function getAuthService() {
-  // 登录失败计数存在 service 实例内，整个应用必须复用同一个实例；
-  // 惰性初始化保留「只导入 app 不连接数据库」的测试能力。
-  authService ??= createAuthService(getDb());
-  return authService;
 }
 
 export const auth = new Hono<AppEnv>()

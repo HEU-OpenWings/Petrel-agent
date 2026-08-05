@@ -1,5 +1,5 @@
 import { env } from "@petrel/config";
-import { createUserRepository, type Database, type PublicUser } from "@petrel/database";
+import { createUserRepository, type Database, getDb, type PublicUser } from "@petrel/database";
 import { isUniqueViolation } from "./db-errors.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
 
@@ -7,7 +7,7 @@ import { hashPassword, verifyPassword } from "./password.ts";
 export class AuthError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 401 | 409 | 429,
+    readonly status: 400 | 401 | 403 | 409 | 429,
   ) {
     super(message);
     this.name = "AuthError";
@@ -34,6 +34,13 @@ const LOCKOUT_MS = 15 * 60 * 1000;
  * 不让攻击者知道自己已经打到阈值。
  */
 const LOGIN_FAILED_MESSAGE = "邮箱或密码不正确";
+
+/**
+ * 改密码的失败文案可以具体，不像登录那样必须统一。
+ * 走到这个端点的人已经通过 requireAuth，「当前密码不正确」不泄漏任何身份信息。
+ */
+const CHANGE_PASSWORD_FAILED_MESSAGE = "当前密码不正确";
+const TOO_MANY_ATTEMPTS_MESSAGE = "尝试次数过多，请 15 分钟后再试";
 
 export function createAuthService(db: Database) {
   const userRepo = createUserRepository(db);
@@ -152,6 +159,51 @@ export function createAuthService(db: Database) {
 
       return toPublic(found);
     },
+
+    /**
+     * 改密码。调用方必须已通过 requireAuth，user 是库里查出来的当前用户。
+     *
+     * 注意本方法不会失效其他设备上的旧 token——JWT 无状态，7 天内仍然有效。
+     * 彻底解决要给 users 加 tokenVersion 并让 requireAuth 比对，见 CLAUDE.md「尚未实现」。
+     */
+    async changePassword(user: PublicUser, currentPassword: string, newPassword: string): Promise<void> {
+      const email = user.email;
+      const now = Date.now();
+      pruneExpired(now);
+
+      // 与 login 共用同一个 failures：这个端点同样能无限触发 scrypt（每次 64MB），
+      // 不限流的话并发一拉就是内存耗尽。共用的副作用是改密码连错 5 次也会锁住
+      // 登录 15 分钟——有意的取舍，人已经在登录态里，锁住的只是重新登录
+      if (isLockedOut(email, now)) {
+        throw new AuthError(TOO_MANY_ATTEMPTS_MESSAGE, 429);
+      }
+
+      // 长度校验排在验旧密码之前：新密码不合规时不该先白跑一次 scrypt，
+      // 也不该把这种输入错误计进失败次数
+      if (newPassword.length < PASSWORD_MIN_LENGTH) {
+        throw new AuthError(`密码至少 ${PASSWORD_MIN_LENGTH} 位`, 400);
+      }
+      if (newPassword.length > PASSWORD_MAX_LENGTH) {
+        throw new AuthError(`密码不能超过 ${PASSWORD_MAX_LENGTH} 位`, 400);
+      }
+
+      // findById 只返回 PublicUser，拿不到哈希，所以按 email 查
+      const found = await userRepo.findByEmail(email);
+      // requireAuth 刚确认过这个用户存在，查不到只能是并发删号
+      if (!found) {
+        throw new AuthError(CHANGE_PASSWORD_FAILED_MESSAGE, 401);
+      }
+
+      if (!(await verifyPassword(currentPassword, found.passwordHash))) {
+        recordFailure(email, now);
+        // 401 留给 requireAuth 表示登录态失效；这里用户已经通过会话认证，
+        // 只是没有提供正确的当前密码，用 403 让前端能可靠地区分两种情况。
+        throw new AuthError(CHANGE_PASSWORD_FAILED_MESSAGE, 403);
+      }
+
+      failures.delete(email);
+      await userRepo.setPasswordHash(found.id, await hashPassword(newPassword));
+    },
   };
 }
 
@@ -163,4 +215,21 @@ function toPublic(user: PublicUser & { passwordHash: string }): PublicUser {
     disabled: user.disabled,
     createdAt: user.createdAt,
   };
+}
+
+/**
+ * 全应用共用一个实例。
+ *
+ * 失败计数存在实例内部（上面的 failures），两个路由各建一个实例就是两套计数器：
+ * 改密码那边打满 5 次，登录这边毫无察觉——而它挡的正是「无限触发 scrypt
+ * 导致内存耗尽」，绕过去就没有意义了。
+ *
+ * 惰性初始化保留「只导入 app 不连接数据库」的测试能力：getDb() 会建连接池，
+ * 在模块顶层调用会让校验类用例也必须有一个真数据库。
+ */
+let instance: ReturnType<typeof createAuthService> | undefined;
+
+export function getAuthService(): ReturnType<typeof createAuthService> {
+  instance ??= createAuthService(getDb());
+  return instance;
 }

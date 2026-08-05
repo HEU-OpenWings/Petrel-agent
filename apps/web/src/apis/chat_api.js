@@ -29,14 +29,17 @@ function parseFrame(frame) {
 /**
  * 发起一次对话并逐帧回调。
  *
- * @param {{ message: string, sessionId: string, systemPrompt?: string, signal?: AbortSignal }} params
+ * model 与 systemPrompt 来自 stores/preferences，缺省时后端回落到系统默认值。
+ * JSON.stringify 会丢掉值为 undefined 的键，所以不传等于没这个字段。
+ *
+ * @param {{ message: string, sessionId: string, systemPrompt?: string, model?: string, signal?: AbortSignal }} params
  * @param {(frame: { event: string, data: any }) => void} onFrame
  */
-export async function streamChat({ message, sessionId, systemPrompt, signal }, onFrame) {
+export async function streamChat({ message, sessionId, systemPrompt, model, signal }, onFrame) {
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, sessionId, systemPrompt }),
+    body: JSON.stringify({ message, sessionId, systemPrompt, model }),
     signal
   })
 

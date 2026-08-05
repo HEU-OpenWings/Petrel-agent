@@ -120,3 +120,18 @@ describe("listAll", () => {
     expect(list[0]).not.toHaveProperty("passwordHash");
   });
 });
+
+describe("setPasswordHash", () => {
+  it("换掉哈希", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+
+    await expect(repo.setPasswordHash(user.id, "new")).resolves.toBe(true);
+
+    const found = await repo.findByEmail("a@x.io");
+    expect(found?.passwordHash).toBe("new");
+  });
+
+  it("用户不存在时返回 false", async () => {
+    await expect(repo.setPasswordHash("00000000-0000-0000-0000-0000000000ff", "new")).resolves.toBe(false);
+  });
+});
