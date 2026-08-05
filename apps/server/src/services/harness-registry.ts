@@ -507,11 +507,27 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       await entry.harness.abort();
     },
 
-    /** 会话被删除或用户被禁用时调用，否则内存里还有个活实例往已删会话写。 */
+    /**
+     * 会话被删除或用户被禁用时调用，否则内存里还有个活实例往已删会话写。
+     *
+     * 顺序有讲究：先置 retired（让 send() 的临界区在压缩结束后拒绝发起 prompt），
+     * 再摘除 Map（不让新请求复用），最后等压缩落地。
+     *
+     * pi 的压缩不可取消，所以这里只能等它自己跑完；等的过程中的任何错误都吞掉——
+     * 会话行已经删了，`session_entries.session_id` 是 cascade，appendCompaction
+     * 必然撞外键约束，那不是调用方需要知道的失败。
+     */
     async evict(sessionId: string): Promise<void> {
       const entry = entries.get(sessionId);
       if (!entry) return;
+      entry.retired = true;
       entries.delete(sessionId);
+      if (entry.compaction) {
+        await entry.compaction.catch((error: unknown) => {
+          logger.warn({ err: error, sessionId }, "会话已被 evict，进行中的压缩以失败收场");
+          return undefined;
+        });
+      }
       await entry.harness.abort();
     },
 

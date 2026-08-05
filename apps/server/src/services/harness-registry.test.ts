@@ -488,7 +488,9 @@ describe("createHarnessRegistry 的自动压缩", () => {
     // 但 send() 之后 handle 上的 harness 与 registry 里的是同一个实例，
     // 所以这里改的是同一份状态——registry 需要暴露一个只给测试用的取状态方法：
     // 见实现步骤里 __stateForTest 的说明
-    registry.__stateForTest(SESSION_ID)!.ineffectiveStreak = 2;
+    const state = registry.__stateForTest(SESSION_ID);
+    if (!state) throw new Error("测试前置条件不成立：实例应当已在 registry 里");
+    state.ineffectiveStreak = 2;
     await handle.send("问题", { onNotice: (notice) => notices.push(notice) });
     handle.release();
 
@@ -523,5 +525,54 @@ describe("createHarnessRegistry 的自动压缩", () => {
     handle.release();
 
     expect(JSON.stringify(await handle.session.getEntries())).not.toContain("不该出现的回答");
+  });
+
+  /**
+   * DELETE /api/sessions/:id 是「先删库、再 evict」，而 session_entries.session_id
+   * 是 onDelete: "cascade"。压缩期间删会话：abort 立刻返回（压缩停不下来），
+   * 摘要跑完 appendCompaction 撞外键约束，接着还会对着一个已删的会话发起 prompt。
+   */
+  it("压缩期间 evict 后不再发起 prompt，且 evict 本身不抛", async () => {
+    const factory = compactionFactory();
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    factory.faux.setResponses([
+      async () => {
+        await summaryGate;
+        return fauxAssistantMessage([fauxText("## Goal\n摘要")]);
+      },
+      fauxAssistantMessage([fauxText("不该出现的回答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    const sending = handle.send("问题");
+    const evicting = registry.evict(SESSION_ID);
+    releaseSummary();
+    await expect(evicting).resolves.toBeUndefined();
+    await sending.catch(() => undefined);
+    handle.release();
+
+    expect(JSON.stringify(await handle.session.getEntries())).not.toContain("不该出现的回答");
+    expect(registry.size()).toBe(0);
+  });
+
+  it("evict 之后同一会话的新请求拿到新实例", async () => {
+    const factory = compactionFactory();
+    factory.faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("回答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const first = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+    first.release();
+    await registry.evict(SESSION_ID);
+
+    const second = await registry.acquire(SESSION_ID, TEST_USER_ID, "再问");
+    second.release();
+
+    expect(second.harness).not.toBe(first.harness);
   });
 });

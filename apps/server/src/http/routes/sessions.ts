@@ -93,9 +93,9 @@ export const sessions = new Hono<AppEnv>()
       throw new HTTPException(404, { message: "会话不存在" });
     }
     // 会话已经删掉了：清内存实例是收尾，不是这次请求成功与否的一部分。
-    // evict() 内部先摘除 Map 里的条目再 abort，所以就算这里抛错，常驻实例
-    // 也已经不在 registry 里、不会继续往这个已删的会话写——失败不该让客户端
-    // 看到「删除失败」（会话其实已经没了，重试只会撞 404，体验更乱）
+    // evict() 会先置 retired 再摘除 Map，所以就算这里抛错，那个实例也既不会被
+    // 后续请求复用，也不会在压缩结束后继续发起新一轮——失败不该让客户端看到
+    // 「删除失败」（会话其实已经没了，重试只会撞 404，体验更乱）
     await getRegistry()
       .evict(id)
       .catch((error: unknown) => {
