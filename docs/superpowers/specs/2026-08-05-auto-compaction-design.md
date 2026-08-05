@@ -426,7 +426,7 @@ Codex 那种「压缩失败就整轮丢弃、用户消息压根不记录」对 H
   这是 CLAUDE.md 硬约束第 3 条的直接应用：**pi 模型调用失败不抛异常也不发 error 事件**，
   而是把原因写进 assistant 消息的 `errorMessage`。
 - **`isContextOverflow` 判定**：委托给 pi-ai 的同名函数（`isContextOverflow(message, contextWindow)`），
-  不自己手搓关键词表。理由：(1) pi-ai 维护着 25 条 provider 专用正则，覆盖面远超自己拍的
+  不自己手搓关键词表。理由：(1) pi-ai 维护着 25 条正则（22 条 provider 专用 + 3 条通用兜底），覆盖面远超自己拍的
   4 条子串；(2) pi-ai 有一张「非溢出」排除表，限流/429 报文常含 `too many tokens` 这类
   措辞，没有排除表会把限流误判成 overflow、白压一次还给用户错误提示——这是自己手搓版本
   踩到的真实 bug；(3) pi-ai 额外覆盖两种关键词匹配不到的情况：**静默溢出**（provider 正常

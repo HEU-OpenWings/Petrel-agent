@@ -222,7 +222,7 @@ export async function maybeCompact(
 /**
  * 这条 assistant 消息是不是撞了模型的上下文窗口？
  *
- * 判定全部委托给 pi-ai 的同名函数：它维护着 25 条 provider 专用正则、一张
+ * 判定全部委托给 pi-ai 的同名函数：它维护着 25 条正则（22 条 provider 专用 + 3 条通用兜底）、一张
  * 「非溢出」排除表（限流/429 会命中 /too many tokens/ 这类溢出模式，必须排除），
  * 还覆盖静默溢出（provider 照常返回 stop，但 input+cacheRead 超窗口）与
  * length-stop 溢出（input 填满窗口导致 output 为 0）两种我们自己判不出来的情况。
