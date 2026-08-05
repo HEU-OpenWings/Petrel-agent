@@ -79,7 +79,10 @@ function overflowMessage(outcome: CompactionOutcome): string {
     return "上下文超出模型窗口，已自动压缩历史，请重新发送刚才那条消息";
   }
   if (outcome.kind === "failed") {
-    return `上下文超出模型窗口，且自动压缩失败（${outcome.error.message}）。请新建会话继续`;
+    // 原始 error 不进这条文案：provider SDK 的报错可能带限流阈值、区域信息，
+    // 个别 SDK 甚至会回显请求 id 或 key 片段——那不是用户该看到的东西。
+    // 原始 error 只进日志，见调用点 logger.warn(...)。
+    return "上下文超出模型窗口，且自动压缩失败。请新建会话继续";
   }
   return "上下文超出模型窗口，压缩已无法再回收空间。请新建会话继续";
 }
@@ -524,6 +527,12 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
                       );
                       held.compaction = undefined;
                       notify({ phase: "end", outcome: recovery });
+                      if (recovery.kind === "failed") {
+                        // 原始 error 只进日志：overflowMessage() 给用户的文案里不带
+                        // error.message，provider SDK 的报错可能含限流阈值/区域信息
+                        // 等内部细节
+                        logger.warn({ err: recovery.error, sessionId }, "overflow 兜底压缩失败");
+                      }
                       // 不自动重发：pi 在 prompt() 时已把 user message 落进会话树，
                       // 重发会在树里留下两条一样的 user 消息，前端出现重复气泡
                       throw new Error(overflowMessage(recovery));

@@ -547,8 +547,10 @@ describe("createHarnessRegistry 的自动压缩", () => {
     const summaryGate = new Promise<void>((resolve) => {
       releaseSummary = resolve;
     });
+    let summaryCalls = 0;
     factory.faux.setResponses([
       async () => {
+        summaryCalls += 1;
         await summaryGate;
         return fauxAssistantMessage([fauxText("## Goal\n摘要")]);
       },
@@ -558,9 +560,38 @@ describe("createHarnessRegistry 的自动压缩", () => {
     const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
 
     const sending = handle.send("问题");
+    // send() 与 evict() 之间没有 await：send() 只是把回调挂到 held.chain（微任务，
+    // 还没执行），若这里同步紧跟着调 evict()，evict() 会在压缩真正开始之前就跑完
+    // entry.retired=true 那几行，届时 send() 的回调看到的是 held.compaction
+    // 仍为 undefined、held.retired 已为真，直接从 retired 门禁那里退出——
+    // 压缩从未开始，evict() 里「等待进行中的压缩」那条分支也从未被走到，测试对
+    // 互斥逻辑形同空转。所以必须等 summaryCalls > 0（压缩已经真正调用了模型）
+    // 才发起 evict()，让它撞上「compaction 正在进行」这个真实状态。
+    await new Promise<void>((resolve) => {
+      const tick = () => (summaryCalls > 0 ? resolve() : setTimeout(tick, 5));
+      tick();
+    });
     const evicting = registry.evict(SESSION_ID);
+    // 光看「不该出现的回答」不在树里，测不出 evict() 有没有真的等 entry.compaction
+    // 落定：held.retired 这道门禁本来就会独立挡住 prompt()，跟 evict() 是否 await
+    // 压缩无关。真正只属于「evict() 要不要等」这条逻辑的可观察量是时序本身——
+    // summaryGate 没释放之前 compaction 不可能落定，只要 evicting 在这之前就
+    // resolve，就说明 evict() 没等，直接证明了 Task 8 那段 await 被跳过。
+    // 只 flush 微任务不够：entry.harness.abort() 内部会经过几轮真实的定时器/IO
+    // （实测跨进程调度约几毫秒），光看两次 Promise.resolve() 测不出差别——删掉
+    // await entry.compaction 后 evict() 一样「暂时」还没 resolve，只是恰好也没在
+    // 两次微任务内完成，而不是真的在等压缩。改成等一段明确超过那个偶然窗口、
+    // 但仍然远小于 summaryGate 会被释放的时间的间隔（这里 summaryGate 由测试
+    // 手动控制，不释放就永远不会 resolve，等多久都不构成竞态）。
+    let evictSettled = false;
+    evicting.then(() => {
+      evictSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(evictSettled).toBe(false);
     releaseSummary();
     await expect(evicting).resolves.toBeUndefined();
+    expect(evictSettled).toBe(true);
     await sending.catch(() => undefined);
     handle.release();
 
