@@ -425,9 +425,15 @@ Codex 那种「压缩失败就整轮丢弃、用户消息压根不记录」对 H
   isContextOverflow(harness, message)`。
   这是 CLAUDE.md 硬约束第 3 条的直接应用：**pi 模型调用失败不抛异常也不发 error 事件**，
   而是把原因写进 assistant 消息的 `errorMessage`。
-- **`isContextOverflow` 判定**：`errorMessage` 关键词匹配
-  （`context length` / `context_length_exceeded` / `too many tokens` / `maximum context`，
-  大小写不敏感）**或** `usage.input > contextWindow`。
+- **`isContextOverflow` 判定**：委托给 pi-ai 的同名函数（`isContextOverflow(message, contextWindow)`），
+  不自己手搓关键词表。理由：(1) pi-ai 维护着 25 条 provider 专用正则，覆盖面远超自己拍的
+  4 条子串；(2) pi-ai 有一张「非溢出」排除表，限流/429 报文常含 `too many tokens` 这类
+  措辞，没有排除表会把限流误判成 overflow、白压一次还给用户错误提示——这是自己手搓版本
+  踩到的真实 bug；(3) pi-ai 额外覆盖两种关键词匹配不到的情况：**静默溢出**（provider 正常
+  返回 `stopReason: "stop"`，但 `usage.input + usage.cacheRead > contextWindow`）与
+  **length-stop 溢出**（`stopReason: "length"` 且 `output === 0`，input 已填满窗口）。
+  我们这边的 `isContextOverflow(harness, message)` 只是签名适配：从 `harness.getModel()`
+  读 `contextWindow`，让 apps/server 不必碰 pi 的 `Model` 类型。
 - **处置**：立刻 `maybeCompact(..., { force: true })`（无视阈值与 cooldown），
   然后**不自动重发**，向前端发 `event: error`。
   **文案必须按 `CompactionOutcome` 分支，不能无条件说「已压缩」**：
@@ -527,8 +533,9 @@ data: { "phase": "blocked", "reason": "cooldown" | "ineffective" }
   超阈值时回调恰好一次
 - **ineffective 用同口径估算**（§8.1.3）：断言守卫读的是纯字符估算的那一对，
   而不是 usage-based 的 `tokensBefore`——否则回收比例被高估、守卫永不触发
-- `isContextOverflow()` 单测：关键词命中、`usage.input > contextWindow` 命中、
-  普通错误不命中
+- `isContextOverflow()` 单测：errorMessage 关键词命中（走 pi-ai 的正则表）、
+  静默溢出（`stopReason: "stop"` 但 `usage.input > contextWindow`）命中、普通错误不命中、
+  限流报文（含 `too many tokens` 但被 pi-ai 排除表挡住）不被误判成溢出
 
 **测试与生产共同的约束**：pi 硬编码 `keepRecentTokens: 20000`，所以
 **总量低于约 2 万 token（≈8 万字符）的会话压不动**——`findCutPoint` 会把全部内容

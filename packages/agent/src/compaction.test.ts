@@ -347,7 +347,7 @@ describe("isContextOverflow", () => {
     "This model's maximum context length is 65536 tokens",
     "context_length_exceeded",
     "Too many tokens in request",
-    "MAXIMUM CONTEXT exceeded",
+    "Your input exceeds the context window of this model",
   ])("errorMessage 命中关键词：%s", async (errorMessage) => {
     const { harness } = await fixture();
     const message = fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage });
@@ -355,10 +355,10 @@ describe("isContextOverflow", () => {
     expect(isContextOverflow(harness, message)).toBe(true);
   });
 
-  it("usage.input 超过 contextWindow 时命中，即使 errorMessage 没有关键词", async () => {
+  it("静默溢出：stopReason 仍是 stop，但 usage.input 超过 contextWindow 时命中", async () => {
     const { harness } = await fixture();
     const message = {
-      ...fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "500 oops" }),
+      ...fauxAssistantMessage([fauxText("")]),
       usage: {
         input: CONTEXT_WINDOW + 1,
         output: 0,
@@ -377,6 +377,19 @@ describe("isContextOverflow", () => {
     const message = fauxAssistantMessage([fauxText("")], {
       stopReason: "error",
       errorMessage: "connection reset by peer",
+    });
+
+    expect(isContextOverflow(harness, message)).toBe(false);
+  });
+
+  it("限流不被误判成溢出", async () => {
+    const { harness } = await fixture();
+    // 这句文案同时命中 /rate limit/i（pi-ai 的排除表）与 /too many tokens/i（溢出表）——
+    // 排除表优先。我们自己手搓关键词表的第一版没有排除表，会把这种限流误判成溢出：
+    // 用户只是被限流，却会收到「上下文超出模型窗口，已压缩历史，请重发」，还白压一次
+    const message = fauxAssistantMessage([fauxText("")], {
+      stopReason: "error",
+      errorMessage: "Rate limit exceeded, too many tokens per minute",
     });
 
     expect(isContextOverflow(harness, message)).toBe(false);

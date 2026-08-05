@@ -6,7 +6,7 @@ import {
   estimateTokens,
   type Session,
 } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { type AssistantMessage, isContextOverflow as piIsContextOverflow } from "@earendil-works/pi-ai";
 
 /**
  * 阈值策略。
@@ -220,31 +220,18 @@ export async function maybeCompact(
 }
 
 /**
- * 各家 provider 报「上下文超窗口」的说法不统一，只能关键词匹配。
- * 全部小写后比对，新 provider 出现新说法时往这里加。
- */
-const OVERFLOW_PATTERNS = [
-  "context length",
-  "context_length_exceeded",
-  "too many tokens",
-  "maximum context",
-] as const;
-
-/**
- * 这条失败的 assistant 消息是不是撞了模型的上下文窗口？
+ * 这条 assistant 消息是不是撞了模型的上下文窗口？
  *
- * 吃 harness 而不是 contextWindow：窗口从 harness.getModel() 读，这样 apps/server
- * 不必碰 pi 的 Model 类型（依赖方向是 server → agent，pi 接线只在 agent 与 ai）。
+ * 判定全部委托给 pi-ai 的同名函数：它维护着 25 条 provider 专用正则、一张
+ * 「非溢出」排除表（限流/429 会命中 /too many tokens/ 这类溢出模式，必须排除），
+ * 还覆盖静默溢出（provider 照常返回 stop，但 input+cacheRead 超窗口）与
+ * length-stop 溢出（input 填满窗口导致 output 为 0）两种我们自己判不出来的情况。
+ * 自己手搓关键词表的话，最先踩的就是「把限流当成溢出、白压一次还给用户错误提示」。
+ *
+ * 本函数存在的唯一理由是签名适配：吃 harness 而不是 contextWindow，
+ * 让 apps/server 不必碰 pi 的 Model 类型（依赖方向 server → agent，
+ * pi 接线只在 agent 与 ai）。
  */
 export function isContextOverflow(harness: AgentHarness, message: AssistantMessage): boolean {
-  if (message.stopReason !== "error") return false;
-
-  const text = (message.errorMessage ?? "").toLowerCase();
-  if (OVERFLOW_PATTERNS.some((pattern) => text.includes(pattern))) return true;
-
-  // 关键词兜不住的情况：有的 provider 只回一个通用错误，但 usage 已经把
-  // 超窗口的事实摆出来了（pi-ai 的 utils/overflow.ts 对「静默超窗」走的也是
-  // usage.input 与 contextWindow 比较这条路，只是它只在 stopReason "stop" 时用；
-  // 这里额外兜底 stopReason "error" 但关键词没命中的情况）
-  return message.usage.input > harness.getModel().contextWindow;
+  return piIsContextOverflow(message, harness.getModel().contextWindow);
 }
