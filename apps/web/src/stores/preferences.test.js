@@ -2,6 +2,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchPreferences, savePreferences } from '@/apis/account_api'
+import { useUserStore } from './user.js'
 import { usePreferencesStore } from './preferences.js'
 
 vi.mock('@/apis/account_api', () => ({
@@ -65,6 +66,61 @@ describe('ensureLoaded', () => {
     await store.ensureLoaded()
 
     expect(fetchPreferences).toHaveBeenCalledTimes(1)
+  })
+
+  it('账号切换后清空旧偏好并重新请求', async () => {
+    fetchPreferences
+      .mockResolvedValueOnce({
+        preferences: { defaultModel: V3.id, systemPrompt: '账号 A 的 prompt' },
+        models: MODELS
+      })
+      .mockResolvedValueOnce({
+        preferences: { defaultModel: null, systemPrompt: '账号 B 的 prompt' },
+        models: MODELS
+      })
+    const userStore = useUserStore()
+    userStore.user = { id: 'user-a', email: 'a@x.io', role: 'user' }
+    const store = usePreferencesStore()
+    await store.ensureLoaded()
+
+    userStore.user = { id: 'user-b', email: 'b@x.io', role: 'user' }
+
+    expect(store.loaded).toBe(false)
+    expect(store.defaultModel).toBe(null)
+    expect(store.systemPrompt).toBe(null)
+    await store.ensureLoaded()
+    expect(fetchPreferences).toHaveBeenCalledTimes(2)
+    expect(store.systemPrompt).toBe('账号 B 的 prompt')
+  })
+
+  it('账号切换前发出的请求迟到时不会覆盖新账号', async () => {
+    let resolveOldRequest
+    fetchPreferences
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOldRequest = resolve
+          })
+      )
+      .mockResolvedValueOnce({
+        preferences: { defaultModel: null, systemPrompt: '账号 B 的 prompt' },
+        models: MODELS
+      })
+    const userStore = useUserStore()
+    userStore.user = { id: 'user-a', email: 'a@x.io', role: 'user' }
+    const store = usePreferencesStore()
+    const oldRequest = store.ensureLoaded()
+
+    userStore.user = { id: 'user-b', email: 'b@x.io', role: 'user' }
+    await store.ensureLoaded()
+    resolveOldRequest({
+      preferences: { defaultModel: V3.id, systemPrompt: '账号 A 的 prompt' },
+      models: MODELS
+    })
+    await oldRequest
+
+    expect(store.defaultModel).toBe(null)
+    expect(store.systemPrompt).toBe('账号 B 的 prompt')
   })
 
   /**

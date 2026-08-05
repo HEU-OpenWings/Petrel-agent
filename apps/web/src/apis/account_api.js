@@ -19,15 +19,6 @@ export function savePreferences({ defaultModel, systemPrompt }) {
   return put('/api/account/preferences', { defaultModel, systemPrompt })
 }
 
-/**
- * treatUnauthorizedAsRequestError：旧密码不正确时后端返 401，那是这次请求的业务结果，
- * 不是「登录失效」。不加这个标记会被 http.js 的全局 401 分支截胡——
- * 用户输错一次旧密码就被 logout() 并踢到登录页。同 auth_api.js 的登录/注册。
- */
 export function changePassword(currentPassword, newPassword) {
-  return post(
-    '/api/account/password',
-    { currentPassword, newPassword },
-    { treatUnauthorizedAsRequestError: true }
-  )
+  return post('/api/account/password', { currentPassword, newPassword })
 }

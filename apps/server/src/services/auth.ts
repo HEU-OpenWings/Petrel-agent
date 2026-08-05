@@ -7,7 +7,7 @@ import { hashPassword, verifyPassword } from "./password.ts";
 export class AuthError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 401 | 409 | 429,
+    readonly status: 400 | 401 | 403 | 409 | 429,
   ) {
     super(message);
     this.name = "AuthError";
@@ -196,7 +196,9 @@ export function createAuthService(db: Database) {
 
       if (!(await verifyPassword(currentPassword, found.passwordHash))) {
         recordFailure(email, now);
-        throw new AuthError(CHANGE_PASSWORD_FAILED_MESSAGE, 401);
+        // 401 留给 requireAuth 表示登录态失效；这里用户已经通过会话认证，
+        // 只是没有提供正确的当前密码，用 403 让前端能可靠地区分两种情况。
+        throw new AuthError(CHANGE_PASSWORD_FAILED_MESSAGE, 403);
       }
 
       failures.delete(email);

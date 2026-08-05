@@ -200,11 +200,11 @@ describe("changePassword", () => {
     await expect(service.login("a@x.io", OLD)).rejects.toMatchObject({ status: 401 });
   });
 
-  it("旧密码不正确时 401 且不改动密码", async () => {
+  it("旧密码不正确时 403 且不改动密码", async () => {
     const user = await seedUser();
 
     await expect(service.changePassword(user, "wrong-password", NEW)).rejects.toMatchObject({
-      status: 401,
+      status: 403,
       message: "当前密码不正确",
     });
     await expect(service.login("a@x.io", OLD)).resolves.toMatchObject({ email: "a@x.io" });
@@ -220,7 +220,7 @@ describe("changePassword", () => {
 
   // 必须用「错误的旧密码 + 过短的新密码」才测得到顺序：
   // 长度校验在前 → 根本走不到 verifyPassword，所以既拿到 400、也不计失败次数；
-  // 若有人把顺序调换 → verifyPassword 先失败，拿到的是 401 而不是 400，这条立刻红。
+  // 若有人把顺序调换 → verifyPassword 先失败，拿到的是 403 而不是 400，这条立刻红。
   // 只用正确的旧密码是测不出来的：那样 verifyPassword 成功，两种顺序下都不会计数
   it("新密码太短时先报 400，且不消耗失败次数", async () => {
     const user = await seedUser();
@@ -239,7 +239,7 @@ describe("changePassword", () => {
     const user = await seedUser();
     for (let i = 0; i < 5; i += 1) {
       await expect(service.changePassword(user, "wrong-password", NEW)).rejects.toMatchObject({
-        status: 401,
+        status: 403,
       });
     }
 
@@ -254,7 +254,7 @@ describe("changePassword", () => {
     const user = await seedUser();
     for (let i = 0; i < 5; i += 1) {
       await expect(service.changePassword(user, "wrong-password", NEW)).rejects.toMatchObject({
-        status: 401,
+        status: 403,
       });
     }
 

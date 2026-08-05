@@ -235,13 +235,13 @@ describe("POST /api/account/password", () => {
     expect(response.headers.get("Set-Cookie")).toContain("petrel_token=");
   });
 
-  // 前端靠这个状态码 + treatUnauthorizedAsRequestError 避免把用户踢下线
-  it("旧密码不正确返回 401 且文案具体", async () => {
+  // 403 与认证中间件的 401 分开，前端才能只在登录态真的失效时登出
+  it("旧密码不正确返回 403 且文案具体", async () => {
     const cookie = await registerUser("pw-wrong@x.io");
 
     const response = await changePassword({ currentPassword: "wrong-password", newPassword: NEW }, cookie);
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: { message: "当前密码不正确" } });
   });
 
@@ -258,7 +258,7 @@ describe("POST /api/account/password", () => {
     for (let i = 0; i < 5; i += 1) {
       expect(
         (await changePassword({ currentPassword: "wrong-password", newPassword: NEW }, cookie)).status,
-      ).toBe(401);
+      ).toBe(403);
     }
 
     const response = await changePassword({ currentPassword: "wrong-password", newPassword: NEW }, cookie);

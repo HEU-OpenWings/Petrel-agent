@@ -63,19 +63,14 @@ describe('changePassword', () => {
     })
   })
 
-  /**
-   * 这条守的是一个具体的坑：旧密码错后端返 401，若不带
-   * treatUnauthorizedAsRequestError，http.js 的全局 401 分支会 logout() 并跳登录页
-   * ——用户输错一次旧密码就被自己踢下线。
-   */
-  it('旧密码错误的 401 不会登出、不跳转、文案原样保留', async () => {
+  it('旧密码错误的 403 不会登出、不跳转、文案原样保留', async () => {
     const userStore = useUserStore()
     userStore.user = { id: 'u-1', email: 'a@x.io', role: 'user' }
     const onUnauthorized = vi.fn()
     setUnauthorizedHandler(onUnauthorized)
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(jsonResponse({ error: { message: '当前密码不正确' } }, 401))
+      .mockResolvedValue(jsonResponse({ error: { message: '当前密码不正确' } }, 403))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(changePassword('wrong-password', 'new-password')).rejects.toThrow('当前密码不正确')
@@ -84,5 +79,24 @@ describe('changePassword', () => {
     expect(onUnauthorized).not.toHaveBeenCalled()
     // 只发了业务请求本身，没有顺带打一次 /api/auth/logout
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('登录失效的 401 会登出并通知全局处理器', async () => {
+    const userStore = useUserStore()
+    userStore.user = { id: 'u-1', email: 'a@x.io', role: 'user' }
+    const onUnauthorized = vi.fn()
+    setUnauthorizedHandler(onUnauthorized)
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: '未登录或登录已失效' } }, 401))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(changePassword('old-password', 'new-password')).rejects.toThrow('登录已失效，请重新登录')
+
+    expect(userStore.isLoggedIn).toBe(false)
+    expect(onUnauthorized).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/logout')
   })
 })

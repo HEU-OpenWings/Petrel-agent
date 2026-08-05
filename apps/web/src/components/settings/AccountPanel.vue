@@ -77,8 +77,8 @@ async function onSubmit() {
     formRef.value?.resetFields()
   } catch (error) {
     // 后端的文案更有用（「当前密码不正确」/「尝试次数过多」），原样显示。
-    // 这里不会把人踢下线：account_api 的 changePassword 带了
-    // treatUnauthorizedAsRequestError，401 不走 http.js 的全局登出分支
+    // 旧密码错误是 403，不会触发 http.js 只针对 401 的全局登出分支；
+    // 真正的登录失效仍会正常清状态并跳转登录页
     message.error(error.message || '修改失败，请重试')
   } finally {
     submitting.value = false

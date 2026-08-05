@@ -227,6 +227,14 @@ function onKeydown(event) {
 }
 
 async function submit() {
+  if (running.value) return
+
+  // 首次进入页面时偏好仍可能在加载。先等它结束再读取下面两个字段，避免首条消息
+  // 用系统默认值、后续消息却突然切到用户保存的模型与 prompt。
+  // ensureLoaded() 会吞掉加载错误；失败时字段保持 null，仍可按原契约回退系统默认。
+  await preferences.ensureLoaded()
+
+  // 等待期间可能重复触发 submit；第一个调用开始发送后，其余调用在这里退出。
   const text = draft.value.trim()
   if (!text || running.value) return
 

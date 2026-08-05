@@ -240,14 +240,12 @@ body 就是 `{ defaultModel, systemPrompt }`，`null` 明确表示「跟随系�
 面板显示「未选择」，但每条消息都在传那个失效 id，而 §3.4 定的是失效 model
 返回 400 —— 对话会直接失败，且用户在设置里看不出原因。
 
-### 5.4 改密码的 401 —— 用已有机制，不改状态码
+### 5.4 区分旧密码错误与登录失效
 
-「旧密码不正确」返回 **401**，前端调用时带 `treatUnauthorizedAsRequestError: true`。
-
-`http.js` 里这个开关就是为这种情况准备的，注释写得很直白：「这个接口的 401
-是请求自身的业务结果而不是登录失效 —— 登录/注册凭据错误就是这样」。
-不加这个开关的后果很具体：旧密码打错一次，`handleUnauthorized()` 会
-`logout()` + 跳登录页，**用户被自己的输入错误踢下线**。
+「旧密码不正确」返回 **403**：用户已经通过 cookie 完成会话认证，只是没有提供
+正确的当前密码。**401** 只保留给 `requireAuth` 表示 cookie 无效、过期或用户已禁用，
+前端继续走 `http.js` 的统一登出与跳转。两种情况用不同状态码后，既不会因为旧密码
+打错而把用户踢下线，也不会在登录态真的失效时把 401 误当成普通表单错误。
 
 限流触发返回 429，走普通错误分支显示后端文案。
 成功后重新签发 cookie（当前会话不掉线），前端清空表单 + `message.success`。
@@ -262,7 +260,7 @@ body 就是 `{ defaultModel, systemPrompt }`，`null` 明确表示「跟随系�
   - 偏好：无行时 `preferences` 两项都是 `null`（而不是 `preferences: null`）
     + 完整 models 清单；`PUT` 后 `GET` 读回；字段缺失与空字符串都归一成 `null`；
     跨用户隔离。
-  - 改密码：旧密码错 → 401；新密码不足 8 位 → 400；成功后旧密码登不进、
+  - 改密码：旧密码错 → 403；新密码不足 8 位 → 400；成功后旧密码登不进、
     新密码能登进；连错 5 次 → 429。
 - **`chat.test.ts` 补两条** — `model` 不在清单 → 400 且不进 agent；
   合法 `model` 正确透传。
@@ -277,8 +275,8 @@ body 就是 `{ defaultModel, systemPrompt }`，`null` 明确表示「跟随系�
 
 - **`stores/preferences.test.js`** — `ensureLoaded()` 幂等（并发只发一次请求）、
   `loadFailed` 三态不与「偏好为空」混淆、失效 model id 归一成 `null`。
-- **`apis/account_api.test.js`** — 改密码带 `treatUnauthorizedAsRequestError`，
-  守住「旧密码打错不会被踢下线」。
+- **`apis/account_api.test.js`** — 旧密码错误的 403 不登出；登录失效的 401
+  仍走统一登出与跳转。
 
 三个 `.vue` 组件**零测试覆盖**：根 `vitest.config.ts` 没挂 `@vitejs/plugin-vue`，
 任何 `import` 了 `.vue` 的测试都跑不起来（`docs/frontend-plan.md` §2 已记录）。

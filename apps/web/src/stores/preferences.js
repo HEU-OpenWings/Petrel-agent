@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { fetchPreferences, savePreferences } from '@/apis/account_api'
+import { useUserStore } from '@/stores/user'
 
 /**
  * 用户偏好与可用模型清单。
@@ -10,6 +11,7 @@ import { fetchPreferences, savePreferences } from '@/apis/account_api'
  * 因为主题必须在首帧之前生效，等一个网络往返会先闪一下白底。
  */
 export const usePreferencesStore = defineStore('preferences', () => {
+  const userStore = useUserStore()
   /** null = 跟随系统默认（后端的 DEFAULT_MODEL_ID） */
   const defaultModel = ref(null)
   /** null = 跟随系统默认（后端的 DEFAULT_SYSTEM_PROMPT） */
@@ -24,6 +26,21 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
   /** 在飞的加载 promise，让并发的 ensureLoaded() 只发一次请求 */
   let inflight = null
+  /** 账号变化时递增，让旧账号迟到的请求结果失效 */
+  let generation = 0
+
+  function reset() {
+    generation += 1
+    defaultModel.value = null
+    systemPrompt.value = null
+    models.value = []
+    loaded.value = false
+    loadFailed.value = false
+    inflight = null
+  }
+
+  // Pinia store 跨路由常驻；账号切换时必须同步清空，不能把上一账号的 prompt 带给下一账号。
+  watch(() => userStore.user?.id, reset, { flush: 'sync' })
 
   /** 界面上显示的模型名。没选时取后端实际会用的那个，否则界面在说谎 */
   const modelName = computed(() => {
@@ -41,14 +58,16 @@ export const usePreferencesStore = defineStore('preferences', () => {
     systemPrompt.value = preferences?.systemPrompt ?? null
   }
 
-  async function load() {
+  async function load(startGeneration) {
     try {
       const data = await fetchPreferences()
+      if (generation !== startGeneration) return
       models.value = data.models ?? []
       applyPreferences(data.preferences)
       loaded.value = true
       loadFailed.value = false
     } catch {
+      if (generation !== startGeneration) return
       // 不往上抛：偏好拉不到不该阻断对话。ChatView 读到 null 就不传
       // model / systemPrompt，后端回落到系统默认值。
       // 只留下 loadFailed 让设置面板显示错误态
@@ -62,15 +81,20 @@ export const usePreferencesStore = defineStore('preferences', () => {
    */
   function ensureLoaded() {
     if (loaded.value) return Promise.resolve()
-    inflight ??= load().finally(() => {
-      inflight = null
-    })
+    if (!inflight) {
+      const request = load(generation).finally(() => {
+        if (inflight === request) inflight = null
+      })
+      inflight = request
+    }
     return inflight
   }
 
   /** 全量保存。失败原样抛给调用方——吞掉的话用户会以为保存成功了 */
   async function save({ defaultModel: model, systemPrompt: prompt }) {
+    const startGeneration = generation
     const data = await savePreferences({ defaultModel: model, systemPrompt: prompt })
+    if (generation !== startGeneration) return
     applyPreferences(data.preferences)
     loaded.value = true
     loadFailed.value = false
