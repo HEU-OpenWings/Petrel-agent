@@ -13,6 +13,17 @@ export type {
 // 守住「pi 的接线只在 agent 与 ai」这条约束
 export { listModels, type ModelSummary } from "@petrel/ai";
 export {
+  type CompactionOutcome,
+  type CompactionPolicy,
+  type CompactionSkipReason,
+  type CompactionState,
+  createCompactionState,
+  effectiveWindow,
+  isContextOverflow,
+  type MaybeCompactOptions,
+  maybeCompact,
+} from "./compaction.ts";
+export {
   type CreateHarnessOptions,
   createHarness,
   createMemorySession,
