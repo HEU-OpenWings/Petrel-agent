@@ -1,19 +1,18 @@
 {
-  "id": "b69783a9-8e54-41e7-a7eb-dc439d2bfe79",
-  "prevId": "0852be7f-4846-44f1-8227-bc9bdaa075f4",
+  "id": "0f0c0722-18d0-4d69-8efb-6b90b410ee5b",
+  "prevId": "e3755ea6-36b7-474b-901e-fee46995435a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.messages": {
-      "name": "messages",
+    "public.session_entries": {
+      "name": "session_entries",
       "schema": "",
       "columns": {
         "id": {
           "name": "id",
           "type": "uuid",
           "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
+          "notNull": true
         },
         "session_id": {
           "name": "session_id",
@@ -21,30 +20,29 @@
           "primaryKey": false,
           "notNull": true
         },
-        "seq": {
-          "name": "seq",
-          "type": "integer",
+        "parent_id": {
+          "name": "parent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "entry_seq": {
+          "name": "entry_seq",
+          "type": "bigserial",
           "primaryKey": false,
           "notNull": true
         },
-        "role": {
-          "name": "role",
+        "type": {
+          "name": "type",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "message": {
-          "name": "message",
+        "payload": {
+          "name": "payload",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
-        },
-        "interrupted": {
-          "name": "interrupted",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "created_at": {
           "name": "created_at",
@@ -54,11 +52,54 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "session_entries_session_seq_idx": {
+          "name": "session_entries_session_seq_idx",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "entry_seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "session_entries_session_type_idx": {
+          "name": "session_entries_session_type_idx",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
-        "messages_session_id_sessions_id_fk": {
-          "name": "messages_session_id_sessions_id_fk",
-          "tableFrom": "messages",
+        "session_entries_session_id_sessions_id_fk": {
+          "name": "session_entries_session_id_sessions_id_fk",
+          "tableFrom": "session_entries",
           "tableTo": "sessions",
           "columnsFrom": [
             "session_id"
@@ -71,16 +112,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "messages_session_seq_unique": {
-          "name": "messages_session_seq_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "session_id",
-            "seq"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

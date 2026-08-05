@@ -241,6 +241,9 @@ event: error   data: { message }
 - **补组件层测试基建**：根 `vitest.config.ts` 挂 `@vitejs/plugin-vue`（该依赖只装在
   `apps/web/package.json` 里），否则任何 `import` 了 `.vue` 的测试都跑不起来，
   `apps/web` 的组件层零测试覆盖；连带把 `apps/web` 纳入 typecheck 与 Biome。见 §2「基建缺口」
+  本轮新增的 `components/settings/*` 三个组件因此零测试覆盖：tab 切换、表单校验、
+  保存按钮的禁用态、加载失败时的错误态全靠人眼（本轮已用 Chrome DevTools 手工验证过
+  一遍主要路径）。
 - **Composer 增强（HEU-25）剩余部分**：`/` 命令面板已完成（`/new` · `/workspace` · `/sidebar`）；
   `@` 引用知识库等后端 kb 接口，模型切换等 HEU-12，附件上传等文件服务
 
@@ -251,6 +254,7 @@ event: error   data: { message }
 | 断线重连 + `persisted.seq` 幂等去重 | HEU-10 的 `persisted` 事件（未做） |
 | 审批弹窗 `ApprovalDialog` | HEU-14 工具 preflight HITL |
 | Agent 选择与配置表单 | HEU-12 agent 注册表（TypeBox schema 生成表单） |
+| ~~个人偏好（默认模型 / system prompt）~~ | 设置面板与用户偏好 —— **已交付**（`/api/account/preferences`） |
 | 引用角标与 refs 面板（HEU-26） | HEU-21 `kb_search` 真实检索 |
 | ~~登录页恢复~~ | HEU-7 最小认证 —— **已解锁并交付**，见 §2「认证接入」 |
 | 知识库管理页（HEU-27） | HEU-21 KB 与文档管理 API |
@@ -269,7 +273,10 @@ event: error   data: { message }
 | --- | --- |
 | **保留/移植** | `MarkdownContentViewer` · `ImagePreviewComponent` · `ThemeToggle` · `ModelProvidersComponent` · `FileTable` · `FileUploadModal` · `ChunkParamsConfig` · `EmbeddingModelSelector` · `dashboard/*` |
 | **已重写** | 对话流（→ `components/chat/*` + `useAgentStream`） |
-| **待删除** | `AgentView` · `AgentSingleView` · `AgentChatComponent` · `AgentMessageComponent` · `AgentInputArea` · `ChatSidebarComponent` · `AgentConfigSidebar` · `ToolCallingResult/*` · `GraphCanvas` · `GraphDetailPanel` · `KnowledgeGraphSection` · `MindMapSection` · `AppLayout`（已无路由引用） |
+| **待删除** | `AgentView` · `AgentSingleView` · `AgentChatComponent` · `AgentMessageComponent` · `AgentInputArea` · `ChatSidebarComponent` · `AgentConfigSidebar` · `ToolCallingResult/*` · `GraphCanvas` · `GraphDetailPanel` · `KnowledgeGraphSection` · `MindMapSection` |
+
+`SettingsModal`（v0.4 版）· `BasicSettingsSection` · `AppLayout` 已于 2026-08-04 删除
+（共 1236 行），设置面板在 `components/settings/*` 重写。
 
 `stores/user.js` 里的三个兼容垫片——`getAuthHeaders()`（store 方法）与
 `checkAdminPermission` / `checkSuperAdminPermission`（具名导出）——不是新功能，
@@ -287,12 +294,11 @@ Task 12 重写 `stores/user.js` 时删掉了 v0.4 store 的字段与方法（`us
 | --- | --- | --- |
 | `components/StatusBar.vue` | `onMounted` 调 `userStore.getCurrentUser()` → TypeError（被就地 `try/catch` 吞成 `console.error`，不白屏）；`userStore.username` 恒 `undefined`，用户名显示为「游客」 | **可达**，挂在 `views/DashboardView.vue`（路由 `/dashboard`）下 |
 | `components/UserInfoComponent.vue` | `username` / `avatar` / `userIdLogin` / `phoneNumber` / `userRole` 全恒 `undefined`（头像首字母、角色标签、个人资料都空）；打开个人资料还会调已不存在的 `getCurrentUser()` / `updateProfile()` / `uploadAvatar()` | **可达**，挂在 `views/HomeView.vue`（路由 `/`）下 |
-| `components/SettingsModal.vue` | 两个 tab（基本设置 / 模型配置）连同内容区都 gate 在 `userStore.isSuperAdmin` 上，新 store 没有这个 computed，恒 `undefined`，**admin 打开也是空侧栏 + 空内容** | 暂不可达：只在孤儿 `layouts/AppLayout.vue` 里挂载 |
-| `components/DebugComponent.vue` | 调试面板读 `token` / `userId` / `username` / `userIdLogin` / `phoneNumber` / `userRole` / `isSuperAdmin`，全恒 `undefined` | 暂不可达：同上 |
+| `components/DebugComponent.vue` | 调试面板读 `token` / `userId` / `username` / `userIdLogin` / `phoneNumber` / `userRole` / `isSuperAdmin`，全恒 `undefined` | 暂不可达：只在孤儿 `layouts/AppLayout.vue` 里挂载 |
 
-修不修取决于这些组件的去留（`SettingsModal` 内嵌的 `ModelProvidersComponent` 在保留清单里，
-外壳本身未定；`DebugComponent` 与 `AppLayout` 大概率随死代码清理一起删），因此本轮不修，
-留给「删除死代码」那一轮统一处置。
+修不修取决于这些组件的去留（`SettingsModal` 已重写并删除旧版，它内嵌的
+`ModelProvidersComponent` 留着等将来的系统级模型配置 tab；`AppLayout` 已随本轮删除，
+`DebugComponent` 大概率随死代码清理一起删），因此本轮不修剩下的两个。
 
 ## 6. 开发约定与踩过的坑
 

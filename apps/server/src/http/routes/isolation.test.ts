@@ -138,6 +138,12 @@ describe("路由保护范围", () => {
 
     expect(response.status).toBe(401);
   });
+
+  it("账号偏好没有 cookie 返回 401", async () => {
+    const response = await app.request("/api/account/preferences");
+
+    expect(response.status).toBe(401);
+  });
 });
 
 describe("会话跨用户隔离", () => {

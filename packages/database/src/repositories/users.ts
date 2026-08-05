@@ -84,5 +84,11 @@ export function createUserRepository(db: Database) {
       const updated = await db.update(users).set({ role }).where(eq(users.id, id)).returning();
       return updated.length > 0;
     },
+
+    /** 只有「用户自己改密码」这一条路径会调它。admin 无权替人改密码 */
+    async setPasswordHash(id: string, passwordHash: string): Promise<boolean> {
+      const updated = await db.update(users).set({ passwordHash }).where(eq(users.id, id)).returning();
+      return updated.length > 0;
+    },
   };
 }

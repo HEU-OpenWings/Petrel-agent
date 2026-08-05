@@ -43,6 +43,9 @@
         <template v-if="userStore.isLoggedIn">
           <span class="avatar fallback">{{ initial }}</span>
           <span class="name">{{ userStore.displayName || '已登录' }}</span>
+          <button class="icon-btn settings" type="button" title="设置" @click="emit('open-settings')">
+            <Settings :size="16" />
+          </button>
         </template>
         <RouterLink v-else to="/login" class="login">
           <LogIn :size="16" />
@@ -61,6 +64,7 @@ import {
   LibraryBig,
   LogIn,
   Pencil,
+  Settings,
   SquarePen,
   Trash2,
   Users
@@ -69,7 +73,7 @@ import { RouterLink } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { useUserStore } from '@/stores/user'
 
-const emit = defineEmits(['new-chat', 'select'])
+const emit = defineEmits(['new-chat', 'select', 'open-settings'])
 
 const sessionStore = useSessionStore()
 const userStore = useUserStore()
@@ -261,9 +265,16 @@ async function onRemove(item) {
 }
 
 .name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.settings {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .login {

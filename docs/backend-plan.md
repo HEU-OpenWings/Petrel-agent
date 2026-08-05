@@ -299,6 +299,24 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
 - 接口：`POST /api/auth/register|login|logout` · `GET /api/auth/me` ·
   `GET /api/admin/users` · `PATCH /api/admin/users/:id`（禁用/解禁，不能禁自己）。
 
+### 用户偏好与账号（2026-08-04 交付）
+
+`user_preferences` 表一人一行（`user_id` 主键），`default_model` 与 `system_prompt`
+两列可空，`null` 表示跟随系统默认。`/api/account` 挂在 `requireAuth` 之下：
+`GET /preferences`（偏好 + 可用模型清单，合成一个响应因为消费者重合：设置面板要渲染
+下拉、ChatView 要显示当前模型名）· `PUT /preferences`（全量语义，字段缺失与空串都
+归一成 `null`）· `POST /password`。
+
+偏好由**前端读出后随 `/api/chat` 请求体上传**，后端只校验 `model` 在 `listModels()`
+白名单里，不在则 400（不静默回落——用户选的模型被悄悄换掉，账单和输出都变了却没有
+任何信号）。这样 chat 每轮不多一次查询，也不用给已有的 `systemPrompt` 参数额外定
+优先级规则。
+
+模型清单由 `packages/ai` 的 `listModels()` 从 `models` 注册表派生（不另存一份硬编码
+清单，否则往 provider 的 `models: [...]` 里加模型时漏改就是「模型能跑但前端选不到」），
+经 `packages/agent` 转出给 server——`apps/server` 不依赖 `@petrel/ai`，守住「pi 的接线
+只在 agent 与 ai」这条约束。
+
 ### Agent 内核升级：AgentHarness + Postgres 会话树（2026-08-04 交付）
 
 设计文档见 [superpowers/specs/2026-08-04-agent-harness-session-design.md](superpowers/specs/2026-08-04-agent-harness-session-design.md)，
@@ -321,7 +339,8 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
 - 分层：SQL 在 `packages/database`（不认识 pi）→ pi 语义在 `packages/agent`
   （`PgSessionStorage`）→ 运行时状态在 `apps/server`（registry）。新增 `agent → database` 边。
 
-**这一轮的审查抓出 6 个真缺陷，其中 4 个出在实施计划自己的代码里**，值得记：
+**这一轮的审查抓出 7 个真缺陷，其中 4 个出在实施计划自己的代码里**，值得记
+（最严重的那个——SSE 背压——单列在下一小节）：
 
 1. `getLeafId()` 只读 `leaf` 类型条目是错的——pi 的 `appendEntry()` 对**任意**类型条目都会推进
    leaf 指针（`leafIdAfterEntry`），而 `Session.appendMessage()` 从不调 `setLeafId()`。
@@ -373,6 +392,21 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
 3. **`session_entries` 的 `getEntries()` 在不带游标时会全量读**。前端历史展示本来就要全量，
    当前可接受；将来会话很长时要么分页要么靠压缩收敛。
 
+#### 与「用户偏好」那一轮合并时的两处衔接
+
+两轮并行开发，合并时有两件事值得记：
+
+1. **migration 编号撞车**。两个分支都生成了 `0003`。处理方式是**以先合入 main 的那个为基线，
+   本轮删掉自己的 0003/0004 重新 `drizzle-kit generate`**，绝不手工改 `_journal.json`
+   （snapshot 链会断）。重新生成时 drizzle-kit 会因为「`messages` 消失 + `session_entries`
+   出现」而弹交互提示问是不是 rename，非交互环境直接崩——**分两步生成**可以绕开：
+   先只加新表（`0004_add_session_entries`），再只删旧表（`0005_drop_messages`）。
+2. **`modelId` 与常驻实例**。偏好那轮让 `/api/chat` 每轮带 `model`，而本轮 harness 是常驻的。
+   两者的生效范围不同：**`setModel()` 存在，所以模型能在复用实例时换**（`acquire()` 里只在
+   确实变化且当前不在跑时调，避免每轮往会话树写无用的 `model_change` 条目）；
+   而 `systemPrompt` 没有对应的 setter，只在首次装配时生效。这条差异在
+   `CLAUDE.md` 的 pi 事件契约一节与 `HarnessAssemblyOptions` 的注释里都写明了。
+
 ## 4. 待办
 
 ### M1 剩余
@@ -383,6 +417,15 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
   已随 HEU-7 交付（见 §3）。剩下的是被删除能力清单确认
 - **配额与 token 计量**：当前任何登录用户都能无限调模型，成本无上限也无归属。
   这是**公开注册的前置**——在它落地之前不能开放注册，只能内部名单使用
+- **token 版本号**：改密码不会失效其他设备上的旧 token。给 `users` 加 `tokenVersion`，
+  签发时写进 payload、`requireAuth` 比对，改密码时自增。同一个机制也能实现
+  「登出所有设备」。
+- **`toHttpException` 有两份**：`routes/auth.ts` 与 `routes/account.ts` 各写了一个同名
+  同作用的函数。等第三处重复出现时提取到共享位置（现在提取牵动两个既有文件，
+  收益不足）。
+- **`services/auth.test.ts` 的「成功登录清零计数」有 flake 风险**：它要跑 11 次
+  N=65536 的 scrypt，却用 vitest 默认的 5s 超时。全量并行下复现过一次超时，单独跑
+  稳定。CI 上若再现，给它单独设 `testTimeout` 而不是调全局。
 - **待确认：成本与 token 数是否该暴露给客户端**。`GET /api/sessions/:id/messages` 把落库的 pi
   `AssistantMessage` 原样吐出，其中的 `usage`（含 `cost`）、`model`、`provider`、`api` 一并透传。
   不做转换是有意的（`chat.ts` 的 SSE 也是原样透传 AgentEvent，两边保持同一份形状，

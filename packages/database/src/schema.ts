@@ -63,3 +63,22 @@ export const sessionEntries = pgTable(
     index("session_entries_session_type_idx").on(table.sessionId, table.type),
   ],
 );
+
+/**
+ * 用户偏好。一人一行，所以 user_id 直接做主键，没有单独的自增 id。
+ *
+ * 不做成 users 表上的一个 jsonb 列：requireAuth 每个请求都要 findById 查一次
+ * users（apps/server/src/http/middleware/auth.ts），把可能几 KB 的 system prompt
+ * 挂在那张表上等于每个请求都白读一遍。
+ *
+ * 两列都可空，null 表示「跟随系统默认」——不是空字符串。route 层会把空串归一成 null，
+ * 否则清空 system prompt 会存一个 ""，然后被当作有效值发给模型。
+ */
+export const userPreferences = pgTable("user_preferences", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  defaultModel: text("default_model"),
+  systemPrompt: text("system_prompt"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

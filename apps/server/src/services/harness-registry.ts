@@ -1,5 +1,10 @@
 import type { AgentHarness, Session } from "@petrel/agent";
-import { createMemorySession, createPgSession, createHarness as createRealHarness } from "@petrel/agent";
+import {
+  createMemorySession,
+  createPgSession,
+  createHarness as createRealHarness,
+  resolveModel,
+} from "@petrel/agent";
 import { createSessionRepository, type Database } from "@petrel/database";
 import { logger } from "@petrel/logger";
 
@@ -49,6 +54,18 @@ interface Entry {
   running: boolean;
   /** 同一会话的调用串行化，避免「判断 running 时空闲、调用时已在跑」的竞态。 */
   chain: Promise<unknown>;
+}
+
+/**
+ * 装配 harness 时才用得上的选项。
+ *
+ * 两者的生效范围不同，别混：`systemPrompt` **只在首次装配时生效**
+ * （`AgentHarness` 没有 `setSystemPrompt()`），而 `modelId` 在复用实例时
+ * 也能生效（`setModel()` 存在），见 `acquire()`。
+ */
+export interface HarnessAssemblyOptions {
+  systemPrompt?: string;
+  modelId?: string;
 }
 
 export interface HarnessHandle {
@@ -116,13 +133,25 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     return true;
   }
 
-  async function build(sessionId: string, createdAt: Date, systemPrompt?: string): Promise<Entry> {
+  async function build(
+    sessionId: string,
+    createdAt: Date,
+    assembly: HarnessAssemblyOptions = {},
+  ): Promise<Entry> {
     const built = options.createHarness
       ? await options.createHarness(sessionId)
       : (() => {
           const session = createPgSession(db, sessionId, createdAt);
-          // systemPrompt 只有这一次机会生效：AgentHarness 没有 setSystemPrompt()
-          return { harness: createRealHarness({ session, systemPrompt }), session };
+          // systemPrompt 只有这一次机会生效：AgentHarness 没有 setSystemPrompt()。
+          // modelId 不同：harness 有 setModel()，所以复用实例时还能换，见 acquire()
+          return {
+            harness: createRealHarness({
+              session,
+              systemPrompt: assembly.systemPrompt,
+              modelId: assembly.modelId,
+            }),
+            session,
+          };
         })();
     const { harness, session } = built;
 
@@ -158,7 +187,11 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
    * 403。这里去重的只是「装配」这一步：装配是幂等的（同一个 sessionId 应该
    * 只有一个 harness 实例），归属校验不是（谁调用、以谁的身份都要单独判）。
    */
-  async function acquireEntry(sessionId: string, userId: string, systemPrompt?: string): Promise<Entry> {
+  async function acquireEntry(
+    sessionId: string,
+    userId: string,
+    assembly: HarnessAssemblyOptions = {},
+  ): Promise<Entry> {
     const cached = entries.get(sessionId);
     if (cached) return cached;
 
@@ -171,7 +204,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         throw new HarnessRegistryError("服务繁忙，请稍后重试（会话容量已满）", "capacity");
       }
       const row = await sessionRepo.findById(sessionId, userId);
-      const entry = await build(sessionId, row?.createdAt ?? new Date(), systemPrompt);
+      const entry = await build(sessionId, row?.createdAt ?? new Date(), assembly);
       entries.set(sessionId, entry);
       return entry;
     })();
@@ -189,12 +222,19 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
    * 降级用的一次性 handle：内存会话、不进缓存、不需要 running 标记与 chain
    * （它只服务当前这一个请求，不存在第二个请求撞上来的可能）。
    */
-  async function ephemeral(sessionId: string, systemPrompt?: string): Promise<HarnessHandle> {
+  async function ephemeral(sessionId: string, assembly: HarnessAssemblyOptions = {}): Promise<HarnessHandle> {
     const built = options.createHarness
       ? await options.createHarness(sessionId)
       : await (async () => {
           const session = await createMemorySession(sessionId);
-          return { harness: createRealHarness({ session, systemPrompt }), session };
+          return {
+            harness: createRealHarness({
+              session,
+              systemPrompt: assembly.systemPrompt,
+              modelId: assembly.modelId,
+            }),
+            session,
+          };
         })();
     return {
       harness: built.harness,
@@ -216,7 +256,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       sessionId: string,
       userId: string,
       firstMessage: string,
-      systemPrompt?: string,
+      assembly: HarnessAssemblyOptions = {},
     ): Promise<HarnessHandle> {
       let owned: boolean;
       try {
@@ -229,7 +269,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         // 注意与 owned === false 的区别：那是越权（必须 403），这是故障（可以降级）。
         // 降级实例不进缓存——它没有经过归属校验，留在 Map 里会被后续请求错误复用
         logger.error({ err: error, sessionId }, "session store unavailable, degrading to memory session");
-        return ephemeral(sessionId, systemPrompt);
+        return ephemeral(sessionId, assembly);
       }
       if (!owned) {
         throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
@@ -237,10 +277,24 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
 
       sweep();
 
-      const entry = await acquireEntry(sessionId, userId, systemPrompt);
+      const entry = await acquireEntry(sessionId, userId, assembly);
       const held = entry;
       held.refCount += 1;
       held.lastUsedAt = now();
+
+      // 复用已有实例时按请求里的 modelId 换模型。systemPrompt 换不了
+      // （没有 setSystemPrompt），但模型可以——用户在设置里改了模型，
+      // 不该等到实例被回收才生效。
+      //
+      // 只在确实变化时调：setModel 会往会话树写一条 model_change 条目，
+      // 每轮无脑调会写一堆无用条目。
+      // 正在跑时跳过：当轮（含 followUp 排队的消息）已经在用旧模型了。
+      if (assembly.modelId !== undefined && !held.running) {
+        const desired = resolveModel({ modelId: assembly.modelId });
+        if (held.harness.getModel().id !== desired.id) {
+          await held.harness.setModel(desired);
+        }
+      }
 
       let released = false;
       return {

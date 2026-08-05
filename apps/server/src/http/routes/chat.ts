@@ -1,3 +1,4 @@
+import { listModels } from "@petrel/agent";
 import { getDb } from "@petrel/database";
 import { logger } from "@petrel/logger";
 import { Hono } from "hono";
@@ -49,7 +50,12 @@ function toHttpException(error: unknown): never {
  * 校验顺序是 message 先于 sessionId：空消息是最常见的误用。
  */
 function parseChatRequest(body: unknown) {
-  const fields = body as { message?: unknown; sessionId?: unknown; systemPrompt?: unknown } | null;
+  const fields = body as {
+    message?: unknown;
+    sessionId?: unknown;
+    systemPrompt?: unknown;
+    model?: unknown;
+  } | null;
 
   const message = typeof fields?.message === "string" ? fields.message.trim() : "";
   if (!message) {
@@ -64,7 +70,22 @@ function parseChatRequest(body: unknown) {
   const rawSystemPrompt = fields?.systemPrompt;
   const systemPrompt = typeof rawSystemPrompt === "string" ? rawSystemPrompt : undefined;
 
-  return { message, sessionId, systemPrompt };
+  // model 同样可选。但传了一个不认识的 id 时直接 400，不静默回落到默认模型——
+  // 用户在设置里选的模型被悄悄换掉，账单和输出都变了却没有任何信号
+  const rawModel = fields?.model;
+  const model = typeof rawModel === "string" && rawModel !== "" ? rawModel : undefined;
+  if (model !== undefined && !listModels().some((item) => item.id === model)) {
+    // 附上可选值：只说「未注册」的话，客户端不知道该改成什么。
+    // 这条是客户端实际会看到的那一条——@petrel/agent 的 resolveModel 里同类错误
+    // 因为本函数先校验过而不可达
+    throw new HTTPException(400, {
+      message: `模型未注册：${model}，可选值为 ${listModels()
+        .map((item) => item.id)
+        .join(" | ")}`,
+    });
+  }
+
+  return { message, sessionId, systemPrompt, model };
 }
 
 function requireSessionId(body: unknown): string {
@@ -80,12 +101,16 @@ export const chat = new Hono<AppEnv>()
     const body: unknown = await c.req.json().catch(() => {
       throw new HTTPException(400, { message: "请求体必须是 JSON" });
     });
-    const { message, sessionId, systemPrompt } = parseChatRequest(body);
+    const { message, sessionId, systemPrompt, model } = parseChatRequest(body);
 
     // acquire 里的 upsert 同时完成归属校验与建会话；不属于自己时抛 403（容量满时 503）。
-    // 放在 streamSSE 之外：一旦开了流就只能在流里报错了
+    // 放在 streamSSE 之外：一旦开了流就只能在流里报错了。
+    //
+    // model 是前端从 stores/preferences 读出来的默认模型，校验已在 parseChatRequest
+    // 做过，到这里一定在注册表里。它与 systemPrompt 的生效范围不同：模型在复用
+    // 已有实例时也能换（harness 有 setModel），系统提示只在首次装配时生效。
     const handle = await getRegistry()
-      .acquire(sessionId, c.get("currentUser").id, message, systemPrompt)
+      .acquire(sessionId, c.get("currentUser").id, message, { systemPrompt, modelId: model })
       .catch(toHttpException);
 
     return streamSSE(c, async (stream) => {

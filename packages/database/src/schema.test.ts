@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { sessionEntries, sessions, users } from "./schema.ts";
+import { sessionEntries, sessions, userPreferences, users } from "./schema.ts";
 import { createTestDb, TEST_USER_ID, type TestDb } from "./testing.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
@@ -77,5 +77,28 @@ describe("session_entries", () => {
     await db.delete(sessions).where(eq(sessions.id, SESSION_ID));
 
     expect(await db.select().from(sessionEntries)).toHaveLength(0);
+  });
+
+  it("偏好一人一行：同一用户插两次会撞主键", async () => {
+    await db.insert(userPreferences).values({ userId: TEST_USER_ID, defaultModel: "a" });
+
+    await expect(
+      db.insert(userPreferences).values({ userId: TEST_USER_ID, defaultModel: "b" }),
+    ).rejects.toThrow();
+  });
+
+  it("两列都可空：null 表示跟随系统默认", async () => {
+    await db.insert(userPreferences).values({ userId: TEST_USER_ID });
+
+    const rows = await db.select().from(userPreferences).where(eq(userPreferences.userId, TEST_USER_ID));
+    expect(rows[0]).toMatchObject({ defaultModel: null, systemPrompt: null });
+  });
+
+  it("删除用户会级联删掉它的偏好", async () => {
+    await db.insert(userPreferences).values({ userId: TEST_USER_ID, defaultModel: "a" });
+
+    await db.delete(users).where(eq(users.id, TEST_USER_ID));
+
+    expect(await db.select().from(userPreferences)).toHaveLength(0);
   });
 });

@@ -1,4 +1,4 @@
-import { createModels, createProvider, envApiKeyAuth, type Model } from "@earendil-works/pi-ai";
+import { type Api, createModels, createProvider, envApiKeyAuth, type Model } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 
@@ -84,4 +84,42 @@ export function defaultModel(): Model<"openai-responses"> {
   const model = models.getModel(DEFAULT_PROVIDER_ID, DEFAULT_MODEL_ID);
   if (!model) throw new Error(`模型未注册：${DEFAULT_MODEL_ID}`);
   return model as Model<"openai-responses">;
+}
+
+/** 给 HTTP 响应用的模型摘要。不含 baseUrl / cost / 内部开关 */
+export interface ModelSummary {
+  id: string;
+  name: string;
+  provider: string;
+  providerName: string;
+  /** 偏好为 null（跟随系统默认）时，前端靠这个知道实际用的是哪个 */
+  isDefault: boolean;
+}
+
+/**
+ * 从 models 注册表派生，不另存一份清单。
+ *
+ * 早先的写法是手抄一个 { model, providerName } 数组，但那样往 provider 的
+ * models: [...] 里加模型时必须记得同步两处，漏了就是「模型能跑但前端选不到」，
+ * 且类型检查与测试都拦不住。providerName 也不必再抄一遍字面量——
+ * Provider 自己就带 name。
+ */
+export function listModels(): ModelSummary[] {
+  return models.getProviders().flatMap((provider) =>
+    provider.getModels().map((model) => ({
+      id: model.id,
+      name: model.name,
+      provider: provider.id,
+      providerName: provider.name,
+      isDefault: model.id === DEFAULT_MODEL_ID,
+    })),
+  );
+}
+
+/**
+ * 按 model id 查。两个 provider 的 id 不重名，所以不需要同时传 provider——
+ * 偏好里只存一个字符串，多带一个 provider 只是让前端多存一份能推出来的信息。
+ */
+export function findModel(id: string): Model<Api> | undefined {
+  return models.getModels().find((model) => model.id === id);
 }

@@ -1,7 +1,11 @@
 <template>
   <div class="app-shell">
     <aside v-if="!layout.leftCollapsed" class="sidebar">
-      <SessionSidebar @new-chat="onNewChat" @select="onSelectSession" />
+      <SessionSidebar
+        @new-chat="onNewChat"
+        @select="onSelectSession"
+        @open-settings="showSettings = true"
+      />
     </aside>
 
     <div class="main">
@@ -42,6 +46,8 @@
         <WorkspacePanel />
       </aside>
     </template>
+
+    <SettingsModal v-model:open="showSettings" />
   </div>
 </template>
 
@@ -54,11 +60,16 @@ import { useLayoutStore } from '@/stores/layout'
 import { useSessionStore } from '@/stores/session'
 import SessionSidebar from '@/components/shell/SessionSidebar.vue'
 import WorkspacePanel from '@/components/shell/WorkspacePanel.vue'
+import SettingsModal from '@/components/settings/SettingsModal.vue'
 
 const route = useRoute()
 const router = useRouter()
 const layout = useLayoutStore()
 const sessionStore = useSessionStore()
+
+// 用 emit 而不是 provide/inject 传打开动作：SessionSidebar 已经有 @new-chat / @select
+// 两个 emit，加这个与既有惯例一致，而且调用关系在模板里看得见
+const showSettings = ref(false)
 
 // 右栏只属于对话页，由路由 meta 决定，非对话页自动只剩两栏
 const hasWorkspace = computed(() => route.meta.workspace === true)

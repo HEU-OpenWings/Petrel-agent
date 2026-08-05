@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../types.ts";
 import { requireAdmin, requireAuth } from "./middleware/auth.ts";
 import { notFound, onError } from "./middleware/error.ts";
+import { account } from "./routes/account.ts";
 import { admin } from "./routes/admin.ts";
 import { auth } from "./routes/auth.ts";
 import { chat } from "./routes/chat.ts";
@@ -25,5 +26,6 @@ app.use("/api/*", requireAuth);
 
 app.route("/api/chat", chat);
 app.route("/api/sessions", sessions);
+app.route("/api/account", account);
 app.use("/api/admin/*", requireAdmin);
 app.route("/api/admin", admin);

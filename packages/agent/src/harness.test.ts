@@ -6,8 +6,9 @@ import {
   fauxText,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
+import { DEFAULT_MODEL_ID } from "@petrel/ai";
 import { describe, expect, it } from "vitest";
-import { createHarness } from "./harness.ts";
+import { createHarness, resolveModel } from "./harness.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -99,5 +100,65 @@ describe("createHarness", () => {
     await harness.prompt("你好");
 
     expect(seenSystem).toContain("Petrel");
+  });
+});
+
+/**
+ * 这一组从被删除的 agent.test.ts 移植过来（createAgent 已随本轮内核替换退役）。
+ * 守的是同一件事：按 id 选模型的解析优先级。
+ */
+describe("createHarness 的模型解析", () => {
+  async function memorySession() {
+    return new InMemorySessionRepo().create({ id: SESSION_ID });
+  }
+
+  it("未注册的 modelId 抛错，而不是静默用默认模型", async () => {
+    const session = await memorySession();
+
+    // 静默回落最坏：用户在设置里选的模型被换掉，账单和输出都变了却没有任何信号
+    expect(() => createHarness({ session, modelId: "gpt-does-not-exist" })).toThrow("模型未注册");
+  });
+
+  it("modelId 传 undefined 时用系统默认模型", async () => {
+    const harness = createHarness({ session: await memorySession() });
+
+    expect(harness.getModel().id).toBe(DEFAULT_MODEL_ID);
+  });
+
+  it("modelId 命中注册表时用该模型", async () => {
+    const harness = createHarness({
+      session: await memorySession(),
+      modelId: "deepseek-ai/DeepSeek-V3",
+    });
+
+    expect(harness.getModel().id).toBe("deepseek-ai/DeepSeek-V3");
+  });
+
+  // chat.test.ts / isolation.test.ts 的 faux provider 注入靠这条优先级：
+  // 它们把 model 铺在 options 之上，此时 modelId 必须让位
+  it("显式的 model 优先于 modelId", async () => {
+    const faux = fauxProvider({ tokensPerSecond: 10_000 });
+    const models = createModels();
+    models.setProvider(faux.provider);
+
+    const harness = createHarness({
+      session: await memorySession(),
+      modelId: DEFAULT_MODEL_ID,
+      models,
+      model: faux.getModel(),
+    });
+
+    expect(harness.getModel().id).toBe(faux.getModel().id);
+  });
+
+  // harness 常驻，所以模型能在复用实例时换掉——这是 systemPrompt 做不到的
+  // （没有 setSystemPrompt），harness-registry 的 acquire 依赖这条
+  it("setModel 能换掉已装配实例的模型", async () => {
+    const harness = createHarness({ session: await memorySession() });
+    expect(harness.getModel().id).toBe(DEFAULT_MODEL_ID);
+
+    await harness.setModel(resolveModel({ modelId: "deepseek-ai/DeepSeek-V3" }));
+
+    expect(harness.getModel().id).toBe("deepseek-ai/DeepSeek-V3");
   });
 });

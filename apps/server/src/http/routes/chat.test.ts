@@ -18,6 +18,8 @@ const state = vi.hoisted(() => ({
   /** 打开后只有会话仓储的查询失败，鉴权用的用户查询照常，用来模拟「已登录但会话表读写不了」 */
   sessionRepoBroken: false,
   harnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
+  /** 记录路由实际传给 createHarness 的选项，用来断言 modelId 有没有透传 */
+  seenHarnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
 }));
 
 /**
@@ -61,8 +63,10 @@ vi.mock("@petrel/agent", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@petrel/agent")>();
   return {
     ...actual,
-    createHarness: (options: CreateHarnessOptions) =>
-      actual.createHarness({ ...options, ...state.harnessOptions }),
+    createHarness: (options: CreateHarnessOptions) => {
+      state.seenHarnessOptions = options;
+      return actual.createHarness({ ...options, ...state.harnessOptions });
+    },
   };
 });
 
@@ -125,6 +129,7 @@ beforeEach(async () => {
   const user = await registerUser("a@x.io");
   cookie = user.cookie;
   service = createSessionService(state.db!, user.id);
+  state.seenHarnessOptions = undefined;
 });
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
@@ -562,5 +567,66 @@ describe("POST /api/chat SSE 协议", () => {
       "agent_end",
       "settled",
     ]);
+  });
+});
+
+describe("模型选择", () => {
+  it("合法的 model 透传给 createHarness", async () => {
+    faux.setResponses([fauxAssistantMessage([fauxText("好")])]);
+
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        message: "你好",
+        sessionId: SESSION_ID,
+        model: "deepseek-ai/DeepSeek-V3",
+      }),
+    });
+    // SSE 响应读干净才意味着 handler 已经跑完
+    await response.text();
+
+    expect(response.status).toBe(200);
+    expect(state.seenHarnessOptions?.modelId).toBe("deepseek-ai/DeepSeek-V3");
+  });
+
+  // 静默回落最坏：用户在设置里选的模型被换掉，账单和输出都变了却没有任何信号
+  it("未注册的 model 返回 400，且压根不进 harness", async () => {
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        message: "你好",
+        sessionId: SESSION_ID,
+        model: "gpt-does-not-exist",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(state.seenHarnessOptions).toBeUndefined();
+  });
+
+  /**
+   * 守的是「兜默认值是 createHarness 的职责，路由不许注入默认模型」。
+   *
+   * 注意这条不由 TDD 驱动——实现之前它就是绿的（那时压根不解析 model）。
+   * 它的价值在于能被有意义的变异打红：若有人把 parseChatRequest 改成
+   * `model = rawModel ?? DEFAULT_MODEL_ID` 之类，这里就会拿到一个非 undefined 的
+   * modelId 而变红。路由一旦自己兜默认，createHarness 里
+   * 「modelId === undefined → defaultModel()」那条分支就永远走不到，
+   * 将来改 @petrel/ai 的 DEFAULT_MODEL_ID 会出现「改了却不生效」的怪问题。
+   * 别因为它「看起来是恒真的」就删掉。
+   */
+  it("不传 model 时路由不注入 modelId，默认值交给 createHarness 兜", async () => {
+    faux.setResponses([fauxAssistantMessage([fauxText("好")])]);
+
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ message: "你好", sessionId: SESSION_ID }),
+    });
+    await response.text();
+
+    expect(state.seenHarnessOptions?.modelId).toBeUndefined();
   });
 });

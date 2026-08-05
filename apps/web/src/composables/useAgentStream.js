@@ -114,6 +114,7 @@ export function useAgentStream() {
           message,
           sessionId: options.sessionId,
           systemPrompt: options.systemPrompt,
+          model: options.model,
           signal: controller.value.signal
         },
         (frame) => {

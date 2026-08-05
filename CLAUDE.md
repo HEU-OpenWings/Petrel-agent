@@ -22,7 +22,7 @@ pnpm run dev             # 仅后端，宿主机调试用（nodemon --legacy-wat
 ```
 
 单个测试：`pnpm vitest run packages/agent/src/harness.test.ts`，
-单个用例加 `-t "工具循环"`。全仓跑测试建议加 `--exclude '**/.claude/**'`（见「踩过的坑」12）。
+单个用例加 `-t "工具循环"`。在**主仓库根**跑全量测试要加 `--exclude '**/.claude/**'`（见「踩过的坑」16）。
 
 `apps/web` 的 `pnpm run lint` 目前不可用（v0.4 遗留：eslint 9 只认 `eslint.config.js`，
 仓库里是旧格式 `.eslintrc.cjs`），前端没有 typecheck。
@@ -34,7 +34,7 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
 
 - `apps/server`（`@petrel/server`）— Hono HTTP 应用。`src/http/app.ts` 挂载路由，
   当前有 `system`（health）、`auth`（注册/登录/登出/me）、`chat`（SSE）、
-  `sessions`（会话 CRUD）与 `admin`（用户管理）。
+  `sessions`（会话 CRUD）、`account`（用户偏好与改密码）与 `admin`（用户管理）。
   **`app.ts` 的挂载顺序有安全含义**：`system` 与 `auth` 是仅有的两个公开前缀，
   `app.use("/api/*", requireAuth)` 之下的路由自动受保护（`admin` 再叠一层 `requireAdmin`）。
 - `apps/web`（`@petrel/web`）— Vue 3 + Vite + Ant Design Vue + pinia，JS（尚未 TS 化）。
@@ -53,6 +53,8 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
   除 `id` / `parent_id` / `timestamp` / `type` 之外的字段整份存 `payload` jsonb。
   **这一层不 import 任何 pi 类型**（`payload` 是 `unknown`），翻译在 `packages/agent`。
   测试用 PGlite 内存 Postgres，不需要 Docker。
+  `user_preferences` 一人一行（`user_id` 作主键），`default_model` 与 `system_prompt`
+  两列可空，`null` 表示跟随系统默认——不是空字符串，route 层会把空串归一成 `null`。
 - `packages/config` — **全仓唯一读取 `process.env` 的位置**，导出校验后的 `env`。
 - `packages/logger` — pino logger 与 Hono 的 `requestLogger` 中间件。
 
@@ -127,6 +129,13 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 **尚未实现（公开部署前必须先做）**：配额与 token 计量、注册限流、邮箱验证、密码重置。
 登录失败限流（同一邮箱 5 次失败锁 15 分钟）是单实例内存的，进程重启即失效、多副本部署下无效。
 
+改密码是 `POST /api/account/password`（挂在 `requireAuth` 之下，不在公开的 `/api/auth`
+前缀里——改凭据的端点靠 handler 手写校验，哪天漏了就等于认证绕过）。它**不失效其他
+设备上的旧 token**：JWT 无状态、7 天有效，只重新签发当前会话的 cookie。彻底解决要给
+`users` 加 `tokenVersion` 并让 `requireAuth` 比对。另外旧密码校验与登录**共用同一个
+失败计数器**，所以改密码连错 5 次也会连带锁住登录 15 分钟——有意的取舍，人已经在
+登录态里，锁住的只是重新登录。
+
 ### 消费 pi AgentEvent 的硬约束（已核对 pi 的 `types.d.ts`，勿凭文档记忆）
 
 1. `message_update` / `message_end` 带完整的（部分）`message`，直接覆盖，不要自己拼 delta。
@@ -182,17 +191,30 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
     浏览器会静默丢弃 cookie，表现为「登录接口返回 200 但下一个请求仍是未登录」。
 11. **Node 的 `scrypt` 默认 `maxmem` 是 32MB**，而 N=65536、r=8 需要 64MB，
     不显式调高会抛 `ERR_CRYPTO_INVALID_SCRYPT_PARAMS`，报错不指向根因。
-12. **`vitest` 会把 `.claude/worktrees/` 里的旧副本一起跑掉**。全仓跑测试时加
-    `--exclude '**/.claude/**'`，否则会看到一批与当前代码无关的失败。
-13. **常驻 harness 的实例必须在会话删除与用户禁用时 `evict`**，但 **evict 失败不能让主操作
+12. **compose 只挂 `src`，不挂 `packages/database/drizzle`，新增 migration 在容器里永不生效**。
+    `runMigrations()` 读的是 `packages/database/drizzle`，只挂 `src` 的话容器里用的是构建时
+    烘进镜像的旧副本，新加的 `.sql` 从来不会被应用——而启动日志照样打印
+    `database migrations applied`，排查时极具误导性（表现为接口 500：
+    `relation "xxx" does not exist`）。已在 `docker-compose.yml` 给 api 补上这个挂载。
+    **改完 schema 生成 migration 后要 `docker compose up -d`**，让容器重启跑一遍迁移。
+13. **`drizzle-kit migrate` 不读 `DATABASE_URL`**，它连的是 `packages/database/drizzle.config.ts`
+    里 `dbCredentials.url` 那个**硬编码**的连接串。那句「generate 不需要连数据库，占位值即可」
+    的注释只对 `generate` 成立——对 `migrate` 它是实际目标库。所以
+    `DATABASE_URL=…/别的库 drizzle-kit migrate` 会静默迁错库（本轮就这么把 dev 库的
+    `messages` 表删了）。要对指定库跑迁移，用走 `@petrel/config` 的那条路径：
+    `DATABASE_URL=… tsx apps/server/src/index.ts`。
+14. **常驻 harness 的实例必须在会话删除与用户禁用时 `evict`**，但 **evict 失败不能让主操作
     报错**：`DELETE /:id` 与 admin 禁用都是「先落库、再清理」，清理抛错时库里已经改完了，
     冒泡成 500 会让客户端以为主操作失败（删除后重试撞 404、禁用后重复操作）。两处都 catch
     住记日志。
-14. **pi 的订阅回调是被串行 `await` 的，回调里做网络 I/O 会卡死整个 harness**。
+15. **pi 的订阅回调是被串行 `await` 的，回调里做网络 I/O 会卡死整个 harness**。
     常驻实例把这个问题从「卡自己一个请求」放大成「卡整个会话」：一个不读流的客户端会让
     该会话的其他连接、甚至 `POST /api/chat/abort` 一起挂住（abort 内部 `await waitForIdle()`），
     且 `running` / `refCount` 都不复位，实例既不被 sweep 回收也不被容量淘汰。
     修法见 `http/sse-queue.ts`：同步入队 + 独立 pump + 有界队列溢出即断开该连接。
+16. **在主仓库根跑测试时 `vitest` 会把 `.claude/worktrees/` 里的副本一起跑掉**，报一批与当前
+    代码无关的失败。加 `--exclude '**/.claude/**'`。在 worktree 里面跑不受影响
+    （那里没有嵌套的 `.claude/worktrees/`）。
 
 ## 重构现状
 
