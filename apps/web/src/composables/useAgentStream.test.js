@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { streamChat } from '@/apis/chat_api'
+import { abortChat, streamChat } from '@/apis/chat_api'
 import { useAgentStream } from './useAgentStream.js'
 
 // 模块级替身：不改 useAgentStream 的结构就能拿到 streamChat 的入参
-vi.mock('@/apis/chat_api', () => ({ streamChat: vi.fn() }))
+vi.mock('@/apis/chat_api', () => ({ streamChat: vi.fn(), abortChat: vi.fn() }))
 
 /** 让 streamChat 替身按给定顺序回放 SSE 帧 */
 function replay(frames) {
@@ -48,6 +48,8 @@ const HISTORY = [
 beforeEach(() => {
   streamChat.mockReset()
   streamChat.mockResolvedValue(undefined)
+  abortChat.mockReset()
+  abortChat.mockResolvedValue(undefined)
 })
 
 describe('send', () => {
@@ -174,6 +176,22 @@ describe('loadHistory', () => {
     await pending
   })
 
+  it('切会话只断本地接收，不调 abortChat 打断上一轮生成', async () => {
+    const stream = useAgentStream()
+    const flow = controllableStream()
+
+    const pending = stream.send('会话A的问题', { sessionId: 'session-a' })
+    await tick()
+
+    stream.loadHistory([{ role: 'user', content: '会话B的历史' }])
+    await tick()
+
+    expect(abortChat).not.toHaveBeenCalled()
+
+    flow.close()
+    await pending
+  })
+
   it('重置写入位置，迟到的 message_update 不会覆盖历史', async () => {
     const stream = useAgentStream()
     // 先跑完整一轮，message_start 会把写入位置指到第 0 条，activeIndex 就脏了
@@ -218,5 +236,24 @@ describe('loadHistory', () => {
     await stream.send('再问一次', { sessionId: 'sid' })
 
     expect(stream.messages.value).toEqual([...HISTORY, { role: 'assistant', content: '新回答' }])
+  })
+})
+
+describe('stop', () => {
+  it('停止按钮要真的叫停：调 abortChat 带当前会话 id，再断本地接收', async () => {
+    const stream = useAgentStream()
+    const flow = controllableStream()
+
+    const pending = stream.send('你好', { sessionId: 'session-a' })
+    await tick()
+
+    await stream.stop()
+
+    expect(abortChat).toHaveBeenCalledOnce()
+    expect(abortChat).toHaveBeenCalledWith('session-a')
+
+    flow.close()
+    await pending
+    expect(stream.running.value).toBe(false)
   })
 })

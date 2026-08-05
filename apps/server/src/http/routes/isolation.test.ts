@@ -1,12 +1,12 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import type { CreateAgentOptions } from "@petrel/agent";
+import type { CreateHarnessOptions } from "@petrel/agent";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
 
 const state = vi.hoisted(() => ({
   db: undefined as TestDb | undefined,
-  agentOptions: undefined as CreateAgentOptions | undefined,
+  harnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
 }));
 
 vi.mock("@petrel/database", async (importOriginal) => {
@@ -16,10 +16,11 @@ vi.mock("@petrel/database", async (importOriginal) => {
 });
 
 /**
- * 只在模块边界包一层，底下调的仍是真的 createAgent，只补上 faux 的 models/model
+ * chat 路由走的是常驻 harness（registry 装配的是 createHarness），只在模块边界
+ * 包一层，底下调的仍是真的 createHarness，只补上 faux 的 models/model
  * （仓库里没有 SILICONFLOW_API_KEY）。同 routes/chat.test.ts。
  *
- * 不手写替身 agent：消息落库是 attachPersistence 订阅真实事件流做的，
+ * 不手写替身 harness：消息落库现在由 harness 自己通过 session 完成，
  * 替身一旦少发或错序地发事件，「读不到别人的历史」就会退化成
  * 「两边都是空数组」的恒真断言，测不出任何东西。
  */
@@ -27,13 +28,15 @@ vi.mock("@petrel/agent", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@petrel/agent")>();
   return {
     ...actual,
-    createAgent: (options: CreateAgentOptions = {}) =>
-      actual.createAgent({ ...options, ...state.agentOptions }),
+    createHarness: (options: CreateHarnessOptions) =>
+      actual.createHarness({ ...options, ...state.harnessOptions }),
   };
 });
 
-// vi.mock 已提升，这里拿到的是替身模块，createUserRepository 走的是测试库
+// vi.mock 已提升，这里拿到的是替身模块，createUserRepository 走的是测试库；
+// __resetRegistry 用来清掉上一个用例留下的常驻实例，避免它绑着已被 reset() 清空的会话树
 const { createUserRepository } = await import("@petrel/database");
+const { __resetRegistry } = await import("./chat.ts");
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -56,10 +59,11 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await reset();
+  __resetRegistry();
   faux = fauxProvider({ tokensPerSecond: 10_000 });
   const models = createModels();
   models.setProvider(faux.provider);
-  state.agentOptions = { models, model: faux.getModel() };
+  state.harnessOptions = { models, model: faux.getModel() };
 });
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
@@ -165,7 +169,7 @@ describe("会话跨用户隔离", () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ messages: [], interruptedSeqs: [] });
+    await expect(response.json()).resolves.toEqual({ messages: [] });
   });
 
   // 上一条的护栏：alice 自己读得到，才说明「bob 读到空」不是因为压根没落库
@@ -179,7 +183,6 @@ describe("会话跨用户隔离", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       messages: { role: string; content: unknown }[];
-      interruptedSeqs: number[];
     };
     // 只对 role 与 content 全等：其余字段是 pi 自带的 timestamp / usage / api id，
     // 每次运行都不同，钉死它们等于把 pi 的消息结构再固化一遍
@@ -187,7 +190,6 @@ describe("会话跨用户隔离", () => {
       ["user", [{ type: "text", text: ALICE_FIRST_MESSAGE }]],
       ["assistant", [{ type: "text", text: ALICE_ANSWER }]],
     ]);
-    expect(body.interruptedSeqs).toEqual([]);
   });
 
   it("bob 改不了 alice 的会话标题", async () => {

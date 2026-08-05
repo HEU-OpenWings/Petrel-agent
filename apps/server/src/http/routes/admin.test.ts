@@ -1,15 +1,34 @@
+import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
+import type { CreateHarnessOptions } from "@petrel/agent";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
 
-const state = vi.hoisted(() => ({ db: undefined as TestDb | undefined }));
+const state = vi.hoisted(() => ({
+  db: undefined as TestDb | undefined,
+  harnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
+}));
 
 vi.mock("@petrel/database", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@petrel/database")>();
   return { ...actual, getDb: () => state.db as unknown as ReturnType<typeof actual.getDb> };
 });
 
+/**
+ * 禁用用户会清掉 registry 里的活实例，要让 chat 路由的 createHarness 走 faux
+ * provider 而不是真实模型（同 routes/chat.test.ts）。
+ */
+vi.mock("@petrel/agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@petrel/agent")>();
+  return {
+    ...actual,
+    createHarness: (options: CreateHarnessOptions) =>
+      actual.createHarness({ ...options, ...state.harnessOptions }),
+  };
+});
+
 const { createUserRepository } = await import("@petrel/database");
+const { __resetRegistry, getRegistry } = await import("./chat.ts");
 
 let reset: () => Promise<void>;
 let close: () => Promise<void>;
@@ -21,8 +40,26 @@ beforeAll(async () => {
   close = testDb.close;
 });
 
-beforeEach(() => reset());
+beforeEach(async () => {
+  await reset();
+  __resetRegistry();
+  const faux = fauxProvider({ tokensPerSecond: 10_000 });
+  faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  state.harnessOptions = { models, model: faux.getModel() };
+});
+
 afterAll(() => close?.());
+
+/** 让某个用户跑一轮对话，用来让 registry 里出现一个活实例 */
+function postChatAs(cookie: string, body: { message: string; sessionId: string }) {
+  return app.request("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify(body),
+  });
+}
 
 function cookieFrom(response: Response): string {
   return (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
@@ -147,5 +184,21 @@ describe("PATCH /api/admin/users/:id", () => {
     const response = await patchUser(victim.id, { disabled: true }, attacker.cookie);
 
     expect(response.status).toBe(403);
+  });
+
+  it("禁用用户后他的会话实例被清掉", async () => {
+    const admin = await registerAdmin("boss@x.io");
+    const victim = await registerUser("victim@x.io");
+    const sessionId = "11111111-1111-1111-1111-111111111111";
+
+    // 让目标用户先跑一轮，registry 里就有实例了
+    await (await postChatAs(victim.cookie, { message: "你好", sessionId })).text();
+    expect(getRegistry().size()).toBe(1);
+
+    const response = await patchUser(victim.id, { disabled: true }, admin.cookie);
+
+    expect(response.status).toBe(200);
+    // 实例已清：被禁用者的会话不再占着内存，正在跑的轮次也被 abort
+    expect(getRegistry().size()).toBe(0);
   });
 });

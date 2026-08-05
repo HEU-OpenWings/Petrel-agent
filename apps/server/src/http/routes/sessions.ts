@@ -1,8 +1,10 @@
 import { getDb } from "@petrel/database";
+import { logger } from "@petrel/logger";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { createSessionService } from "../../services/session.ts";
 import type { AppEnv } from "../../types.ts";
+import { getRegistry } from "./chat.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -67,7 +69,7 @@ export const sessions = new Hono<AppEnv>()
     const id = requireUuid(c.req.param("id"));
     const service = createSessionService(getDb(), c.get("currentUser").id);
     const history = await service.loadHistory(id);
-    return c.json({ messages: history.messages, interruptedSeqs: history.interruptedSeqs });
+    return c.json({ messages: history.messages });
   })
 
   .patch("/:id", async (c) => {
@@ -90,5 +92,14 @@ export const sessions = new Hono<AppEnv>()
     if (!(await service.remove(id))) {
       throw new HTTPException(404, { message: "会话不存在" });
     }
+    // 会话已经删掉了：清内存实例是收尾，不是这次请求成功与否的一部分。
+    // evict() 内部先摘除 Map 里的条目再 abort，所以就算这里抛错，常驻实例
+    // 也已经不在 registry 里、不会继续往这个已删的会话写——失败不该让客户端
+    // 看到「删除失败」（会话其实已经没了，重试只会撞 404，体验更乱）
+    await getRegistry()
+      .evict(id)
+      .catch((error: unknown) => {
+        logger.error({ err: error, sessionId: id }, "会话已删除，但清理常驻 harness 实例失败");
+      });
     return c.json({ ok: true });
   });

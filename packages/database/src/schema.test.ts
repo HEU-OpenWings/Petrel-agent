@@ -1,7 +1,9 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { messages, sessions, userPreferences, users } from "./schema.ts";
+import { sessionEntries, sessions, userPreferences, users } from "./schema.ts";
 import { createTestDb, TEST_USER_ID, type TestDb } from "./testing.ts";
+
+const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 
 let db: TestDb;
 let reset: () => Promise<void>;
@@ -17,45 +19,10 @@ beforeEach(() => reset());
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
 
-/** 造一个会话，返回它的 id */
-async function seedSession(id = "11111111-1111-1111-1111-111111111111") {
-  await db.insert(sessions).values({ id, userId: TEST_USER_ID, title: "测试会话" });
-  return id;
-}
-
 describe("schema", () => {
   it("测试夹具用户已就位", async () => {
     const rows = await db.select().from(users).where(eq(users.id, TEST_USER_ID));
     expect(rows).toHaveLength(1);
-  });
-
-  it("同一会话的 seq 不允许重复", async () => {
-    const sessionId = await seedSession();
-    await db.insert(messages).values({ sessionId, seq: 1, role: "user", message: { role: "user" } });
-
-    await expect(
-      db.insert(messages).values({ sessionId, seq: 1, role: "user", message: { role: "user" } }),
-    ).rejects.toThrow();
-  });
-
-  it("不同会话可以有相同的 seq", async () => {
-    const first = await seedSession("11111111-1111-1111-1111-111111111111");
-    const second = await seedSession("22222222-2222-2222-2222-222222222222");
-
-    await db.insert(messages).values({ sessionId: first, seq: 1, role: "user", message: {} });
-    await db.insert(messages).values({ sessionId: second, seq: 1, role: "user", message: {} });
-
-    const rows = await db.select().from(messages);
-    expect(rows).toHaveLength(2);
-  });
-
-  it("删除会话会级联删掉它的消息", async () => {
-    const sessionId = await seedSession();
-    await db.insert(messages).values({ sessionId, seq: 1, role: "user", message: {} });
-
-    await db.delete(sessions).where(eq(sessions.id, sessionId));
-
-    expect(await db.select().from(messages)).toHaveLength(0);
   });
 
   it("会话必须挂在存在的用户下", async () => {
@@ -67,29 +34,49 @@ describe("schema", () => {
       }),
     ).rejects.toThrow();
   });
+});
 
-  it("interrupted 默认为 false", async () => {
-    const sessionId = await seedSession();
-    await db.insert(messages).values({ sessionId, seq: 1, role: "assistant", message: {} });
+describe("session_entries", () => {
+  it("条目按 parent_id 串成链，entry_seq 自增", async () => {
+    await db.insert(sessions).values({ id: SESSION_ID, userId: TEST_USER_ID, title: "t" });
 
-    const rows = await db.select().from(messages);
-    expect(rows[0]?.interrupted).toBe(false);
+    const first = "aaaaaaaa-0000-0000-0000-000000000001";
+    const second = "aaaaaaaa-0000-0000-0000-000000000002";
+    await db.insert(sessionEntries).values({
+      id: first,
+      sessionId: SESSION_ID,
+      parentId: null,
+      type: "message",
+      payload: { message: { role: "user", content: [] } },
+    });
+    await db.insert(sessionEntries).values({
+      id: second,
+      sessionId: SESSION_ID,
+      parentId: first,
+      type: "message",
+      payload: { message: { role: "assistant", content: [] } },
+    });
+
+    const rows = await db.select().from(sessionEntries).orderBy(sessionEntries.entrySeq);
+    expect(rows.map((r) => r.id)).toEqual([first, second]);
+    expect(rows.map((r) => r.parentId)).toEqual([null, first]);
+    // entry_seq 只保证单调递增，不保证从 1 开始（bigserial 是全局序列）
+    expect(Number(rows[1]?.entrySeq)).toBeGreaterThan(Number(rows[0]?.entrySeq));
   });
 
-  it("AgentMessage 原样存取，结构不丢失", async () => {
-    const sessionId = await seedSession();
-    const agentMessage = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "现在是下午三点" },
-        { type: "toolCall", id: "call_1", name: "get_current_time", arguments: {} },
-      ],
-    };
+  it("删除会话级联删除条目", async () => {
+    await db.insert(sessions).values({ id: SESSION_ID, userId: TEST_USER_ID, title: "t" });
+    await db.insert(sessionEntries).values({
+      id: "aaaaaaaa-0000-0000-0000-000000000003",
+      sessionId: SESSION_ID,
+      parentId: null,
+      type: "leaf",
+      payload: { targetId: null },
+    });
 
-    await db.insert(messages).values({ sessionId, seq: 1, role: "assistant", message: agentMessage });
+    await db.delete(sessions).where(eq(sessions.id, SESSION_ID));
 
-    const rows = await db.select().from(messages);
-    expect(rows[0]?.message).toEqual(agentMessage);
+    expect(await db.select().from(sessionEntries)).toHaveLength(0);
   });
 
   it("偏好一人一行：同一用户插两次会撞主键", async () => {

@@ -24,7 +24,7 @@ const NUL = String.fromCharCode(0);
  * 全量写入语义下的字段解析：缺失、null、清完为空一律归一成 null（= 跟随系统默认）。
  *
  * 不归一空串的后果很具体：「清空 system prompt」会存一个 ""，然后被当作有效值
- * 传给 createAgent，agent 拿到的是一个空 prompt 而不是 DEFAULT_SYSTEM_PROMPT。
+ * 传给 createHarness，harness 拿到的是一个空 prompt 而不是 DEFAULT_SYSTEM_PROMPT。
  *
  * NUL 要单独清掉：trim() 不管它，但 Postgres 的 text 存不了 NUL，漏过去是 500。
  */

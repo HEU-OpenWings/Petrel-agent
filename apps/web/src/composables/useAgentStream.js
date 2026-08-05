@@ -1,5 +1,5 @@
 import { computed, ref, shallowRef } from 'vue'
-import { streamChat } from '@/apis/chat_api'
+import { abortChat, streamChat } from '@/apis/chat_api'
 
 /**
  * 把 pi 的 AgentEvent 序列归约为消息状态。
@@ -16,6 +16,9 @@ export function useAgentStream() {
   const running = ref(false)
   const error = ref('')
   const controller = shallowRef(null)
+  /** 当前这一轮的会话 id。stop() 要用它调后端接口，而 send 之外没有别的地方知道它。
+   * 只在这一轮生成期间有效，send() 收尾时会清空，避免被后续误用于对错会话调 abortChat */
+  const activeSessionId = ref(null)
   /** 当前正在流式写入的消息下标，由 message_start 确定 */
   let activeIndex = -1
 
@@ -30,9 +33,11 @@ export function useAgentStream() {
 
   /** 切换会话时把历史消息灌进来。归约逻辑不参与，直接覆盖整个数组。 */
   function loadHistory(history) {
-    // 先掐掉上一轮：用户常在等回答时就切走，不中断的话旧流的消息、工具调用、
-    // 错误文案会继续写进新会话的界面，running 也会一直卡在 true 让输入框禁用
-    abort()
+    // 只断开本地接收：切走会话不等于要停止上一轮生成，harness 是常驻的，
+    // 上一个会话的回答会在服务端继续跑完并落库，用户切回来能看到完整结果。
+    // 不断开的话旧流的消息、工具调用、错误文案会继续写进新会话的界面，
+    // running 也会一直卡在 true 让输入框禁用
+    disconnect()
     messages.value = Array.isArray(history) ? [...history] : []
     toolCalls.value = {}
     error.value = ''
@@ -101,6 +106,7 @@ export function useAgentStream() {
     running.value = true
     error.value = ''
     controller.value = new AbortController()
+    activeSessionId.value = options.sessionId
 
     try {
       await streamChat(
@@ -128,12 +134,38 @@ export function useAgentStream() {
     } finally {
       running.value = false
       controller.value = null
+      // 这一轮已经结束（无论正常收尾还是被中断），activeSessionId 不再对应
+      // 任何还在跑的生成，清掉以免被后续误用于对着别的会话调 abortChat
+      activeSessionId.value = null
     }
   }
 
-  function abort() {
+  /**
+   * 只断开本地接收，不影响服务端的生成。
+   *
+   * 给「用户只是切走看别的会话/开新会话」的场景用：harness 是常驻的，
+   * 断开 SSE 只是不再接收推送，上一轮生成会继续跑完并落库。
+   */
+  function disconnect() {
     controller.value?.abort()
   }
 
-  return { messages, toolCalls, running, error, canSend, send, abort, reset, loadHistory }
+  /**
+   * 真正停止生成（停止按钮用）。
+   *
+   * 两件事都要做：先调后端接口让 agent 真的停下（harness 是常驻的，
+   * 断开 SSE 只是不再接收推送，生成会一直跑完），再断开本地读取。
+   * 顺序不能反：先断流会让下面那次 await 处在组件收尾流程里，容易被跳过。
+   */
+  async function stop() {
+    try {
+      if (activeSessionId.value) {
+        await abortChat(activeSessionId.value)
+      }
+    } finally {
+      disconnect()
+    }
+  }
+
+  return { messages, toolCalls, running, error, canSend, send, stop, disconnect, reset, loadHistory }
 }

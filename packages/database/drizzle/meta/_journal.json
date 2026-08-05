@@ -29,6 +29,20 @@
       "when": 1785824945641,
       "tag": "0003_bored_william_stryker",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785894498530,
+      "tag": "0004_add_session_entries",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785894512374,
+      "tag": "0005_drop_messages",
+      "breakpoints": true
     }
   ]
 }

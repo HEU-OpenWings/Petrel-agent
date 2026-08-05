@@ -1,10 +1,11 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import { type CreateAgentOptions, DEFAULT_SYSTEM_PROMPT } from "@petrel/agent";
-import { createMessageRepository } from "@petrel/database";
+import { type CreateHarnessOptions, DEFAULT_SYSTEM_PROMPT } from "@petrel/agent";
+import { createEntryRepository } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService } from "../../services/session.ts";
 import { app } from "../app.ts";
+import { __resetRegistry } from "./chat.ts";
 
 /**
  * state 用 vi.hoisted：vi.mock 会被提升到 import 之上，工厂里不能引用普通的顶层变量。
@@ -16,9 +17,9 @@ const state = vi.hoisted(() => ({
   dbBroken: false,
   /** 打开后只有会话仓储的查询失败，鉴权用的用户查询照常，用来模拟「已登录但会话表读写不了」 */
   sessionRepoBroken: false,
-  agentOptions: undefined as CreateAgentOptions | undefined,
-  /** 记录路由实际传给 createAgent 的选项，用来断言 model 有没有透传 */
-  seenAgentOptions: undefined as CreateAgentOptions | undefined,
+  harnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
+  /** 记录路由实际传给 createHarness 的选项，用来断言 modelId 有没有透传 */
+  seenHarnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
 }));
 
 /**
@@ -37,9 +38,9 @@ vi.mock("@petrel/database", async (importOriginal) => {
       return state.db as unknown as ReturnType<typeof actual.getDb>;
     },
     /**
-     * 故障粒度要比 getDb 更细：鉴权（createUserRepository）与会话/消息仓储走的是
+     * 故障粒度要比 getDb 更细：鉴权（createUserRepository）与会话仓储走的是
      * 同一个 db，整个 getDb 抛掉就只能覆盖「身份都验不出来」那条路径，
-     * prepareSession 的 catch-and-degrade 分支（已登录、但会话仓储查不动）就没人覆盖了。
+     * registry.acquire 的 catch-and-degrade 分支（已登录、但会话仓储查不动）就没人覆盖了。
      * 这里只让会话仓储失败，且失败发生在查询时而不是建仓储时——真实故障就是这个形态。
      */
     createSessionRepository: (...args: Parameters<typeof actual.createSessionRepository>) => {
@@ -51,20 +52,20 @@ vi.mock("@petrel/database", async (importOriginal) => {
 });
 
 /**
- * chat 路由里的 createAgent() 是直接调的，测试得让它走 faux provider 而不是真实模型
- * （仓库里没有 SILICONFLOW_API_KEY）。
+ * chat 路由里的 registry 装配的是真的 createHarness()，测试得让它走 faux provider
+ * 而不是真实模型（仓库里没有 SILICONFLOW_API_KEY）。
  *
  * 没有给生产代码开注入口子：路由要保持薄，而且那个口子只有测试会用。
- * 改成在模块边界包一层——底下调的仍是真的 createAgent，只是补上 faux 的 models/model，
- * 所以 agent loop、事件序列、attachPersistence 都是真在跑，没有 mock agent 内部。
+ * 改成在模块边界包一层——底下调的仍是真的 createHarness，只是补上 faux 的 models/model，
+ * 所以 harness、agent loop、落库都是真在跑，没有 mock 任何内部。
  */
 vi.mock("@petrel/agent", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@petrel/agent")>();
   return {
     ...actual,
-    createAgent: (options: CreateAgentOptions = {}) => {
-      state.seenAgentOptions = options;
-      return actual.createAgent({ ...options, ...state.agentOptions });
+    createHarness: (options: CreateHarnessOptions) => {
+      state.seenHarnessOptions = options;
+      return actual.createHarness({ ...options, ...state.harnessOptions });
     },
   };
 });
@@ -74,13 +75,12 @@ const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 /**
  * 分块由 tokenSize 决定：faux 每块吐 tokenSize * 4 个字符，min/max 都取 1 就是每块 4 字。
  * 中断用例要靠这个把回答切成多块，才有「流到一半」这个时刻。
- *(同 services/session.test.ts)
  */
 const CHUNKED = { tokensPerSecond: 20, tokenSize: { min: 1, max: 1 } };
 const LONG_ANSWER = "一".repeat(40);
 
 let service: ReturnType<typeof createSessionService>;
-let messageRepo: ReturnType<typeof createMessageRepository>;
+let entryRepo: ReturnType<typeof createEntryRepository>;
 let faux: ReturnType<typeof fauxProvider>;
 let reset: () => Promise<void>;
 let close: () => Promise<void>;
@@ -97,12 +97,17 @@ async function registerUser(email: string): Promise<{ cookie: string; id: string
   return { cookie: (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
 }
 
-/** 换一套 faux provider 并让后续请求的 createAgent 用它；默认是不分块的快回答 */
+/** 注册一个新用户并返回它的 cookie，用来跨用户测越权场景 */
+async function registerAndLogin(email: string): Promise<string> {
+  return (await registerUser(email)).cookie;
+}
+
+/** 换一套 faux provider 并让后续请求的 createHarness 用它；默认是不分块的快回答 */
 function useFaux(options: Parameters<typeof fauxProvider>[0] = { tokensPerSecond: 10_000 }) {
   faux = fauxProvider(options);
   const models = createModels();
   models.setProvider(faux.provider);
-  state.agentOptions = { models, model: faux.getModel() };
+  state.harnessOptions = { models, model: faux.getModel() };
 }
 
 // 建库慢，整个文件复用一个实例，用例之间靠清表隔离
@@ -111,38 +116,76 @@ beforeAll(async () => {
   state.db = testDb.db;
   reset = testDb.reset;
   close = testDb.close;
-  // seq 不由 service 暴露，要断言它只能下探到 repository
-  messageRepo = createMessageRepository(testDb.db);
+  entryRepo = createEntryRepository(testDb.db);
 });
 
 beforeEach(async () => {
   state.dbBroken = false;
   state.sessionRepoBroken = false;
+  state.harnessOptions = undefined;
   useFaux();
   await reset();
+  __resetRegistry();
   const user = await registerUser("a@x.io");
   cookie = user.cookie;
   service = createSessionService(state.db!, user.id);
-  state.seenAgentOptions = undefined;
+  state.seenHarnessOptions = undefined;
 });
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
 
-function post(body: string, init: RequestInit = {}) {
+/** 发一次对话请求，带当前用户的 cookie */
+function postChat(
+  body: { message: string; sessionId: string; systemPrompt?: unknown },
+  init: RequestInit = {},
+) {
   return app.request("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json", Cookie: cookie },
-    body,
+    body: JSON.stringify(body),
     ...init,
   });
 }
 
-/** 跑完一轮对话，返回读干净的 SSE 文本。流读完就意味着 handler（含落库）已结束 */
-async function chatTurn(body: Record<string, unknown>) {
-  const response = await post(JSON.stringify(body));
-  const text = await response.text();
-  return { response, text };
+/** 把 SSE 流读干，返回原文 */
+async function readAll(response: Response): Promise<string> {
+  return response.text();
+}
+
+/**
+ * 持续把响应流读干，同时提供「第一个字节已到达」的信号。
+ *
+ * 只读一次就撒手不管会触发 ReadableStream 的背压：writeSSE 迟迟等不到消费者，
+ * 会一路阻塞回 harness 的事件订阅回调，进而卡住 registry 里那份维护 running
+ * 标记与落库的常驻订阅——同一会话的 abort 请求因此永远等不到 stopReason。
+ * 「用户点了停止但没关标签页」是真实场景，连接必须持续被读干。
+ */
+function drain(response: Response): { firstByte: Promise<void>; done: Promise<string> } {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("SSE 响应没有 body");
+  const decoder = new TextDecoder();
+  let text = "";
+  let resolveFirstByte = () => {};
+  const firstByte = new Promise<void>((resolve) => {
+    resolveFirstByte = resolve;
+  });
+  let sawFirstByte = false;
+
+  const done = (async () => {
+    for (;;) {
+      const { done: finished, value } = await reader.read();
+      if (finished) break;
+      text += decoder.decode(value, { stream: true });
+      if (!sawFirstByte) {
+        sawFirstByte = true;
+        resolveFirstByte();
+      }
+    }
+    return text;
+  })();
+
+  return { firstByte, done };
 }
 
 /** 把 SSE 文本还原成 (event, data) 对，用来断言协议没变 */
@@ -158,62 +201,12 @@ function parseSse(text: string): { event: string; data: unknown }[] {
     });
 }
 
-/** 取一条消息里的纯文本，pi 的 user/assistant 消息 content 都是内容块数组 */
-function textOf(message: unknown): string {
-  const content = (message as { content?: { text?: string }[] }).content ?? [];
-  return content.map((block) => block.text ?? "").join("");
-}
-
-function roleOf(message: unknown): string {
-  return (message as { role?: string }).role ?? "";
-}
-
-async function seqsOf(sessionId: string): Promise<number[]> {
-  return (await messageRepo.listBySession(sessionId)).map((row) => row.seq);
-}
-
-/** 中断之后的落库发生在 HTTP 响应之外，只能轮询等它落定 */
-async function waitFor(label: string, check: () => Promise<boolean>) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`等待超时：${label}`);
-}
-
-/** 这一帧是不是「助手已经吐出至少一个字」 */
-function hasAssistantText(event: unknown): boolean {
-  const frame = event as { type?: string; message?: { role?: string; content?: { text?: string }[] } };
-  if (frame.type !== "message_update" || frame.message?.role !== "assistant") return false;
-  return (frame.message.content ?? []).some((block) => (block.text ?? "").length > 0);
-}
-
-/**
- * 等助手吐出第一段文本再中断，模拟用户点「停止」——
- * ChatView 的 onSendOrStop() 走的就是 useAgentStream.abort() → AbortController.abort()。
- *
- * 不能只读固定帧数就断：前几帧是 agent_start / turn_start / 用户消息，
- * 那时候断掉的半截消息是空的，「存下来的比完整回答短且非空」这个断言就没了区分力。
- */
-async function abortMidStream(response: Response, controller: AbortController) {
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("SSE 响应没有 body");
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let streaming = false;
-
-  while (!streaming) {
-    const { done, value } = await reader.read();
-    if (done) throw new Error("流已经结束，没能在中途中断");
-    buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split("\n\n");
-    // 最后一段可能只收了一半，留到下一轮再拼
-    buffer = blocks.pop() ?? "";
-    streaming = parseSse(blocks.join("\n\n")).some((entry) => hasAssistantText(entry.data));
-  }
-
-  controller.abort();
-  await reader.cancel().catch(() => undefined);
+/** 会话里所有 message 条目的 role 序列，用来替代原先对 messages 表的 seq 断言 */
+async function storedRoles(sessionId = SESSION_ID): Promise<string[]> {
+  const rows = await entryRepo.listAll(sessionId);
+  return rows
+    .filter((row) => row.type === "message")
+    .map((row) => (row.payload as { message: { role: string } }).message.role);
 }
 
 describe("POST /api/chat 请求体校验", () => {
@@ -231,7 +224,11 @@ describe("POST /api/chat 请求体校验", () => {
     { name: "message 是数组", body: '{"message":[]}' },
     { name: "message 只有空白", body: '{"message":"   "}' },
   ])("$name 返回 400 而不是 500", async ({ body }) => {
-    const response = await post(body);
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body,
+    });
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
@@ -240,7 +237,11 @@ describe("POST /api/chat 请求体校验", () => {
   });
 
   it("请求体不是 JSON 返回 400", async () => {
-    const response = await post("not json");
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: "not json",
+    });
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: { message: "请求体必须是 JSON" } });
@@ -252,35 +253,33 @@ describe("POST /api/chat 请求体校验", () => {
     { name: "sessionId 是数字", body: { message: "你好", sessionId: 123 } },
     { name: "sessionId 是 null", body: { message: "你好", sessionId: null } },
   ])("$name 返回 400，且不碰数据库", async ({ body }) => {
-    const response = await post(JSON.stringify(body));
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify(body),
+    });
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: { message: "sessionId 必须是 UUID" } });
-    // 校验在 prepareSession 之前，所以既没有建会话也没有写消息
+    // 校验在 registry.acquire 之前，所以既没有建会话也没有写条目
     expect(await service.list()).toEqual([]);
   });
 });
 
 describe("POST /api/chat 会话持久化", () => {
-  it("一轮对话后 user 与 assistant 都落库，seq 从 1 连续", async () => {
-    faux.setResponses([fauxAssistantMessage([fauxText("你好，我是 Petrel")])]);
+  it("一轮对话后 user 与 assistant 都进了会话树", async () => {
+    faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
 
-    const { response } = await chatTurn({ message: "你好", sessionId: SESSION_ID });
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    await readAll(response);
 
-    expect(response.status).toBe(200);
-
-    const history = await service.loadHistory(SESSION_ID);
-    expect(history.messages.map(roleOf)).toEqual(["user", "assistant"]);
-    expect(textOf(history.messages[0])).toBe("你好");
-    expect(textOf(history.messages[1])).toBe("你好，我是 Petrel");
-    expect(await seqsOf(SESSION_ID)).toEqual([1, 2]);
-    expect(history.interruptedSeqs).toEqual([]);
+    expect(await storedRoles()).toEqual(["user", "assistant"]);
   });
 
   it("会话不存在时自动建出来，标题取首条消息前 30 字", async () => {
     faux.setResponses([fauxAssistantMessage([fauxText("好的")])]);
 
-    await chatTurn({ message: "一".repeat(40), sessionId: SESSION_ID });
+    await readAll(await postChat({ message: "一".repeat(40), sessionId: SESSION_ID }));
 
     const list = await service.list();
     expect(list).toHaveLength(1);
@@ -288,180 +287,139 @@ describe("POST /api/chat 会话持久化", () => {
     expect(list[0]?.title).toBe(`${"一".repeat(30)}…`);
   });
 
-  it("第二轮把上一轮的历史回灌给模型，seq 接着往下排", async () => {
+  it("第二轮能看到第一轮的上下文，不需要调用方回灌", async () => {
     faux.setResponses([fauxAssistantMessage([fauxText("第一轮回答")])]);
-    await chatTurn({ message: "第一轮提问", sessionId: SESSION_ID });
+    await readAll(await postChat({ message: "第一个问题", sessionId: SESSION_ID }));
 
-    // 用工厂形态的响应把 provider 实际收到的上下文录下来，
-    // 这样断言的是「模型真看见了历史」，而不只是库里的行数对得上
-    const seen: { messages: unknown[]; sessionId?: string }[] = [];
+    let seen: unknown[] | undefined;
     faux.setResponses([
-      (context, options) => {
-        seen.push({ messages: context.messages, sessionId: options?.sessionId });
+      (context) => {
+        seen = context.messages;
         return fauxAssistantMessage([fauxText("第二轮回答")]);
       },
     ]);
-    await chatTurn({ message: "第二轮提问", sessionId: SESSION_ID });
+    await readAll(await postChat({ message: "第二个问题", sessionId: SESSION_ID }));
 
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.messages.map(roleOf)).toEqual(["user", "assistant", "user"]);
-    expect(seen[0]?.messages.map(textOf)).toEqual(["第一轮提问", "第一轮回答", "第二轮提问"]);
-    // pi 的 Agent 顶层 sessionId 会随每次请求下发给 provider（agent-loop 把 config 整个摊给 streamFn）
-    expect(seen[0]?.sessionId).toBe(SESSION_ID);
-
-    const history = await service.loadHistory(SESSION_ID);
-    // 1、2 是上一轮，3、4 是这一轮：没有从 1 重来，也没有把回灌的历史重复写一遍
-    expect(history.messages).toHaveLength(4);
-    expect(await seqsOf(SESSION_ID)).toEqual([1, 2, 3, 4]);
+    // 历史由 harness 自己从 session 读出来，chat 路由一行回灌代码都没有
+    expect(JSON.stringify(seen)).toContain("第一轮回答");
+    expect(await storedRoles()).toEqual(["user", "assistant", "user", "assistant"]);
   });
 
-  /**
-   * Critical 回归之一：两个客户端（多标签页 / 多设备）同时往一个会话发消息。
-   * seq 曾经由路由在请求开始时算出，两个请求会算出同一个起点，后一轮整轮被吞掉。
-   */
-  it("并发打同一个 sessionId，两轮都完整落库且 seq 连续无洞", async () => {
-    faux.setResponses([
-      fauxAssistantMessage([fauxText("回答 A")]),
-      fauxAssistantMessage([fauxText("回答 B")]),
-    ]);
-
-    const [first, second] = await Promise.all([
-      chatTurn({ message: "并发 A", sessionId: SESSION_ID }),
-      chatTurn({ message: "并发 B", sessionId: SESSION_ID }),
-    ]);
-
-    expect([first.response.status, second.response.status]).toEqual([200, 200]);
-
-    const history = await service.loadHistory(SESSION_ID);
-    expect(await seqsOf(SESSION_ID)).toEqual([1, 2, 3, 4]);
-    // 四条一条不少（落库顺序取决于调度，所以两边都排序后再比）
-    expect(history.messages.map(textOf).sort()).toEqual(["并发 A", "并发 B", "回答 A", "回答 B"].sort());
-  });
-
-  /**
-   * Critical 回归之二，也是真正会天天发生的那个：中断后立刻重发。
-   *
-   * ChatView 的 onSendOrStop() 是一键停止，useAgentStream 的 finally 让 running 立刻变 false，
-   * 用户马上就能再发。但上一轮 agent_end 的半截消息落库发生在 HTTP 响应关闭之后，
-   * 第二个请求这时读到的序号是过期的——第二轮曾经整轮消失。
-   */
-  it("中断后立刻重发，两轮消息都在，seq 连续无洞", async () => {
-    useFaux(CHUNKED);
-    faux.setResponses([
-      fauxAssistantMessage([fauxText(LONG_ANSWER)]),
-      fauxAssistantMessage([fauxText("第二次回答")]),
-    ]);
-
-    const controller = new AbortController();
-    const aborted = await post(JSON.stringify({ message: "第一次提问", sessionId: SESSION_ID }), {
-      signal: controller.signal,
-    });
-    await abortMidStream(aborted, controller);
-
-    // 不等上一轮落库，立刻重发——这正是竞态窗口
-    await chatTurn({ message: "第二次提问", sessionId: SESSION_ID });
-
-    await waitFor("两轮消息全部落库", async () => (await seqsOf(SESSION_ID)).length === 4);
-
-    const history = await service.loadHistory(SESSION_ID);
-    expect(await seqsOf(SESSION_ID)).toEqual([1, 2, 3, 4]);
-    // 第二轮的提问与回答都还在（曾经整轮丢失）
-    const texts = history.messages.map(textOf);
-    expect(texts).toContain("第二次提问");
-    expect(texts).toContain("第二次回答");
-    // 被打断的那条半截助手消息也在，且带了中断标记
-    expect(history.interruptedSeqs).toHaveLength(1);
-  });
-
-  /**
-   * 已知问题（I1）：中断后重发会让 transcript 的顺序与对话的逻辑顺序不一致。
-   *
-   * seq 反映的是「写入时刻」，而对话的逻辑顺序是「轮次」。被打断的半截助手消息
-   * 在 agent_end 才落库，那时 HTTP 响应早就关了，于是它必然排到下一轮用户消息**后面**：
-   * 落库顺序变成 user → user → assistant(半截) → assistant，出现两条连续的 user。
-   *
-   * 这不是 seq 改由数据库分配带来的退化——改之前这一轮是整个丢掉的，比顺序错更糟。
-   * 但它是修好丢消息之后才浮出来的，所以这条用例把当前（错误的）行为钉住：
-   * 谁改动了半截消息的落库时机，这里会立刻变红，逼着人正面处理顺序问题。
-   *
-   * 为什么现在不修：可行的修法是把半截消息的落库从 agent_end 提前到 message_end 里
-   * 那条 aborted 消息，但这要先在**真实模型**上确认 aborted 消息的内容确实等于 partial。
-   * 仓库里没有 SILICONFLOW_API_KEY，faux 的行为不能直接外推到真实 provider。
-   *
-   * 影响面：SiliconFlow 走 OpenAI 兼容接口，容忍连续同角色消息，所以今天不炸；
-   * 但 Anthropic Messages API 严格要求 user/assistant 交替，换 provider 会直接 400。
-   */
-  it("【已知问题】中断后重发，半截消息排到了下一轮用户消息之后", async () => {
-    useFaux(CHUNKED);
-    faux.setResponses([
-      fauxAssistantMessage([fauxText(LONG_ANSWER)]),
-      fauxAssistantMessage([fauxText("第二次回答")]),
-    ]);
-
-    const controller = new AbortController();
-    const aborted = await post(JSON.stringify({ message: "第一次提问", sessionId: SESSION_ID }), {
-      signal: controller.signal,
-    });
-    await abortMidStream(aborted, controller);
-    await chatTurn({ message: "第二次提问", sessionId: SESSION_ID });
-    await waitFor("两轮消息全部落库", async () => (await seqsOf(SESSION_ID)).length === 4);
-
-    // 落库顺序：两条 user 连在一起，半截回答被挤到了第三位
-    const stored = await messageRepo.listBySession(SESSION_ID);
-    expect(stored.map((row) => [row.seq, row.role, row.interrupted])).toEqual([
-      [1, "user", false],
-      [2, "user", false],
-      [3, "assistant", true],
-      [4, "assistant", false],
-    ]);
-    expect(stored.map((row) => textOf(row.message))).toEqual([
-      "第一次提问",
-      "第二次提问",
-      expect.stringMatching(/^一+$/),
-      "第二次回答",
-    ]);
-
-    // 而回灌给模型的就是这个顺序：第三轮开头是两条连续的 user
-    const seen: string[][] = [];
-    faux.setResponses([
-      (context) => {
-        seen.push(context.messages.map((item) => `${roleOf(item)}:${textOf(item)}`));
-        return fauxAssistantMessage([fauxText("第三次回答")]);
-      },
-    ]);
-    await chatTurn({ message: "第三次提问", sessionId: SESSION_ID });
-
-    expect(seen[0]?.slice(0, 2)).toEqual(["user:第一次提问", "user:第二次提问"]);
-  });
-
-  /**
-   * 客户端断开连接 → streamSSE 的 onAbort → agent.abort()。
-   * 没有这条接线，模型会在客户端已经走了之后继续把整段生成完，白烧 token。
-   */
-  it("客户端中断时 agent 跟着停，落库的是半截回答", async () => {
+  it("连接断开后 agent 继续跑完，回答完整落库", async () => {
+    // 分块吐字才有「流到一半」这个时刻；tokenSize/tokensPerSecond 是 fauxProvider
+    // 实例化时定死的，不能事后切换，所以要整个换一套 faux（同 useFaux 的用法）
     useFaux(CHUNKED);
     faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
 
     const controller = new AbortController();
-    const response = await post(JSON.stringify({ message: "你好", sessionId: SESSION_ID }), {
-      signal: controller.signal,
+    const response = await app.request(
+      "/api/chat",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: cookie },
+        body: JSON.stringify({ message: "讲个长故事", sessionId: SESSION_ID }),
+        signal: controller.signal,
+      },
+      undefined,
+    );
+    // 读到第一块就掐断连接
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("SSE 响应没有 body");
+    await reader.read();
+    controller.abort();
+    await reader.cancel().catch(() => undefined);
+
+    // 关键：断开不再等于停止，等它自己跑完
+    await vi.waitFor(async () => {
+      const roles = await storedRoles();
+      expect(roles).toEqual(["user", "assistant"]);
+    }, 5000);
+    const rows = await entryRepo.listAll(SESSION_ID);
+    expect(JSON.stringify(rows)).toContain(LONG_ANSWER);
+  });
+
+  it("同一会话连发两条，第二条排队后也落库", async () => {
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("第一轮回答")]),
+      fauxAssistantMessage([fauxText("第二轮回答")]),
+    ]);
+
+    const [first, second] = await Promise.all([
+      postChat({ message: "第一个问题", sessionId: SESSION_ID }),
+      postChat({ message: "第二个问题", sessionId: SESSION_ID }),
+    ]);
+    await Promise.all([readAll(first), readAll(second)]);
+
+    await vi.waitFor(async () => {
+      expect(await storedRoles()).toEqual(["user", "assistant", "user", "assistant"]);
+    }, 5000);
+  });
+
+  it("POST /api/chat/abort 停掉正在跑的会话", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+
+    const response = await postChat({ message: "讲个长故事", sessionId: SESSION_ID });
+    // 客户端连接始终开着（用户没关标签页），所以要持续读干，否则背压会卡住 harness
+    const { firstByte, done } = drain(response);
+    await firstByte;
+
+    const aborted = await app.request("/api/chat/abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ sessionId: SESSION_ID }),
     });
-    await abortMidStream(response, controller);
+    expect(aborted.status).toBe(200);
 
-    await waitFor("半截消息落库", async () => (await seqsOf(SESSION_ID)).length === 2);
+    // 流会在 harness 跑完这一轮（含 abort 触发的收尾）后自然结束
+    await done;
+    // 半截回答仍然落库，标记由消息自带的 stopReason 表达，不再有 interrupted 列
+    await vi.waitFor(async () => {
+      const rows = await entryRepo.listAll(SESSION_ID);
+      expect(JSON.stringify(rows)).toContain('"stopReason":"aborted"');
+    }, 5000);
+  });
 
-    const history = await service.loadHistory(SESSION_ID);
-    expect(history.messages.map(roleOf)).toEqual(["user", "assistant"]);
-    expect(history.interruptedSeqs).toEqual([2]);
-    // 存下来的是中断瞬间已经出的那部分：非空，但短于完整回答
-    const persisted = textOf(history.messages[1]);
-    expect(persisted.length).toBeGreaterThan(0);
-    expect(persisted.length).toBeLessThan(LONG_ANSWER.length);
+  /**
+   * 核心回归用例：曾经 subscribe 回调里直接 `await stream.writeSSE(...)`，
+   * 客户端完全不读流时 hono streamSSE 的 TransformStream 背压会让 writer.write()
+   * 永不 resolve，直接冻死 pi 的 emitAny/emitOwn（串行 await、无超时），
+   * 进而冻住 registry 维护 running 标记的常驻订阅——同会话的 abort 会跟着永远挂住。
+   *
+   * 故意不读 postChat() 返回的响应体，模拟「连上了但从不读流」的客户端
+   * （比如 curl 不接 --no-buffer，或者只是挂着的浏览器标签页），
+   * 断言同会话的 abort 请求仍能在默认的测试超时内返回 200。
+   */
+  it("慢客户端不读流也不会卡住 harness：同会话的 abort 仍然及时返回", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+
+    // 不读它的 body，故意留着背压
+    await postChat({ message: "讲个长故事", sessionId: SESSION_ID });
+
+    const aborted = await app.request("/api/chat/abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ sessionId: SESSION_ID }),
+    });
+
+    expect(aborted.status).toBe(200);
+  });
+
+  it("abort 别人的会话返回 403", async () => {
+    const otherCookie = await registerAndLogin("other@example.com");
+    const response = await app.request("/api/chat/abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: otherCookie },
+      body: JSON.stringify({ sessionId: SESSION_ID }),
+    });
+
+    expect(response.status).toBe(403);
   });
 
   /**
    * Task 10 之前这里断言的是「数据库不可用时照常流式输出，只是这一轮不落库」——
-   * 那时 chat 没有认证，prepareSession 的 try/catch 是数据库唯一会被摸到的地方。
+   * 那时 chat 没有认证，registry.acquire 的 try/catch 是数据库唯一会被摸到的地方。
    * 挂上 requireAuth 之后，鉴权本身也要查库（resolveUser 用 cookie 里的 sub 查用户），
    * 库不可用时连身份都验不出来，请求进不到 handler 就已经失败——这是 fail-closed，
    * 不是回归：宁可拒绝服务，也不能在验不出身份时还把请求当成已登录处理。
@@ -470,32 +428,54 @@ describe("POST /api/chat 会话持久化", () => {
     state.dbBroken = true;
     faux.setResponses([fauxAssistantMessage([fauxText("照常回答")])]);
 
-    const { response, text } = await chatTurn({ message: "你好", sessionId: SESSION_ID });
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const text = await readAll(response);
 
     expect(response.status).toBe(500);
     expect(text).not.toContain("照常回答");
 
     state.dbBroken = false;
     expect(await service.list()).toEqual([]);
-    expect((await service.loadHistory(SESSION_ID)).messages).toEqual([]);
   });
 
   /**
-   * 上面那条覆盖的是「身份都验不出来」，这条才是 prepareSession 的降级分支：
+   * 上面那条覆盖的是「身份都验不出来」，这条才是 registry.acquire 的降级分支：
    * 用户已经登录（鉴权的用户查询正常），但会话仓储查不动。
    * 这时对话必须照常进行，只是这一轮不落库——能用但记不住，好过直接不能用。
    */
   it("已登录但会话仓储查库失败时照常流式输出，只是这一轮不落库", async () => {
     state.sessionRepoBroken = true;
-    faux.setResponses([fauxAssistantMessage([fauxText("照常回答")])]);
+    faux.setResponses([fauxAssistantMessage([fauxText("降级也能答")])]);
 
-    const { response, text } = await chatTurn({ message: "你好", sessionId: SESSION_ID });
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const body = await readAll(response);
 
+    // upsert 抛错 → 降级成内存会话，SSE 照常输出
     expect(response.status).toBe(200);
-    expect(text).toContain("照常回答");
+    expect(body).toContain("降级也能答");
+    expect(body).not.toContain("event: error");
+    // 但这一轮什么都没落库
+    expect(await storedRoles()).toEqual([]);
+  });
 
-    expect(await service.list()).toEqual([]);
-    expect(await seqsOf(SESSION_ID)).toEqual([]);
+  /**
+   * 与上一条的区别是这条存在的价值：upsert 返回 false 是越权（403），
+   * upsert 抛错是故障（降级）。两者共用一个返回值就会把越权也降级成
+   * 「照常对话」，等于把归属校验绕过去了。
+   */
+  it("会话 id 属于别人时返回 403，不降级", async () => {
+    // 先用当前用户建出这个会话
+    faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
+    await readAll(await postChat({ message: "你好", sessionId: SESSION_ID }));
+
+    const otherCookie = await registerAndLogin("other@example.com");
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: otherCookie },
+      body: JSON.stringify({ message: "偷看", sessionId: SESSION_ID }),
+    });
+
+    expect(response.status).toBe(403);
   });
 });
 
@@ -515,7 +495,7 @@ describe("POST /api/chat systemPrompt", () => {
   it("合法的 systemPrompt 会传给模型", async () => {
     const seen = recordSystemPrompt();
 
-    await chatTurn({ message: "你好", sessionId: SESSION_ID, systemPrompt: "你是测试助手" });
+    await readAll(await postChat({ message: "你好", sessionId: SESSION_ID, systemPrompt: "你是测试助手" }));
 
     expect(seen).toEqual(["你是测试助手"]);
   });
@@ -528,9 +508,35 @@ describe("POST /api/chat systemPrompt", () => {
   ])("systemPrompt 是$name 时被丢弃，回落到默认提示词", async ({ value }) => {
     const seen = recordSystemPrompt();
 
-    await chatTurn({ message: "你好", sessionId: SESSION_ID, systemPrompt: value });
+    await readAll(await postChat({ message: "你好", sessionId: SESSION_ID, systemPrompt: value }));
 
     expect(seen).toEqual([DEFAULT_SYSTEM_PROMPT]);
+  });
+
+  it("复用常驻实例时使用最新的 systemPrompt", async () => {
+    const seen: (string | undefined)[] = [];
+    faux.setResponses([
+      (context) => {
+        seen.push(context.systemPrompt);
+        return fauxAssistantMessage([fauxText("一")]);
+      },
+      (context) => {
+        seen.push(context.systemPrompt);
+        return fauxAssistantMessage([fauxText("二")]);
+      },
+      (context) => {
+        seen.push(context.systemPrompt);
+        return fauxAssistantMessage([fauxText("三")]);
+      },
+    ]);
+
+    await readAll(await postChat({ message: "一", sessionId: SESSION_ID, systemPrompt: "第一个提示" }));
+    await readAll(await postChat({ message: "二", sessionId: SESSION_ID, systemPrompt: "第二个提示" }));
+    await readAll(await postChat({ message: "三", sessionId: SESSION_ID }));
+
+    expect(seen[0]).toBe("第一个提示");
+    expect(seen[1]).toBe("第二个提示");
+    expect(seen[2]).toBe(DEFAULT_SYSTEM_PROMPT);
   });
 });
 
@@ -538,30 +544,36 @@ describe("POST /api/chat SSE 协议", () => {
   it("仍然只发 event: agent，data 是 pi 的 AgentEvent 原文", async () => {
     faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
 
-    const { response, text } = await chatTurn({ message: "你好", sessionId: SESSION_ID });
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const text = await readAll(response);
 
     expect(response.headers.get("content-type")).toContain("text/event-stream");
 
     const events = parseSse(text);
     expect(events.every((entry) => entry.event === "agent")).toBe(true);
 
-    // 前端 useAgentStream.js 就是按这些 type 归约消息状态的，顺序和名字都不能变
+    // 前端 useAgentStream.js 就是按这些 type 归约消息状态的，顺序和名字都不能变。
+    // AgentHarness 比裸 Agent 多发 after_provider_response / save_point / settled——
+    // 这是它自己落库与维护 running 标记要用的信号，前端按类型归约，多出来的类型不影响
     const types = events.map((entry) => (entry.data as { type: string }).type);
     expect(types.filter((type) => type !== "message_update")).toEqual([
       "agent_start",
       "turn_start",
       "message_start",
       "message_end",
+      "after_provider_response",
       "message_start",
       "message_end",
       "turn_end",
+      "save_point",
       "agent_end",
+      "settled",
     ]);
   });
 });
 
 describe("模型选择", () => {
-  it("合法的 model 透传给 createAgent", async () => {
+  it("合法的 model 透传给 createHarness", async () => {
     faux.setResponses([fauxAssistantMessage([fauxText("好")])]);
 
     const response = await app.request("/api/chat", {
@@ -577,11 +589,11 @@ describe("模型选择", () => {
     await response.text();
 
     expect(response.status).toBe(200);
-    expect(state.seenAgentOptions?.modelId).toBe("deepseek-ai/DeepSeek-V3");
+    expect(state.seenHarnessOptions?.modelId).toBe("deepseek-ai/DeepSeek-V3");
   });
 
   // 静默回落最坏：用户在设置里选的模型被换掉，账单和输出都变了却没有任何信号
-  it("未注册的 model 返回 400，且压根不进 agent", async () => {
+  it("未注册的 model 返回 400，且压根不进 harness", async () => {
     const response = await app.request("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json", Cookie: cookie },
@@ -593,21 +605,21 @@ describe("模型选择", () => {
     });
 
     expect(response.status).toBe(400);
-    expect(state.seenAgentOptions).toBeUndefined();
+    expect(state.seenHarnessOptions).toBeUndefined();
   });
 
   /**
-   * 守的是「兜默认值是 createAgent 的职责，路由不许注入默认模型」。
+   * 守的是「兜默认值是 createHarness 的职责，路由不许注入默认模型」。
    *
    * 注意这条不由 TDD 驱动——实现之前它就是绿的（那时压根不解析 model）。
    * 它的价值在于能被有意义的变异打红：若有人把 parseChatRequest 改成
    * `model = rawModel ?? DEFAULT_MODEL_ID` 之类，这里就会拿到一个非 undefined 的
-   * modelId 而变红。路由一旦自己兜默认，createAgent 里
+   * modelId 而变红。路由一旦自己兜默认，createHarness 里
    * 「modelId === undefined → defaultModel()」那条分支就永远走不到，
    * 将来改 @petrel/ai 的 DEFAULT_MODEL_ID 会出现「改了却不生效」的怪问题。
    * 别因为它「看起来是恒真的」就删掉。
    */
-  it("不传 model 时路由不注入 modelId，默认值交给 createAgent 兜", async () => {
+  it("不传 model 时路由不注入 modelId，默认值交给 createHarness 兜", async () => {
     faux.setResponses([fauxAssistantMessage([fauxText("好")])]);
 
     const response = await app.request("/api/chat", {
@@ -617,6 +629,6 @@ describe("模型选择", () => {
     });
     await response.text();
 
-    expect(state.seenAgentOptions?.modelId).toBeUndefined();
+    expect(state.seenHarnessOptions?.modelId).toBeUndefined();
   });
 });

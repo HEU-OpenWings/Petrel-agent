@@ -75,7 +75,8 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-const { messages, toolCalls, running, error, send, abort, reset, loadHistory } = useAgentStream()
+const { messages, toolCalls, running, error, send, stop, disconnect, reset, loadHistory } =
+  useAgentStream()
 
 const layout = useLayoutStore()
 const preferences = usePreferencesStore()
@@ -86,9 +87,9 @@ const workspace = useWorkspaceStore()
 // 不再是写死的字符串（写死的那份已经和 packages/ai 的默认模型对不上了）
 const modelLabel = computed(() => preferences.modelName || '默认模型')
 
-// AppShell 用 key 强制重挂载来实现「新对话」，卸载时必须掐断在飞的请求，
-// 否则旧对话的 SSE 会继续跑到没有组件接收它为止
-onUnmounted(abort)
+// AppShell 用 key 强制重挂载来实现「新对话」，卸载时只需要断开本地接收——
+// harness 是常驻的，旧对话的生成会继续跑完并落库，不是真的要停止它
+onUnmounted(disconnect)
 
 // 进对话页时没有当前会话就开一个新的；已经有了（从左栏点进来、或从别的页面切回来）就拉历史。
 // startNew() 也会改 currentId，从而触发下面的 watch 去拉一个后端还不存在的会话——
@@ -104,7 +105,7 @@ onMounted(() => {
 
 /**
  * submit() 的自增计数。守的是这个场景：历史 GET 慢，用户没等它回来就发了消息，
- * 等历史到达时 loadHistory() 会先 abort() 掐死这条刚起的流、再把 messages 清空
+ * 等历史到达时 loadHistory() 会先 disconnect() 掐死这条刚起的流、再把 messages 清空
  * ——用户的消息凭空消失。这里不能用 running 判断：切会话时旧流也在 running，
  * 分不出「别的会话的旧流」和「本会话的新流」，只有 send 的次数能。
  * 别因为看不出它在防什么就删掉。
@@ -139,9 +140,10 @@ const scrollArea = ref(null)
 const input = ref(null)
 
 function newChat() {
-  // 必须先 abort 再 reset：reset() 不会碰 running/controller，
-  // 旧流后续到达的事件会继续写回刚清空的 messages，且 running 会卡在 true 挡住新消息
-  abort()
+  // 必须先断开再 reset：reset() 不会碰 running/controller，
+  // 旧流后续到达的事件会继续写回刚清空的 messages，且 running 会卡在 true 挡住新消息。
+  // 只断本地接收，不调用 stop()：开新对话不等于要打断上一个会话正在生成的回答
+  disconnect()
   reset()
   workspace.clear()
   draft.value = ''
@@ -167,7 +169,7 @@ function onDraftChange(value) {
 // 输入框在加载中会把发送按钮换成停止图标，两种点击都走这里
 function onSendOrStop() {
   if (running.value) {
-    abort()
+    stop()
     return
   }
   submit()
