@@ -37,7 +37,14 @@ export type CompactionOutcome =
       /** usage-based 估算，给埋点与前端展示 */
       tokensBefore: number;
       tokensAfter: number;
-      /** 纯字符估算，只给 ineffective 守卫用，见 Task 4 的注释 */
+      /**
+       * 纯字符估算，只给 ineffective 守卫用（Task 4）：`tokensBefore` 是
+       * usage-based 的（含 provider 计入的 system prompt 等固定开销），而压缩后
+       * 拿不到新的 usage、只能纯字符估算——两个数口径不同，相减会系统性高估回收
+       * 比例，让守卫永远不触发。所以另算一对同口径的纯字符估算专供该守卫，阈值
+       * 判定本身继续用更准的 usage-based 估算。详见
+       * docs/superpowers/specs/2026-08-05-auto-compaction-design.md §8.1.3。
+       */
       pureBefore: number;
       pureAfter: number;
     }
@@ -87,7 +94,7 @@ function pendingTokens(pendingMessage: string | undefined): number {
     role: "user",
     content: [{ type: "text", text: pendingMessage }],
     timestamp: Date.now(),
-  } as AgentMessage);
+  });
 }
 
 export function effectiveWindow(contextWindow: number, policy: CompactionPolicy): number {

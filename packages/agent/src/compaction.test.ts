@@ -1,4 +1,4 @@
-import { type AgentMessage, InMemorySessionRepo, type Session } from "@earendil-works/pi-agent-core";
+import { InMemorySessionRepo, type Session } from "@earendil-works/pi-agent-core";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { type CompactionPolicy, createCompactionState, maybeCompact } from "./compaction.ts";
@@ -46,7 +46,7 @@ async function fill(session: Session, tokens: number): Promise<void> {
       role: "user",
       content: [{ type: "text", text: CHUNK }],
       timestamp: Date.now(),
-    } as AgentMessage);
+    });
     // fauxAssistantMessage 的 usage 是全 0，calculateContextTokens 因此返回 0，
     // estimateContextTokens 会退回纯字符估算——测试里正需要这个确定性
     await session.appendMessage(fauxAssistantMessage([fauxText(CHUNK)]));
