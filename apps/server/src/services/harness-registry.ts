@@ -1,11 +1,14 @@
-import type { AgentHarness, Session } from "@petrel/agent";
+import type { AgentHarness, CompactionOutcome, CompactionState, Session } from "@petrel/agent";
 import {
+  createCompactionState,
   createMemorySession,
   createPgSession,
   createHarness as createRealHarness,
   DEFAULT_SYSTEM_PROMPT,
+  maybeCompact,
   resolveModel,
 } from "@petrel/agent";
+import { env } from "@petrel/config";
 import { createSessionRepository, type Database } from "@petrel/database";
 import { logger } from "@petrel/logger";
 
@@ -27,6 +30,23 @@ export class HarnessRegistryError extends Error {
     this.name = "HarnessRegistryError";
   }
 }
+
+/**
+ * 压缩过程的可见信号。pi 只在压缩**结束**时发 session_compact（带摘要正文），
+ * 「开始 / 失败 / 被守卫挡住」这三个信号它不给，只能我们自己发。
+ */
+export type HarnessNotice =
+  | { phase: "start" }
+  | { phase: "end"; outcome: CompactionOutcome }
+  | { phase: "blocked"; reason: string };
+
+/**
+ * 追加给 pi 摘要提示词的 customInstructions。
+ *
+ * pi 库层已带一份完整的 7 段英文提示词（## Goal / ## Progress / ## Next Steps …），
+ * 质量足够，这里只补「用中文」这一条要求，不接管整条摘要链路。
+ */
+const SUMMARY_INSTRUCTIONS = "用中文输出摘要；文件路径、函数名、错误信息原样保留不译。";
 
 /** 空闲多久后回收。5 分钟：够覆盖「用户读完回答再追问」，又不会让内存长期挂着。 */
 const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
@@ -59,6 +79,19 @@ interface Entry {
   running: boolean;
   /** 同一会话的调用串行化，避免「判断 running 时空闲、调用时已在跑」的竞态。 */
   chain: Promise<unknown>;
+  /**
+   * 正在进行的压缩。非 undefined 即「正在压缩」。
+   *
+   * 一个字段三用：进临界区要 await 它、sweep()/evictOldestIdle() 视为忙、
+   * abort()/evict() 靠它判断。不用额外的布尔量。
+   */
+  compaction: Promise<CompactionOutcome> | undefined;
+  /** 抗抖动状态。跟随实例生命周期——实例被淘汰时状态跟着消失 */
+  compactionState: CompactionState;
+  /** 压缩期间收到 abort：压完之后不再发起新一轮 */
+  abortRequested: boolean;
+  /** 已被 evict（会话删除 / 用户禁用）：压完之后一律不再 prompt */
+  retired: boolean;
 }
 
 /**
@@ -72,11 +105,16 @@ export interface HarnessAssemblyOptions {
   modelId?: string;
 }
 
+export interface SendOptions {
+  /** 同步回调，调用方（SSE 路由）负责把它变成帧。绝不能在里面做网络 I/O */
+  onNotice?: (notice: HarnessNotice) => void;
+}
+
 export interface HarnessHandle {
   harness: AgentHarness;
   session: Session;
-  /** 空闲则 prompt，运行中则排进 followUp 队列。 */
-  send(message: string): Promise<void>;
+  /** 空闲则（必要时先压缩再）prompt，运行中则排进 followUp 队列。 */
+  send(message: string, options?: SendOptions): Promise<void>;
   /** 释放这个连接对实例的占用，允许它被回收。 */
   release(): void;
 }
@@ -118,7 +156,14 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
    */
   function sweep(): void {
     for (const [sessionId, entry] of entries) {
-      if (entry.refCount === 0 && !entry.running && now() - entry.lastUsedAt > idleTtlMs) {
+      // 压缩期间 running 是 false（compact() 不发 agent_start），只看 running
+      // 会把正在压缩的实例回收掉，而压缩还在往它的树上写
+      if (
+        entry.refCount === 0 &&
+        !entry.running &&
+        !entry.compaction &&
+        now() - entry.lastUsedAt > idleTtlMs
+      ) {
         entries.delete(sessionId);
       }
     }
@@ -129,7 +174,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     let oldest: [string, Entry] | undefined;
     for (const pair of entries) {
       const [, entry] = pair;
-      if (entry.refCount > 0 || entry.running) continue;
+      if (entry.refCount > 0 || entry.running || entry.compaction) continue;
       if (!oldest || entry.lastUsedAt < oldest[1].lastUsedAt) oldest = pair;
     }
     if (!oldest) return false;
@@ -168,6 +213,10 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       lastUsedAt: now(),
       running: false,
       chain: Promise.resolve(),
+      compaction: undefined,
+      compactionState: createCompactionState(),
+      abortRequested: false,
+      retired: false,
     };
 
     // 这一份订阅跟着实例活一辈子，与每个请求各自的 SSE 订阅无关。
@@ -253,7 +302,8 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     return {
       harness: built.harness,
       session: built.session,
-      send: (message) => built.harness.prompt(message).then(() => undefined),
+      // 降级实例不压缩：它是一次性内存会话，没有历史可压
+      send: (message: string) => built.harness.prompt(message).then(() => undefined),
       release: () => undefined,
     };
   }
@@ -317,18 +367,36 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         harness: held.harness,
         session: held.session,
         /**
-         * 空闲则 prompt，运行中则 followUp。
+         * 空闲则（必要时先压缩再）prompt，运行中则 followUp。
          *
-         * chain 保护的临界区**只有「判断 running + 发起调用」**，绝不能把
+         * chain 保护的临界区**只有「判断 running/compaction + 发起调用」**，绝不能把
          * 「等整轮跑完」也串进去：那样第二个请求会排在第一轮结束之后才发起，
          * 此时 running 已是 false，于是永远走 prompt，followUp 分支形同虚设。
+         * 压缩分支同理——held.compaction 必须在设值后立刻放行 chain，不能等
+         * compact() 跑完才放行，否则几乎同时到达的第三个请求排进 chain 时
+         * 压缩早已结束、看不到「正在压缩」这个事实。
          *
          * running 在发起 prompt 时**同步**置真，而不是等 agent_start 事件——
          * 事件是异步发出的，下一个请求完全可能在那之前就进到临界区。
          */
-        send(message: string): Promise<void> {
+        send(message: string, options: SendOptions = {}): Promise<void> {
+          const notify = options.onNotice ?? (() => undefined);
           let outcome: Promise<void> | undefined;
-          const started = held.chain.then(() => {
+          // 同步读：我如果是「等待者」，先给个解释，别让前端看起来卡死
+          if (held.compaction) notify({ phase: "start" });
+
+          const started = held.chain.then(async () => {
+            // 压缩的互斥不靠 chain：chain 在发起 prompt 之后就放行了，
+            // 而 (d) 兜底的补救压缩发生在 prompt 之后、running 已复位为 false，
+            // 那时第二个请求会径直走到下面自己再压一次，两个 compact() 撞在一起
+            // 后者必抛 busy
+            if (held.compaction) {
+              notify({ phase: "start" }); // 上面那次同步读可能早于第一个请求设值
+              await held.compaction.catch(() => undefined);
+            }
+            if (held.retired) {
+              throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
+            }
             if (held.running) {
               // followUp 只是 push 队列 + emit，是瞬时的，几乎立刻 resolve——
               // 但调用方（SSE 路由）需要等本轮真正结束才能收尾，否则并发的第二个
@@ -355,17 +423,61 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
               // 并发请求会等整轮结束后才进入临界区，无法加入当前 run。
               return undefined;
             }
-            held.running = true;
-            outcome = held.harness
-              .prompt(message)
-              .then(() => undefined)
-              // settled 事件通常已经复位过；这里兜住「prompt 抛异常没走到 agent_end」
-              // 的情况，否则这个会话会永远卡在 running=true，再也接不了新消息
-              .finally(() => {
-                held.running = false;
+
+            // 超阈值就先压。与 running+outcome 同一个模式：把 held.compaction
+            // 赋值成「正在进行」的 promise 后立刻从 chain 里放行，绝不在这里
+            // await 它——否则 chain 要等整个压缩跑完才放行，第三个几乎同时到达
+            // 的请求就看不到「压缩正在进行」这个事实（等它排进 chain 时压缩
+            // 早已经结束、held.compaction 已被清空），补发通知与排队等待都落空
+            const compactionPromise = maybeCompact(
+              held.harness,
+              held.session,
+              held.compactionState,
+              { ...env.compaction, summaryInstructions: SUMMARY_INSTRUCTIONS },
+              { pendingMessage: message, onPhase: () => notify({ phase: "start" }) },
+            );
+            held.compaction = compactionPromise;
+            outcome = compactionPromise
+              .catch(
+                (error: unknown): CompactionOutcome => ({
+                  kind: "failed",
+                  error: error instanceof Error ? error : new Error(String(error)),
+                }),
+              )
+              .then((compaction) => {
+                held.compaction = undefined;
                 held.lastUsedAt = now();
+                if (compaction.kind === "skipped" && compaction.overThreshold) {
+                  // 守卫挡住了、但阈值确实超了：必须告警。不告警的后果是上下文一路
+                  // 静默涨到模型窗口硬墙，用户只看到「回答突然开始报错」
+                  notify({ phase: "blocked", reason: compaction.reason });
+                } else if (compaction.kind !== "skipped") {
+                  // 低于阈值时完全静默：绝大多数请求都走那条路，发通知等于每轮都在前端闪一下
+                  notify({ phase: "end", outcome: compaction });
+                }
+                if (compaction.kind === "failed") {
+                  // 压缩失败不阻断本轮：阈值是 80%，还有余量；真超了会落到 (d)
+                  logger.warn({ err: compaction.error, sessionId }, "自动压缩失败，本轮照常继续");
+                }
+                if (held.abortRequested || held.retired) {
+                  held.abortRequested = false;
+                  return undefined;
+                }
+
+                held.running = true;
+                return (
+                  held.harness
+                    .prompt(message)
+                    .then(() => undefined)
+                    // settled 事件通常已经复位过；这里兜住「prompt 抛异常没走到 agent_end」
+                    // 的情况，否则这个会话会永远卡在 running=true，再也接不了新消息
+                    .finally(() => {
+                      held.running = false;
+                      held.lastUsedAt = now();
+                    })
+                );
               });
-            // 不 return outcome：chain 到此放行，下一个请求会看到 running=true
+            // 不 return outcome：chain 到此放行，下一个请求会看到 compaction 已置真
             return undefined;
           });
           held.chain = started.catch(() => undefined);
@@ -386,8 +498,13 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       if (!(await sessionRepo.findById(sessionId, userId))) {
         throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
       }
-      // 没有活实例时什么都不做：abort 一个已经跑完的会话不是错误
-      await entries.get(sessionId)?.harness.abort();
+      const entry = entries.get(sessionId);
+      if (!entry) return;
+      // pi 的 compact() 内部 signal 是 new AbortController().signal，永远不会被 abort，
+      // 所以压缩本身停不下来。能保证的是「压完不再发起新一轮」——不加这一句，
+      // 用户点了停止却照样跑一轮
+      if (entry.compaction) entry.abortRequested = true;
+      await entry.harness.abort();
     },
 
     /** 会话被删除或用户被禁用时调用，否则内存里还有个活实例往已删会话写。 */
@@ -401,6 +518,15 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     /** 仅供测试与监控。 */
     size(): number {
       return entries.size;
+    },
+
+    /**
+     * 仅供测试：拿到某个会话的抗抖动状态，用来把它推到「已连续两次无效压缩」
+     * 那个分支。没有别的办法——那份状态刻意跟随实例生命周期（放全局 Map 会
+     * 泄漏到已淘汰的会话），而 Entry 本身不对外暴露。
+     */
+    __stateForTest(sessionId: string): CompactionState | undefined {
+      return entries.get(sessionId)?.compactionState;
     },
   };
 }

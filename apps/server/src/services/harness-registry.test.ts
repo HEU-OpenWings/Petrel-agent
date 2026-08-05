@@ -2,7 +2,9 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@ear
 import { createHarness, createMemorySession, resolveModel } from "@petrel/agent";
 import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createHarnessRegistry, HarnessRegistryError } from "./harness-registry.ts";
+// HarnessNotice 定义在 registry 自己这里（它是 registry 与 route 之间的契约，
+// 不是 agent 包的概念），所以从本地模块导入，不是从 @petrel/agent
+import { createHarnessRegistry, type HarnessNotice, HarnessRegistryError } from "./harness-registry.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 const OTHER_USER_ID = "00000000-0000-0000-0000-0000000000ff";
@@ -305,5 +307,221 @@ describe("createHarnessRegistry", () => {
     expect(JSON.stringify(await handle.session.getEntries())).toContain("你好");
     // 降级实例不缓存，否则后面的请求会拿到一个没验过归属的实例
     expect(registry.size()).toBe(0);
+  });
+});
+
+/**
+ * 造一个「窗口很小、且会话已经超阈值」的实例，用来触发压缩。
+ *
+ * 窗口取 40000（阈值 32000）而不是更小：pi 硬编码 keepRecentTokens = 20000，
+ * 阈值离它太近的话压缩几乎切不掉东西。见 spec §10.1。
+ */
+function compactionFactory() {
+  const faux = fauxProvider({
+    tokensPerSecond: 10_000,
+    models: [{ id: "faux-compaction", contextWindow: 40_000, maxTokens: 8192 }],
+  });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const chunk = "一".repeat(4000);
+  return {
+    faux,
+    async create(sessionId: string) {
+      const session = await createMemorySession(sessionId);
+      for (let i = 0; i < 20; i++) {
+        await session.appendMessage({
+          role: "user",
+          content: [{ type: "text", text: chunk }],
+          timestamp: Date.now(),
+        });
+        await session.appendMessage(fauxAssistantMessage([fauxText(chunk)]));
+      }
+      return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+    },
+  };
+}
+
+describe("createHarnessRegistry 的自动压缩", () => {
+  it("超阈值时先压缩再 prompt，并发出 start/end 通知", async () => {
+    const factory = compactionFactory();
+    factory.faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("回答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+    const notices: HarnessNotice[] = [];
+
+    await handle.send("问题", { onNotice: (notice) => notices.push(notice) });
+    handle.release();
+
+    expect(notices.map((n) => n.phase)).toEqual(["start", "end"]);
+    expect(notices[1]).toMatchObject({ phase: "end", outcome: { kind: "compacted" } });
+    const entries = await handle.session.buildContextEntries();
+    expect(entries.some((entry) => entry.type === "compaction")).toBe(true);
+  });
+
+  it("低于阈值的普通请求不产生任何通知", async () => {
+    const factory = fauxFactory();
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "你好");
+    const notices: HarnessNotice[] = [];
+
+    await handle.send("你好", { onNotice: (notice) => notices.push(notice) });
+    handle.release();
+
+    expect(notices).toEqual([]);
+  });
+
+  /**
+   * 这条是本设计最贵的一条不变量。压缩期间 phase === "compaction"：
+   * prompt() 会抛 busy，而 followUp() 不抛却会把消息 push 进一个没人消费的队列
+   * （waitForIdle 立刻返回），表现为「消息永久消失且没有任何报错」。
+   * 所以第二个请求必须被挡在临界区外等压缩结束。
+   */
+  it("压缩期间的第二个请求排队等待，消息不丢也不抛 busy", async () => {
+    const factory = compactionFactory();
+    factory.faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("回答一")]),
+      fauxAssistantMessage([fauxText("回答二")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+
+    const first = handle.send("第一个问题");
+    const second = handle.send("第二个问题");
+    await expect(Promise.all([first, second])).resolves.toBeDefined();
+    handle.release();
+
+    const text = JSON.stringify(await handle.session.getEntries());
+    expect(text).toContain("第一个问题");
+    expect(text).toContain("第二个问题");
+  });
+
+  it("压缩期间不被 idle 回收", async () => {
+    const factory = compactionFactory();
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    factory.faux.setResponses([
+      async () => {
+        await summaryGate;
+        return fauxAssistantMessage([fauxText("## Goal\n摘要")]);
+      },
+      fauxAssistantMessage([fauxText("回答")]),
+    ]);
+    const time = clock();
+    const registry = createHarnessRegistry({
+      db,
+      createHarness: factory.create,
+      now: time.now,
+      idleTtlMs: 1000,
+    });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    const sending = handle.send("问题");
+    handle.release(); // refCount 归零，只剩 compaction 标记护着
+    time.advance(10_000);
+    // 压缩期间 running 是 false（compact() 不发 agent_start），
+    // 只看 running 的话这个实例会被 sweep 掉，而压缩还在往它的树上写
+    const second = await registry.acquire(SESSION_ID, TEST_USER_ID, "再问");
+    releaseSummary();
+    await sending;
+    second.release();
+
+    expect(second.harness).toBe(handle.harness);
+  });
+
+  it("两个 send 几乎同时发起时，等待者也收到 start 通知", async () => {
+    const factory = compactionFactory();
+    factory.faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("回答一")]),
+      fauxAssistantMessage([fauxText("回答二")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const waiterNotices: HarnessNotice[] = [];
+
+    // 第二个 send 同步紧跟第一个：此时第一个还没进到「设置 held.compaction」那一步，
+    // 所以 send() 开头那次同步读拿不到标记，必须靠临界区里的补发
+    const first = handle.send("第一个问题");
+    const second = handle.send("第二个问题", {
+      onNotice: (notice) => waiterNotices.push(notice),
+    });
+    await Promise.all([first, second]);
+    handle.release();
+
+    expect(waiterNotices.some((notice) => notice.phase === "start")).toBe(true);
+  });
+
+  it("压缩失败不阻断本轮，照常 prompt", async () => {
+    const factory = compactionFactory();
+    factory.faux.setResponses([
+      // 摘要请求失败
+      fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "rate limited" }),
+      // 本轮的正常回答仍要发生
+      fauxAssistantMessage([fauxText("尽管压缩失败了，这句回答还是要有")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+    const notices: HarnessNotice[] = [];
+
+    await handle.send("问题", { onNotice: (notice) => notices.push(notice) });
+    handle.release();
+
+    expect(notices.at(-1)).toMatchObject({ phase: "end", outcome: { kind: "failed" } });
+    // 阈值是 80%，压不成也还有余量；真超了会落到 (d)。绝不能因为压缩失败就丢用户消息
+    expect(JSON.stringify(await handle.session.getEntries())).toContain("尽管压缩失败了，这句回答还是要有");
+  });
+
+  it("守卫挡住但确实超阈值时发 blocked 通知", async () => {
+    const factory = compactionFactory();
+    factory.faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+    const notices: HarnessNotice[] = [];
+
+    // 直接把实例的抗抖动状态推到「连续两次无效」。没有别的入口能拿到 Entry，
+    // 但 send() 之后 handle 上的 harness 与 registry 里的是同一个实例，
+    // 所以这里改的是同一份状态——registry 需要暴露一个只给测试用的取状态方法：
+    // 见实现步骤里 __stateForTest 的说明
+    registry.__stateForTest(SESSION_ID)!.ineffectiveStreak = 2;
+    await handle.send("问题", { onNotice: (notice) => notices.push(notice) });
+    handle.release();
+
+    // 没有 start：onPhase 在 maybeCompact 里、三道守卫**之后**才回调，
+    // 被挡住的那次压缩压根没开始，不该让前端闪一下「正在压缩」
+    expect(notices).toEqual([{ phase: "blocked", reason: "ineffective" }]);
+    expect(JSON.stringify(await handle.session.getEntries())).toContain("回答");
+  });
+
+  it("压缩期间 abort 后不再发起 prompt", async () => {
+    const factory = compactionFactory();
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    factory.faux.setResponses([
+      async () => {
+        await summaryGate;
+        return fauxAssistantMessage([fauxText("## Goal\n摘要")]);
+      },
+      fauxAssistantMessage([fauxText("不该出现的回答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    const sending = handle.send("问题");
+    // pi 的 compact() 内部 signal 永远不会被 abort，所以压缩本身停不下来；
+    // abort 能保证的只有「压完不再跑新一轮」
+    await registry.abort(SESSION_ID, TEST_USER_ID);
+    releaseSummary();
+    await sending;
+    handle.release();
+
+    expect(JSON.stringify(await handle.session.getEntries())).not.toContain("不该出现的回答");
   });
 });
