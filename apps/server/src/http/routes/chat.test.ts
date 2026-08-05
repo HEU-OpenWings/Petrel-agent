@@ -693,7 +693,7 @@ describe("自动压缩", () => {
     expect(body.messages.length).toBeGreaterThanOrEqual(before);
   });
 
-  it("SSE 里有 event: compaction，且不泄露 failed 的 error", async () => {
+  it("SSE 里有 event: compaction，且 failed 的 outcome 只透出 kind，不泄露 error 的其余字段", async () => {
     const sessionId = "44444444-4444-4444-4444-444444444444";
     const { cookie: longCookie } = await seedLongSession(sessionId);
     faux.setResponses([
@@ -708,10 +708,36 @@ describe("自动压缩", () => {
     });
     const text = await response.text();
 
-    expect(text).toContain("event: compaction");
-    expect(text).toContain('"phase":"start"');
-    expect(text).toContain('"kind":"failed"');
-    expect(text).not.toContain("秘密的内部报错");
+    const frames = parseSse(text);
+    const startFrame = frames.find(
+      (frame) => frame.event === "compaction" && (frame.data as { phase: string }).phase === "start",
+    );
+    expect(startFrame).toBeDefined();
+
+    const failedFrame = frames.find(
+      (frame) =>
+        frame.event === "compaction" &&
+        (frame.data as { phase: string }).phase === "end" &&
+        (frame.data as { outcome: { kind: string } }).outcome.kind === "failed",
+    );
+    expect(failedFrame).toBeDefined();
+
+    /**
+     * (a) 锁住投影后的形状，而不是字符串匹配：Error 的 message/stack 是不可枚举属性，
+     * JSON.stringify 本来就带不出来，`expect(text).not.toContain("秘密的内部报错")`
+     * 在这个数据形状下恒真——不管 toCompactionFrame 有没有做投影都会通过，测不出投影
+     * 有没有做事。而 pi 的 AgentHarnessError 用 `this.code = code` / `this.name = ...`
+     * 赋值，两个都是自有可枚举属性，不投影就会带着 `{"code":"compaction",
+     * "name":"AgentHarnessError"}` 混进 outcome.error 漏进响应体，
+     * 所以断言键集合才是真的在验证投影生效。
+     */
+    const outcome = (failedFrame as { data: { outcome: Record<string, unknown> } }).data.outcome;
+    expect(Object.keys(outcome)).toEqual(["kind"]);
+
+    // (b) 跳过：更真实的泄露场景是 provider 错误带 status/response 这类可枚举属性，
+    // 但这条 failed 只可能来自 harness.compact() 内部抛出的 AgentHarnessError（pi 库层），
+    // faux 只能控制被摘要的那条 assistant 消息内容，控制不了 harness.compact() 抛错时
+    // 携带什么额外字段——要做到这一步得去 mock maybeCompact，而这正是不该做的事。
   });
 
   it("低于阈值的普通请求没有任何 compaction 帧", async () => {
