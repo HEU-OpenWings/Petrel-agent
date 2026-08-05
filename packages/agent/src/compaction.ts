@@ -66,6 +66,46 @@ export function createCompactionState(): CompactionState {
   return { cooldownUntil: 0, ineffectiveStreak: 0 };
 }
 
+/**
+ * 摘要失败后的冷却时长。
+ *
+ * Hermes 用 600s，我们取 60s：harness 实例本身 5 分钟就被 idle TTL 回收、
+ * 状态跟着消失，太长的冷却在这里没有意义，60s 足够躲过一波限流。
+ */
+const COOLDOWN_MS = 60_000;
+
+/** 连续多少次「回收不足 REQUIRED_RECLAIM_RATIO」后停止自动压缩 */
+const INEFFECTIVE_LIMIT = 2;
+
+/** 一次压缩至少要回收掉这么大比例才算有效 */
+const REQUIRED_RECLAIM_RATIO = 0.1;
+
+/**
+ * 判定用的 token 数。
+ *
+ * estimateContextTokens 取「最后一条 assistant 的真实 usage + 之后消息的字符估算」，
+ * 但压缩后 retainedTail 里的旧 assistant 消息带的是压缩前的 usage，采信它就会
+ * 刚压完又判超阈值。所以：提供 usage 的那条消息若早于最近一条 compaction 条目，
+ * 整个 usage 分量作废，退回纯字符估算。
+ *
+ * 比 pi CLI 的「直接不压」更准——纯估算下 retainedTail 本身就超阈值的情况真实存在，
+ * 那种时候应该压。
+ */
+async function estimateForDecision(session: Session, messages: AgentMessage[]): Promise<number> {
+  const estimate = estimateContextTokens(messages);
+  if (estimate.lastUsageIndex === null) return estimate.tokens;
+
+  const compactions = await session.getStorage().findEntries("compaction");
+  const latest = compactions.at(-1);
+  if (!latest) return estimate.tokens;
+
+  const usageMessage = messages[estimate.lastUsageIndex];
+  const usageTimestamp = (usageMessage as { timestamp?: number }).timestamp ?? 0;
+  if (usageTimestamp > Date.parse(latest.timestamp)) return estimate.tokens;
+
+  return pureEstimate(messages);
+}
+
 export interface MaybeCompactOptions {
   /**
    * 本轮即将 prompt 的用户消息。
@@ -120,7 +160,7 @@ export function effectiveWindow(contextWindow: number, policy: CompactionPolicy)
 export async function maybeCompact(
   harness: AgentHarness,
   session: Session,
-  _state: CompactionState,
+  state: CompactionState,
   policy: CompactionPolicy,
   options: MaybeCompactOptions,
 ): Promise<CompactionOutcome> {
@@ -130,7 +170,7 @@ export async function maybeCompact(
 
   const context = await session.buildContext();
   const messages = context.messages;
-  const tokens = estimateContextTokens(messages).tokens + pendingTokens(options.pendingMessage);
+  const tokens = (await estimateForDecision(session, messages)) + pendingTokens(options.pendingMessage);
   const limit = effectiveWindow(harness.getModel().contextWindow, policy);
   const overThreshold = tokens > limit;
 
@@ -138,22 +178,40 @@ export async function maybeCompact(
     return { kind: "skipped", reason: "below-threshold", overThreshold: false };
   }
 
+  // 下面两道守卫只挡主动压缩。(d) 兜底（force）时上下文已经真的爆了，
+  // 挡住它只会让用户彻底没救
+  if (!options.force) {
+    if (Date.now() < state.cooldownUntil) {
+      return { kind: "skipped", reason: "cooldown", overThreshold };
+    }
+    if (state.ineffectiveStreak >= INEFFECTIVE_LIMIT) {
+      return { kind: "skipped", reason: "ineffective", overThreshold };
+    }
+  }
+
   options.onPhase?.("start");
   const pureBefore = pureEstimate(messages);
   try {
     const result = await harness.compact(policy.summaryInstructions);
     const after = await session.buildContext();
+    const pureAfter = pureEstimate(after.messages);
+    // 同口径比较。混用 usage-based 的 tokensBefore 与纯估算的 pureAfter
+    // 会系统性高估回收比例，这道守卫就永远不触发
+    const reclaimed = pureBefore > 0 ? (pureBefore - pureAfter) / pureBefore : 0;
+    state.ineffectiveStreak = reclaimed < REQUIRED_RECLAIM_RATIO ? state.ineffectiveStreak + 1 : 0;
     return {
       kind: "compacted",
       tokensBefore: result.tokensBefore,
       tokensAfter: estimateContextTokens(after.messages).tokens,
       pureBefore,
-      pureAfter: pureEstimate(after.messages),
+      pureAfter,
     };
   } catch (error) {
     if (isNothingToCompact(error)) {
+      // 正常结果，不设冷却
       return { kind: "skipped", reason: "nothing-to-compact", overThreshold };
     }
-    throw error;
+    state.cooldownUntil = Date.now() + COOLDOWN_MS;
+    return { kind: "failed", error: error instanceof Error ? error : new Error(String(error)) };
   }
 }
