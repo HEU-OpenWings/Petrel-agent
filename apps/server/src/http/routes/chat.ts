@@ -4,11 +4,37 @@ import { logger } from "@petrel/logger";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
-import { createHarnessRegistry, HarnessRegistryError } from "../../services/harness-registry.ts";
+import {
+  createHarnessRegistry,
+  type HarnessNotice,
+  HarnessRegistryError,
+} from "../../services/harness-registry.ts";
 import type { AppEnv } from "../../types.ts";
 import { createSseQueue } from "../sse-queue.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * 只透出前端要用的字段，不原样透传 CompactionOutcome。
+ *
+ * failed 的 error 是内部信息（可能带 provider 的原始报错），只进日志不进响应。
+ */
+function toCompactionFrame(notice: HarnessNotice) {
+  if (notice.phase !== "end") return notice;
+  const { outcome } = notice;
+  if (outcome.kind === "compacted") {
+    return {
+      phase: "end",
+      outcome: {
+        kind: "compacted",
+        tokensBefore: outcome.tokensBefore,
+        tokensAfter: outcome.tokensAfter,
+      },
+    };
+  }
+  if (outcome.kind === "failed") return { phase: "end", outcome: { kind: "failed" } };
+  return { phase: "end", outcome: { kind: "skipped", reason: outcome.reason } };
+}
 
 /**
  * registry 是进程级单例：常驻实例的全部意义就是跨请求复用，
@@ -150,7 +176,16 @@ export const chat = new Hono<AppEnv>()
       const pumpDone = queue.pump((frame) => stream.writeSSE(frame));
 
       try {
-        await handle.send(message);
+        await handle.send(message, {
+          /**
+           * 同步入队，绝不能在这里 await stream.writeSSE：pi 的订阅回调被串行
+           * await 且没有超时，客户端不读流时会因背压永不 resolve，卡住整个 harness
+           * （CLAUDE.md 坑 14）。真正的写出交给 queue.pump()。
+           */
+          onNotice: (notice) => {
+            queue.push({ event: "compaction", data: JSON.stringify(toCompactionFrame(notice)) });
+          },
+        });
       } catch (error) {
         logger.error({ err: error, sessionId }, "agent run failed");
         queue.push({
