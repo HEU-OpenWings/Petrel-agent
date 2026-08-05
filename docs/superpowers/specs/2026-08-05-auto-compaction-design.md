@@ -527,10 +527,15 @@ data: { "phase": "blocked", "reason": "cooldown" | "ineffective" }
   普通错误不命中
 
 **测试与生产共同的约束**：pi 硬编码 `keepRecentTokens: 20000`，所以
-**总量低于约 2 万 token（≈8 万字符）的会话永远压不动**——`findCutPoint` 会把全部内容
-都算作「近期」，压缩「成功」但一条都没切掉。测试必须生成 8 万字符以上的填充内容
-才能看到真实效果。生产上不是问题（两个模型的阈值分别是 12 万与 51.2k，都远高于 20k），
-但下一个人拿 3 条短消息测会以为压缩坏了。
+**总量低于约 2 万 token（≈8 万字符）的会话压不动**——`findCutPoint` 会把全部内容
+都算作「近期」。注意实际后果比「压了但没切掉」更糟：`prepareCompaction` 此时
+**不返回 `undefined`**（它只在「路径为空」或「最后一条已是 compaction」时才返回），
+而是返回一个 `messagesToSummarize` 为空、`retainedTail` 是全部历史的 preparation
+（`compaction.js:430-495`）。于是 `compact()` 会**照样发一次摘要请求**、拿回一段
+基于空对话的废摘要、再写入一条 compaction 条目——白花一次模型调用。
+（下一次才会因为「最后一条是 compaction」拿到 `Nothing to compact`。）
+生产上走不到这里：阈值 12 万与 51.2k 都远高于 20k，判定过不了就不会调 `compact()`。
+测试必须生成 8 万字符以上的填充内容才能看到真实压缩效果。
 
 ### 10.2 `apps/server/src/services/harness-registry.test.ts`（增补）
 
