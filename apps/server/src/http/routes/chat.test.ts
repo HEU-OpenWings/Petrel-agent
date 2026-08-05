@@ -632,3 +632,92 @@ describe("模型选择", () => {
     expect(state.seenHarnessOptions?.modelId).toBeUndefined();
   });
 });
+
+describe("自动压缩", () => {
+  /** 换一套小窗口 faux，并把会话树填到超阈值 */
+  async function seedLongSession(sessionId: string) {
+    faux = fauxProvider({
+      tokensPerSecond: 10_000,
+      models: [{ id: "faux-compaction", contextWindow: 40_000, maxTokens: 8192 }],
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    state.harnessOptions = { models, model: faux.getModel() };
+
+    // 直接写会话树，不跑 agent loop：压缩只读这颗树，跑 20 轮模型调用纯属浪费
+    if (!state.db) throw new Error("test db 尚未初始化");
+    const db = state.db;
+    const sessionRepo = (await import("@petrel/database")).createSessionRepository(db);
+    const user = await registerUser("long@x.io");
+    await sessionRepo.upsert({ id: sessionId, userId: user.id, title: "长会话" });
+    const { createPgSession } = await import("@petrel/agent");
+    const session = createPgSession(db as never, sessionId, new Date());
+    const chunk = "一".repeat(4000);
+    for (let i = 0; i < 20; i++) {
+      await session.appendMessage({
+        role: "user",
+        content: [{ type: "text", text: chunk }],
+        timestamp: Date.now(),
+      } as never);
+      await session.appendMessage(fauxAssistantMessage([fauxText(chunk)]));
+    }
+    return { cookie: user.cookie, session };
+  }
+
+  it("压缩后模型侧变短、用户侧 transcript 一条不少", async () => {
+    const sessionId = "33333333-3333-3333-3333-333333333333";
+    const { cookie: longCookie, session } = await seedLongSession(sessionId);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("回答")]),
+    ]);
+    const before = (await entryRepo.listAll(sessionId)).filter((e) => e.type === "message").length;
+
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: longCookie },
+      body: JSON.stringify({ message: "再问一句", sessionId }),
+    });
+    await response.text(); // 读完流，等 harness 跑完
+
+    // 模型侧：compaction 条目已生效，上溯在它那里停住
+    const contextEntries = await session.buildContextEntries();
+    expect(contextEntries.some((entry) => entry.type === "compaction")).toBe(true);
+
+    // 用户侧：GET /:id/messages 用 listAll 投影，压缩不影响它。
+    // 这一条不许改成 buildContext()——那样压缩后用户刷新会看到历史凭空消失
+    const history = await app.request(`/api/sessions/${sessionId}/messages`, {
+      headers: { Cookie: longCookie },
+    });
+    const body = (await history.json()) as { messages: unknown[] };
+    expect(body.messages.length).toBeGreaterThanOrEqual(before);
+  });
+
+  it("SSE 里有 event: compaction，且不泄露 failed 的 error", async () => {
+    const sessionId = "44444444-4444-4444-4444-444444444444";
+    const { cookie: longCookie } = await seedLongSession(sessionId);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "秘密的内部报错" }),
+      fauxAssistantMessage([fauxText("回答")]),
+    ]);
+
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: longCookie },
+      body: JSON.stringify({ message: "再问一句", sessionId }),
+    });
+    const text = await response.text();
+
+    expect(text).toContain("event: compaction");
+    expect(text).toContain('"phase":"start"');
+    expect(text).toContain('"kind":"failed"');
+    expect(text).not.toContain("秘密的内部报错");
+  });
+
+  it("低于阈值的普通请求没有任何 compaction 帧", async () => {
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const text = await response.text();
+
+    expect(text).not.toContain("event: compaction");
+  });
+});
