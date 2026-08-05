@@ -1,5 +1,6 @@
 import {
   type AgentHarness,
+  AgentHarnessError,
   type AgentMessage,
   estimateContextTokens,
   estimateTokens,
@@ -82,6 +83,17 @@ export interface MaybeCompactOptions {
   onPhase?: (phase: "start") => void;
 }
 
+/**
+ * 「没东西可压」的识别。
+ *
+ * 只能靠 message 文本匹配：pi 抛的是 AgentHarnessError("compaction", "Nothing to compact")，
+ * 而 code "compaction" 同时覆盖真正的摘要失败，光看 code 分不开两者
+ * （`agent-harness.js:654`）。pi 升级时这条要重新核对。
+ */
+function isNothingToCompact(error: unknown): boolean {
+  return error instanceof AgentHarnessError && error.message === "Nothing to compact";
+}
+
 /** 纯字符估算，绕开 provider usage。压缩前后要用同一种口径比较，见 Task 4 */
 function pureEstimate(messages: AgentMessage[]): number {
   return messages.reduce((sum, message) => sum + estimateTokens(message), 0);
@@ -128,13 +140,20 @@ export async function maybeCompact(
 
   options.onPhase?.("start");
   const pureBefore = pureEstimate(messages);
-  const result = await harness.compact(policy.summaryInstructions);
-  const after = await session.buildContext();
-  return {
-    kind: "compacted",
-    tokensBefore: result.tokensBefore,
-    tokensAfter: estimateContextTokens(after.messages).tokens,
-    pureBefore,
-    pureAfter: pureEstimate(after.messages),
-  };
+  try {
+    const result = await harness.compact(policy.summaryInstructions);
+    const after = await session.buildContext();
+    return {
+      kind: "compacted",
+      tokensBefore: result.tokensBefore,
+      tokensAfter: estimateContextTokens(after.messages).tokens,
+      pureBefore,
+      pureAfter: pureEstimate(after.messages),
+    };
+  } catch (error) {
+    if (isNothingToCompact(error)) {
+      return { kind: "skipped", reason: "nothing-to-compact", overThreshold };
+    }
+    throw error;
+  }
 }

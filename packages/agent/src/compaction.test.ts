@@ -143,3 +143,41 @@ describe("maybeCompact 阈值判定", () => {
     expect(phases).toEqual(["start"]);
   });
 });
+
+describe("maybeCompact 的 nothing-to-compact", () => {
+  /**
+   * harness.compact() 在「路径为空」或「最后一条已是 compaction 条目」时
+   * 抛 AgentHarnessError("compaction", "Nothing to compact")。这是正常结果不是故障：
+   * 归到 failed 会让每轮都触发 60s 冷却，把真正需要压缩的会话也一起挡住。
+   */
+  it("连着压两次，第二次是 skipped/nothing-to-compact 而不是 failed", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n第一次摘要")]),
+      fauxAssistantMessage([fauxText("## Goal\n第二次摘要")]),
+    ]);
+
+    expect((await maybeCompact(harness, session, state, POLICY, { force: true })).kind).toBe("compacted");
+    const second = await maybeCompact(harness, session, state, POLICY, { force: true });
+
+    expect(second).toMatchObject({ kind: "skipped", reason: "nothing-to-compact" });
+  });
+
+  it("nothing-to-compact 不设置冷却", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+    ]);
+    await maybeCompact(harness, session, state, POLICY, { force: true });
+    await maybeCompact(harness, session, state, POLICY, { force: true });
+
+    // 冷却被误设的话，这里会拿到 skipped/cooldown
+    await fill(session, 40_000);
+    const third = await maybeCompact(harness, session, state, POLICY, { force: true });
+    expect(third.kind).toBe("compacted");
+  });
+});
