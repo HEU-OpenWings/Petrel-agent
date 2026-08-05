@@ -7,14 +7,31 @@
           <p class="hint">试试「现在几点」，会触发一次工具调用。</p>
         </div>
 
-        <MessageItem
-          v-for="(message, index) in messages"
-          :key="index"
-          :message="message"
-          :tool-calls="toolCalls"
-          :editor-id="index"
-          :streaming="running && index === messages.length - 1 && message.role === 'assistant'"
+        <template v-for="(message, index) in messages" :key="index">
+          <!-- 压缩发生在新一轮的 prompt 之前，所以分隔线插在那一刻的消息下标之前 -->
+          <CompactionDivider
+            v-for="mark in compactions.filter((item) => item.atIndex === index)"
+            :key="`mark-${mark.atIndex}-${mark.tokensBefore}`"
+            :tokens-before="mark.tokensBefore"
+            :tokens-after="mark.tokensAfter"
+          />
+          <MessageItem
+            :message="message"
+            :tool-calls="toolCalls"
+            :editor-id="index"
+            :streaming="running && index === messages.length - 1 && message.role === 'assistant'"
+          />
+        </template>
+
+        <!-- atIndex 等于当前长度的标记还没有对应消息（压缩刚结束、回答还没开始） -->
+        <CompactionDivider
+          v-for="mark in compactions.filter((item) => item.atIndex >= messages.length)"
+          :key="`tail-${mark.atIndex}-${mark.tokensBefore}`"
+          :tokens-before="mark.tokensBefore"
+          :tokens-after="mark.tokensAfter"
         />
+
+        <div v-if="compacting" class="compacting">正在压缩上下文…</div>
 
         <div v-if="error" class="error">{{ error }}</div>
       </div>
@@ -65,6 +82,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Slash } from 'lucide-vue-next'
 import CommandPalette from '@/components/chat/CommandPalette.vue'
+import CompactionDivider from '@/components/chat/CompactionDivider.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
 import { fetchMessages } from '@/apis/session_api'
@@ -75,8 +93,19 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-const { messages, toolCalls, running, error, send, stop, disconnect, reset, loadHistory } =
-  useAgentStream()
+const {
+  messages,
+  toolCalls,
+  running,
+  error,
+  compacting,
+  compactions,
+  send,
+  stop,
+  disconnect,
+  reset,
+  loadHistory
+} = useAgentStream()
 
 const layout = useLayoutStore()
 const preferences = usePreferencesStore()
@@ -310,6 +339,13 @@ watch(
   color: var(--color-error-700);
   font-size: 13px;
   word-break: break-word;
+}
+
+.compacting {
+  margin: 12px 0;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  text-align: center;
 }
 
 .composer-wrap {

@@ -15,6 +15,15 @@ export function useAgentStream() {
   const toolCalls = ref({})
   const running = ref(false)
   const error = ref('')
+  /** 正在压缩上下文。压缩发生在回答开始之前，所以要独立于 running 显示 */
+  const compacting = ref(false)
+  /**
+   * 压缩标记。atIndex 记的是压缩发生那一刻 messages 的长度，渲染时插在该下标之前。
+   *
+   * 这些标记只活在内存里、不落库：刷新页面就没了，而历史消息一条不少。
+   * 这是有意的——压缩是模型侧的事，用户侧的 transcript 本来就完整。
+   */
+  const compactions = ref([])
   const controller = shallowRef(null)
   /** 当前这一轮的会话 id。stop() 要用它调后端接口，而 send 之外没有别的地方知道它。
    * 只在这一轮生成期间有效，send() 收尾时会清空，避免被后续误用于对错会话调 abortChat */
@@ -28,6 +37,7 @@ export function useAgentStream() {
     messages.value = []
     toolCalls.value = {}
     error.value = ''
+    compactions.value = []
     activeIndex = -1
   }
 
@@ -41,6 +51,8 @@ export function useAgentStream() {
     messages.value = Array.isArray(history) ? [...history] : []
     toolCalls.value = {}
     error.value = ''
+    // 同样的道理：不清的话上一个会话的压缩分隔线会残留到这个会话的列表里
+    compactions.value = []
     activeIndex = -1
   }
 
@@ -122,6 +134,26 @@ export function useAgentStream() {
             error.value = frame.data?.message ?? '服务端返回未知错误'
             return
           }
+          if (frame.event === 'compaction' && frame.data) {
+            if (frame.data.phase === 'start') {
+              compacting.value = true
+              return
+            }
+            if (frame.data.phase === 'blocked') {
+              error.value = '上下文已超过压缩阈值，但自动压缩暂时不可用，建议新建会话继续'
+              return
+            }
+            // phase === 'end'
+            compacting.value = false
+            if (frame.data.outcome?.kind === 'compacted') {
+              compactions.value.push({
+                atIndex: messages.value.length,
+                tokensBefore: frame.data.outcome.tokensBefore,
+                tokensAfter: frame.data.outcome.tokensAfter
+              })
+            }
+            return
+          }
           if (frame.event === 'agent' && frame.data) {
             apply(frame.data)
           }
@@ -133,6 +165,7 @@ export function useAgentStream() {
       }
     } finally {
       running.value = false
+      compacting.value = false
       controller.value = null
       // 这一轮已经结束（无论正常收尾还是被中断），activeSessionId 不再对应
       // 任何还在跑的生成，清掉以免被后续误用于对着别的会话调 abortChat
@@ -167,5 +200,18 @@ export function useAgentStream() {
     }
   }
 
-  return { messages, toolCalls, running, error, canSend, send, stop, disconnect, reset, loadHistory }
+  return {
+    messages,
+    toolCalls,
+    running,
+    error,
+    canSend,
+    compacting,
+    compactions,
+    send,
+    stop,
+    disconnect,
+    reset,
+    loadHistory
+  }
 }

@@ -239,6 +239,98 @@ describe('loadHistory', () => {
   })
 })
 
+describe('compaction', () => {
+  it('phase: start 时置 compacting 为真', async () => {
+    const stream = useAgentStream()
+    const flow = controllableStream()
+
+    const pending = stream.send('你好', { sessionId: 'sid' })
+    await tick()
+    flow.emit({ event: 'compaction', data: { phase: 'start' } })
+
+    expect(stream.compacting.value).toBe(true)
+
+    flow.close()
+    await pending
+  })
+
+  it('phase: end 且 kind: compacted 时复位 compacting 并推一条带 atIndex 的标记', async () => {
+    const stream = useAgentStream()
+    replay([
+      { event: 'compaction', data: { phase: 'start' } },
+      {
+        event: 'compaction',
+        data: {
+          phase: 'end',
+          outcome: { kind: 'compacted', tokensBefore: 90000, tokensAfter: 20000 }
+        }
+      }
+    ])
+
+    await stream.send('你好', { sessionId: 'sid' })
+
+    expect(stream.compacting.value).toBe(false)
+    expect(stream.compactions.value).toEqual([
+      { atIndex: 0, tokensBefore: 90000, tokensAfter: 20000 }
+    ])
+  })
+
+  it('phase: end 且 kind: failed 时复位 compacting 但不推标记', async () => {
+    const stream = useAgentStream()
+    replay([
+      { event: 'compaction', data: { phase: 'start' } },
+      { event: 'compaction', data: { phase: 'end', outcome: { kind: 'failed' } } }
+    ])
+
+    await stream.send('你好', { sessionId: 'sid' })
+
+    expect(stream.compacting.value).toBe(false)
+    expect(stream.compactions.value).toEqual([])
+  })
+
+  it('phase: blocked 时写 error 且不改 compacting', async () => {
+    const stream = useAgentStream()
+    replay([{ event: 'compaction', data: { phase: 'blocked', reason: 'cooldown' } }])
+
+    await stream.send('你好', { sessionId: 'sid' })
+
+    expect(stream.error.value).toBe(
+      '上下文已超过压缩阈值，但自动压缩暂时不可用，建议新建会话继续'
+    )
+    expect(stream.compacting.value).toBe(false)
+  })
+
+  it('断连时 finally 复位 compacting，压缩指示器不会一直转', async () => {
+    const aborted = new Error('The operation was aborted')
+    aborted.name = 'AbortError'
+    const stream = useAgentStream()
+    streamChat.mockImplementation(async (_params, onFrame) => {
+      onFrame({ event: 'compaction', data: { phase: 'start' } })
+      throw aborted
+    })
+
+    await stream.send('你好', { sessionId: 'sid' })
+
+    expect(stream.compacting.value).toBe(false)
+  })
+
+  it('reset() 清空 compactions', async () => {
+    const stream = useAgentStream()
+    replay([
+      {
+        event: 'compaction',
+        data: { phase: 'end', outcome: { kind: 'compacted', tokensBefore: 1, tokensAfter: 1 } }
+      }
+    ])
+    await stream.send('你好', { sessionId: 'sid' })
+    expect(stream.compactions.value).toHaveLength(1)
+
+    stream.reset()
+
+    expect(stream.compactions.value).toEqual([])
+  })
+})
+
 describe('stop', () => {
   it('停止按钮要真的叫停：调 abortChat 带当前会话 id，再断本地接收', async () => {
     const stream = useAgentStream()
