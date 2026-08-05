@@ -76,9 +76,20 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
 `POST /api/chat`，请求体 `{ message, sessionId, systemPrompt? }`，响应 SSE：
 
 ```
-event: agent   data: <pi 的 AgentEvent JSON，原样透传>
-event: error   data: { message }
+event: agent      data: <pi 的 AgentEvent JSON，原样透传>
+event: error      data: { message }
+event: compaction data: { phase: "start" }
+                      | { phase: "end", outcome: <投影后的 CompactionOutcome> }
+                      | { phase: "blocked", reason }
 ```
+
+`compaction` 帧是自动压缩的可见信号（pi 只在压缩**结束**时发 `session_compact`，
+「开始 / 失败 / 被守卫挡住」它不给）。`outcome` 必须**投影**再发，不能原样透传：
+`failed` 只留 `kind`（原始 error 可能带限流阈值、区域信息甚至 key 片段），
+`compacted` 只留 `kind` / `tokensBefore` / `tokensAfter`（`pureBefore`、`contextWindow`
+是内部字段）。投影在 `routes/chat.ts` 的 `toCompactionFrame`，形状由 `chat.test.ts`
+按键集合锁住。`blocked` 表示「压缩被抗抖动守卫挡住、但上下文确实超阈值」，
+前端必须显示告警且**不能存进 `error`**——它紧跟着就是 `agent_start`，会被一并清掉。
 
 前端 `apis/chat_api.js` 用 `fetch` + `ReadableStream` 读流（需要 POST，不能用 `EventSource`），
 `composables/useAgentStream.js` 把 AgentEvent 归约为 `messages`（直接沿用 pi 的 `AgentMessage`，
@@ -159,7 +170,9 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
    `agent_start` / `settled` 维护标记（`harness-registry.ts` 就是这么做的）。
 8. **`phase === "compaction"` 时 `prompt()` 抛 `busy`，而 `followUp()` 不抛**——
    它只往队列 push，此时没有 run 会消费，`waitForIdle()` await 的 `runPromise`
-   只在 `prompt()`/`skill()` 里创建，压缩期间它是上一轮那个**已 resolve** 的。
+   只在 `prompt()` / `skill()` / `promptFromTemplate()` 里创建，而 run 收尾时
+   （`finishRunPromise`）会把它置回 `undefined`——压缩期间 `await` 的其实是 `undefined`，
+   立即 resolve。
    于是 `send()` 立刻返回、SSE 关流、**用户这条消息永久消失且没有任何报错**。
    所以压缩的互斥必须由 `harness-registry` 自己做（`Entry.compaction` 这条 promise），
    不能指望 harness。另外 `compact()` 内部的 signal 是 `new AbortController().signal`，
@@ -232,6 +245,15 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
     于是 `compact()` 照样发一次摘要请求、拿回一段基于空对话的废摘要、再写入一条
     compaction 条目——白花一次模型调用。生产上走不到（阈值远高于 20k），
     但写压缩测试时必须造 8 万字符以上的会话才能看到真实效果。
+19. **`estimateContextTokens()` 在压缩后会采信一个过期的 usage**：它取「最后一条
+    **非 error** assistant 的真实 usage + 其后消息的字符估算」，而压缩后 retainedTail
+    里留着的正是压缩前那条 assistant——它的 usage 反映的是压缩前的完整上下文。
+    所以「压缩后有多大」只能纯字符估算（`CompactionOutcome.tokensAfter` 就是），
+    而阈值判定要先比一次时间戳（`estimateForDecision`）：提供 usage 的那条消息若早于
+    最近一条 compaction 条目，整个 usage 分量作废。这个坑本轮踩了两次——第二次是
+    `tokensAfter` 拿去判「压完还超不超窗口」，恒真，导致 (d) 兜底的两条用户文案互换。
+    **测试里 `fauxAssistantMessage` 的 usage 全 0，退回纯估算，所以断言 usage-based
+    数值的用例必须自己塞一条带真实 usage 的消息**，否则恒真。
 
 ## 重构现状
 
