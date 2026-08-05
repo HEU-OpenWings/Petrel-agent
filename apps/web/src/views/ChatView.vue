@@ -11,7 +11,7 @@
           <!-- 压缩发生在新一轮的 prompt 之前，所以分隔线插在那一刻的消息下标之前 -->
           <CompactionDivider
             v-for="mark in compactions.filter((item) => item.atIndex === index)"
-            :key="`mark-${mark.atIndex}-${mark.tokensBefore}`"
+            :key="mark.id"
             :tokens-before="mark.tokensBefore"
             :tokens-after="mark.tokensAfter"
           />
@@ -26,12 +26,16 @@
         <!-- atIndex 等于当前长度的标记还没有对应消息（压缩刚结束、回答还没开始） -->
         <CompactionDivider
           v-for="mark in compactions.filter((item) => item.atIndex >= messages.length)"
-          :key="`tail-${mark.atIndex}-${mark.tokensBefore}`"
+          :key="mark.id"
           :tokens-before="mark.tokensBefore"
           :tokens-after="mark.tokensAfter"
         />
 
-        <div v-if="compacting" class="compacting">正在压缩上下文…</div>
+        <div v-if="compacting" class="compacting" role="status">正在压缩上下文…</div>
+
+        <!-- 压缩被守卫挡住但阈值确实超了。与 error 分开渲染：它不是本轮的失败，
+             也不该被下一轮的 agent_start 或真错误盖掉 -->
+        <div v-if="warning" class="warning" role="status">{{ warning }}</div>
 
         <div v-if="error" class="error">{{ error }}</div>
       </div>
@@ -98,6 +102,7 @@ const {
   toolCalls,
   running,
   error,
+  warning,
   compacting,
   compactions,
   send,
@@ -341,9 +346,21 @@ watch(
   word-break: break-word;
 }
 
+// 与 .error 同一套配色变量，深色模式下这些 token 会被 base.dark.css 覆盖；
+// 写死的 rgba(0,0,0,…) 在暗色底上近乎不可读
+.warning {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-warning-50);
+  color: var(--color-warning-700);
+  font-size: 13px;
+  word-break: break-word;
+}
+
 .compacting {
   margin: 12px 0;
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--text-faint);
   font-size: 12px;
   text-align: center;
 }

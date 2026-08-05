@@ -12,7 +12,7 @@ defineProps({
   -->
   <div class="compaction-divider">
     <span class="line" />
-    <span class="label">
+    <span>
       上下文已压缩
       <template v-if="tokensBefore">（{{ tokensBefore }} → {{ tokensAfter }} tokens）</template>
     </span>
@@ -21,17 +21,18 @@ defineProps({
 </template>
 
 <style scoped>
+/* 颜色走主题变量：深色模式（base.dark.css 覆盖这两个 token）下写死的黑色近乎不可见 */
 .compaction-divider {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 12px 0;
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--text-faint);
   font-size: 12px;
 }
 .line {
   flex: 1;
   height: 1px;
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--border-subtle);
 }
 </style>

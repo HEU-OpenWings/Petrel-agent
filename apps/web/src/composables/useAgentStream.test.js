@@ -271,7 +271,7 @@ describe('compaction', () => {
 
     expect(stream.compacting.value).toBe(false)
     expect(stream.compactions.value).toEqual([
-      { atIndex: 0, tokensBefore: 90000, tokensAfter: 20000 }
+      { id: 1, atIndex: 0, tokensBefore: 90000, tokensAfter: 20000 }
     ])
   })
 
@@ -288,16 +288,76 @@ describe('compaction', () => {
     expect(stream.compactions.value).toEqual([])
   })
 
-  it('phase: blocked 时写 error 且不改 compacting', async () => {
+  /**
+   * 这条用例原来只回放一帧 blocked，于是恒过——而真实帧序里 blocked 之后**紧接着**
+   * 就是 agent_start（registry 先 notify 再 prompt，pi 无条件发 agent_start）。
+   * 提示当初写在 error 里，被 agent_start 的 `error.value = ''` 一并擦掉，
+   * spec §8.1「压不动时必须告警」在生产上完全落空。所以必须把 agent_start 补进
+   * 帧序里，否则这条哨兵形同虚设。
+   */
+  it('phase: blocked 的告警不会被紧随其后的 agent_start 擦掉', async () => {
     const stream = useAgentStream()
-    replay([{ event: 'compaction', data: { phase: 'blocked', reason: 'cooldown' } }])
+    replay([
+      { event: 'compaction', data: { phase: 'blocked', reason: 'cooldown' } },
+      { event: 'agent', data: { type: 'agent_start' } }
+    ])
 
     await stream.send('你好', { sessionId: 'sid' })
 
-    expect(stream.error.value).toBe(
-      '上下文已超过压缩阈值，但自动压缩暂时不可用，建议新建会话继续'
-    )
+    expect(stream.warning.value).toContain('冷却')
+    // 告警不占 error 的槽位：本轮并没有失败
+    expect(stream.error.value).toBe('')
+  })
+
+  it('blocked 的文案按 reason 分', async () => {
+    const stream = useAgentStream()
+    replay([{ event: 'compaction', data: { phase: 'blocked', reason: 'ineffective' } }])
+
+    await stream.send('你好', { sessionId: 'sid' })
+
+    expect(stream.warning.value).toContain('无法回收空间')
+  })
+
+  /**
+   * blocked 之后不会再有 end 帧（守卫在发 start 之前就 return 了），而「等待者」
+   * 连接是先收到 start 的——不复位的话它整轮都显示「正在压缩上下文…」。
+   * 这里必须先 emit start，否则 compacting 本来就是 false，断言恒过。
+   */
+  it('phase: blocked 也复位 compacting', async () => {
+    const stream = useAgentStream()
+    const flow = controllableStream()
+
+    const pending = stream.send('你好', { sessionId: 'sid' })
+    await tick()
+    flow.emit({ event: 'compaction', data: { phase: 'start' } })
+    expect(stream.compacting.value).toBe(true)
+
+    flow.emit({ event: 'compaction', data: { phase: 'blocked', reason: 'cooldown' } })
+
     expect(stream.compacting.value).toBe(false)
+
+    flow.close()
+    await pending
+  })
+
+  it('压缩成功后清掉之前的 blocked 告警', async () => {
+    const stream = useAgentStream()
+    const flow = controllableStream()
+
+    const pending = stream.send('你好', { sessionId: 'sid' })
+    await tick()
+    flow.emit({ event: 'compaction', data: { phase: 'blocked', reason: 'cooldown' } })
+    expect(stream.warning.value).not.toBe('')
+
+    flow.emit({
+      event: 'compaction',
+      data: { phase: 'end', outcome: { kind: 'compacted', tokensBefore: 90000, tokensAfter: 20000 } }
+    })
+
+    expect(stream.warning.value).toBe('')
+
+    flow.close()
+    await pending
   })
 
   it('断连时 finally 复位 compacting，压缩指示器不会一直转', async () => {
@@ -312,6 +372,17 @@ describe('compaction', () => {
     await stream.send('你好', { sessionId: 'sid' })
 
     expect(stream.compacting.value).toBe(false)
+  })
+
+  it('loadHistory() 清掉 blocked 告警：换会话后它不再成立', async () => {
+    const stream = useAgentStream()
+    replay([{ event: 'compaction', data: { phase: 'blocked', reason: 'cooldown' } }])
+    await stream.send('你好', { sessionId: 'sid' })
+    expect(stream.warning.value).not.toBe('')
+
+    stream.loadHistory(HISTORY)
+
+    expect(stream.warning.value).toBe('')
   })
 
   it('reset() 清空 compactions', async () => {

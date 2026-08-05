@@ -2,6 +2,18 @@ import { computed, ref, shallowRef } from 'vue'
 import { abortChat, streamChat } from '@/apis/chat_api'
 
 /**
+ * blocked 的文案按 reason 分。两种原因对用户的意味完全不同：cooldown 是「等一会儿
+ * 还会再试」，ineffective 是「已经压不动了，只能新建会话」。reason 取值来自
+ * 服务端的 CompactionSkipReason（packages/agent/src/compaction.ts），
+ * 但只有 overThreshold 的 skip 才会发 blocked 帧，所以这里只可能是这两个。
+ */
+const BLOCKED_HINTS = {
+  cooldown: '上一次自动压缩失败，正在冷却，稍后会自动重试。上下文已超过压缩阈值，必要时可新建会话',
+  ineffective: '自动压缩已连续多次无法回收空间，上下文会一直逼近模型窗口，建议新建会话继续',
+  default: '上下文已超过压缩阈值，但自动压缩暂时不可用，建议新建会话继续'
+}
+
+/**
  * 把 pi 的 AgentEvent 序列归约为消息状态。
  *
  * 整个对话界面的唯一状态来源：组件只做渲染，不参与事件拼接。
@@ -15,6 +27,16 @@ export function useAgentStream() {
   const toolCalls = ref({})
   const running = ref(false)
   const error = ref('')
+  /**
+   * 压缩被守卫挡住、但上下文确实超阈值时的告警。
+   *
+   * 必须独立于 error：blocked 帧紧跟着就是 prompt，agent_start 会到达并清掉
+   * error（那是「新一轮开始，上一轮的错误作废」的正常语义），提示刚写进去就被
+   * 擦掉，用户什么都看不到——而这条告警存在的理由正是让用户在撞上模型窗口硬墙
+   * 之前就知道要新建会话（spec §8.1）。它也不该被下一轮的真错误覆盖，两者是
+   * 两回事，所以给它自己的槽位。
+   */
+  const warning = ref('')
   /** 正在压缩上下文。压缩发生在回答开始之前，所以要独立于 running 显示 */
   const compacting = ref(false)
   /**
@@ -30,6 +52,8 @@ export function useAgentStream() {
   const activeSessionId = ref(null)
   /** 当前正在流式写入的消息下标，由 message_start 确定 */
   let activeIndex = -1
+  /** 给压缩标记发稳定的渲染 key。atIndex + token 数会撞（同一下标压两次且数值相同） */
+  let compactionSeq = 0
 
   const canSend = computed(() => !running.value)
 
@@ -37,6 +61,7 @@ export function useAgentStream() {
     messages.value = []
     toolCalls.value = {}
     error.value = ''
+    warning.value = ''
     compactions.value = []
     activeIndex = -1
   }
@@ -51,6 +76,8 @@ export function useAgentStream() {
     messages.value = Array.isArray(history) ? [...history] : []
     toolCalls.value = {}
     error.value = ''
+    // 告警说的是「这个会话的上下文超阈值」，换会话就不再成立
+    warning.value = ''
     // 同样的道理：不清的话上一个会话的压缩分隔线会残留到这个会话的列表里
     compactions.value = []
     activeIndex = -1
@@ -67,6 +94,8 @@ export function useAgentStream() {
   function apply(event) {
     switch (event.type) {
       case 'agent_start':
+        // 只清 error（上一轮的失败作废），不碰 warning：blocked 帧就在 agent_start
+        // 之前一瞬到达，一起清掉等于这条告警永远不可见
         error.value = ''
         break
 
@@ -139,14 +168,20 @@ export function useAgentStream() {
               compacting.value = true
               return
             }
+            // start 之外的每个 phase 都要复位 compacting：blocked 之后不会再有 end
+            // 帧（守卫在发 start 之前就 return 了），漏了这一句的话，收到过 start 的
+            // 「等待者」连接会一直显示「正在压缩上下文…」直到整轮结束
+            compacting.value = false
             if (frame.data.phase === 'blocked') {
-              error.value = '上下文已超过压缩阈值，但自动压缩暂时不可用，建议新建会话继续'
+              warning.value = BLOCKED_HINTS[frame.data.reason] ?? BLOCKED_HINTS.default
               return
             }
             // phase === 'end'
-            compacting.value = false
             if (frame.data.outcome?.kind === 'compacted') {
+              // 压成功了，之前那条「压不动」的告警不再成立（spec §8.1）
+              warning.value = ''
               compactions.value.push({
+                id: ++compactionSeq,
                 atIndex: messages.value.length,
                 tokensBefore: frame.data.outcome.tokensBefore,
                 tokensAfter: frame.data.outcome.tokensAfter
@@ -205,6 +240,7 @@ export function useAgentStream() {
     toolCalls,
     running,
     error,
+    warning,
     canSend,
     compacting,
     compactions,
