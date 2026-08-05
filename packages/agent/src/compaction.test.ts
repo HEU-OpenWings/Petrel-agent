@@ -114,6 +114,29 @@ describe("maybeCompact 阈值判定", () => {
   });
 
   /**
+   * 总开关优先于 force。cooldown / ineffective 两道守卫刻意让 force 穿透（(d) 兜底
+   * 时上下文已经真的爆了，挡住它只会让用户彻底没救），但 enabled 不是守卫而是开关：
+   * 运维关掉它就是不想再有摘要模型调用、也不想再往会话树写 compaction 条目。
+   * 这条断言把「force 不得绕过总开关」写死，顺便保证被关掉时一次模型调用都不发。
+   */
+  it("enabled 为 false 时连 force 也不压", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(
+      harness,
+      session,
+      state,
+      { ...POLICY, enabled: false },
+      { force: true },
+    );
+
+    expect(outcome).toMatchObject({ kind: "skipped", reason: "disabled" });
+    expect(faux.getPendingResponseCount()).toBe(1);
+  });
+
+  /**
    * 这一对是 spec §7.1 那个洞的回归测试。判定发生在 harness.prompt() 之前，
    * 待发消息还不在会话树里；不算进去，一整类可以在请求前避免的爆窗会被推到 (d)，
    * 用户被要求手动重发。Codex 自己也还没修这个洞（turn.rs:159-162 的 TODO）。
@@ -240,6 +263,53 @@ describe("maybeCompact 的抗抖动守卫", () => {
     expect(second).toMatchObject({ kind: "skipped", reason: "below-threshold" });
   });
 
+  /**
+   * 上一条的反向分支，也是 estimateForDecision 比 pi CLI 的「压完就一律不再压」
+   * 更准的那个卖点：压缩之后又真的跑了一轮、拿回一条**晚于** compaction 条目的
+   * usage，那这条 usage 反映的就是压缩后的真实上下文，必须采信它而不是退回纯估算。
+   * 不采信的话，压缩后上下文重新涨回阈值以上时会一直压不动。
+   */
+  it("stale-usage：usage 晚于最近一次 compaction 时采信 usage", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n第一次摘要")]),
+      fauxAssistantMessage([fauxText("## Goal\n第二次摘要")]),
+    ]);
+
+    expect((await maybeCompact(harness, session, state, POLICY, {})).kind).toBe("compacted");
+    // 压缩之后新增的一条回答，usage 说「当前上下文 90000 token」——远超阈值 32000。
+    // 纯字符估算此刻只有两万上下，所以只有采信 usage 才会判超阈值。
+    // timestamp 要显式推后一秒：判定用的是严格大于，而这里两条记录都写在同一毫秒内
+    // （真实链路上隔着一整轮模型调用，不存在这个并列）
+    await session.appendMessage({
+      ...withUsage("压缩之后的新回答", 90_000),
+      timestamp: Date.now() + 1000,
+    });
+
+    expect((await maybeCompact(harness, session, state, POLICY, {})).kind).toBe("compacted");
+  });
+
+  /**
+   * tokensAfter 的口径回归。它曾经走 estimateContextTokens，于是采信了 retainedTail
+   * 里那条压缩前的 usage（90000），压缩后报出来的数几乎等于压缩前——registry 的
+   * overflowMessage() 拿它判「压完还超不超窗口」会恒真，(d) 兜底的两条文案因此互换。
+   * 这里用一条 usage=90000 的消息把陷阱重建出来：断言 tokensAfter 明显小于它，
+   * 也小于窗口，否则就是又采信了 stale usage。
+   */
+  it("tokensAfter 不采信 retainedTail 里的旧 usage", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    await session.appendMessage(withUsage("旧回答", 90_000));
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(harness, session, state, POLICY, {});
+
+    expect(outcome.kind).toBe("compacted");
+    if (outcome.kind !== "compacted") return;
+    expect(outcome.tokensAfter).toBeLessThan(CONTEXT_WINDOW);
+  });
+
   it("cooldown：摘要失败后 60s 内不再主动压，但 force 能穿透", async () => {
     const { faux, harness, session, state } = await fixture();
     await fill(session, 40_000);
@@ -271,7 +341,7 @@ describe("maybeCompact 的抗抖动守卫", () => {
    * 数值必然相等，这条断言在原 fixture 下无法验证任何东西。塞一条带真实 usage
    * 的消息进去，才能让 usage-based 的 tokensBefore 与纯估算的 pureBefore 真正分叉。
    */
-  it("compacted 同时给出 usage-based 与纯估算两对数", async () => {
+  it("compacted 同时给出 usage-based 与纯估算两个压缩前的数", async () => {
     const { faux, harness, session, state } = await fixture();
     await fill(session, 40_000);
     await session.appendMessage(withUsage("旧回答", 90_000));
@@ -281,8 +351,8 @@ describe("maybeCompact 的抗抖动守卫", () => {
 
     expect(outcome.kind).toBe("compacted");
     if (outcome.kind !== "compacted") return;
-    expect(outcome.pureBefore).toBeGreaterThan(outcome.pureAfter);
-    // 两对数是不同口径，不该恰好相等——相等说明实现把它们接成了同一个来源
+    expect(outcome.pureBefore).toBeGreaterThan(outcome.tokensAfter);
+    // 两个数是不同口径，不该恰好相等——相等说明实现把它们接成了同一个来源
     expect(outcome.pureBefore).not.toBe(outcome.tokensBefore);
   });
 
@@ -316,7 +386,7 @@ describe("maybeCompact 的抗抖动守卫", () => {
    * 覆盖 ineffectiveStreak 递增分支本身（上面两条用例都是直接赋值构造前置状态，
    * 从未真的走过 `+1` 那条路）。刻意把会话长度只造得比 pi 的 keepRecentTokens
    * （硬编码 20000）多一点：压缩后 retainedTail 几乎保留全部内容，回收比例必然
-   * 低于 REQUIRED_RECLAIM_RATIO（实测 pureBefore=22000、pureAfter≈20003，回收
+   * 低于 REQUIRED_RECLAIM_RATIO（实测 pureBefore=22000、tokensAfter≈20003，回收
    * ≈9.1%）。`absoluteCap` 调到很小以确保能过阈值判定——实际会话本身没到默认
    * 阈值 32000，不然阈值判定会先挡在前面，走不到这条低回收压缩。
    */
@@ -329,7 +399,7 @@ describe("maybeCompact 的抗抖动守卫", () => {
 
     expect(outcome.kind).toBe("compacted");
     if (outcome.kind !== "compacted") return;
-    const reclaimed = (outcome.pureBefore - outcome.pureAfter) / outcome.pureBefore;
+    const reclaimed = (outcome.pureBefore - outcome.tokensAfter) / outcome.pureBefore;
     // 哨兵：保证这条用例真的走在低回收路径上。pi 若改了 keepRecentTokens，
     // 这里会先失败并指明要重新校准会话长度，而不是让下面那条断言静默失去意义
     expect(reclaimed).toBeLessThan(0.1);

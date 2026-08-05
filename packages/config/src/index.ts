@@ -113,8 +113,8 @@ export const env = {
    * 上下文自动压缩。阈值 = min(模型 contextWindow × thresholdRatio, absoluteCap)。
    *
    * absoluteCap 存在的理由不是防爆窗，而是控成本与延迟：默认模型窗口 1_000_000，
-   * 0.8 就是 80 万 token，一次请求又慢又贵。对 64k 的备选模型这个上限不起作用
-   * （51.2k < 120000），所以两个数各管一头。见 docs/superpowers/specs/2026-08-05-auto-compaction-design.md §7
+   * 0.8 就是 80 万 token，一次请求又慢又贵。对 64k（65536）的备选模型这个上限不起作用
+   * （52.4k < 120000），所以两个数各管一头。见 docs/superpowers/specs/2026-08-05-auto-compaction-design.md §7
    */
   compaction: {
     enabled: bool("COMPACTION_ENABLED", process.env.COMPACTION_ENABLED, true),

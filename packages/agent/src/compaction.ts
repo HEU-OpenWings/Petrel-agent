@@ -36,19 +36,28 @@ export type CompactionOutcome =
   | { kind: "skipped"; reason: CompactionSkipReason; overThreshold: boolean }
   | {
       kind: "compacted";
-      /** usage-based 估算，给埋点与前端展示 */
+      /** usage-based 估算，pi 自己报的压缩前 token 数，给埋点与前端展示 */
       tokensBefore: number;
+      /**
+       * 压缩后的 token 数，**只能是纯字符估算**。
+       *
+       * 不能用 estimateContextTokens：它取「最后一条非 error assistant 的真实
+       * usage + 其后消息的字符估算」，而压缩后 retainedTail 里留着的正是压缩前
+       * 那条 assistant，它的 usage 反映的是压缩前的完整上下文。采信它算出的
+       * 「压缩后」几乎等于压缩前——调用方拿它判「压完还超不超窗口」会得到恒真的
+       * 结论（(d) 兜底的两条文案因此互换），前端也会显示「90000 → 90000」。
+       * 这与 estimateForDecision() 防的是同一个 stale-usage 陷阱。
+       */
       tokensAfter: number;
       /**
-       * 纯字符估算，只给 ineffective 守卫用（Task 4）：`tokensBefore` 是
-       * usage-based 的（含 provider 计入的 system prompt 等固定开销），而压缩后
-       * 拿不到新的 usage、只能纯字符估算——两个数口径不同，相减会系统性高估回收
-       * 比例，让守卫永远不触发。所以另算一对同口径的纯字符估算专供该守卫，阈值
-       * 判定本身继续用更准的 usage-based 估算。详见
+       * 与 `tokensAfter` 同口径的压缩前估算，只给 ineffective 守卫用（Task 4）。
+       *
+       * `tokensBefore` 是 usage-based 的（含 provider 计入的 system prompt 等固定
+       * 开销），拿它跟纯字符估算的 `tokensAfter` 相减会系统性高估回收比例，让守卫
+       * 永远不触发。详见
        * docs/superpowers/specs/2026-08-05-auto-compaction-design.md §8.1.3。
        */
       pureBefore: number;
-      pureAfter: number;
       /**
        * 压缩发生时的模型窗口。调用方要判断「压完还超不超窗口」（单条消息本身就
        * 超窗口，压缩救不了）就需要这个数，而 apps/server 不许碰 pi 的 Model 类型——
@@ -174,7 +183,10 @@ export async function maybeCompact(
   policy: CompactionPolicy,
   options: MaybeCompactOptions,
 ): Promise<CompactionOutcome> {
-  if (!policy.enabled && !options.force) {
+  // 总开关关掉就是彻底关掉，(d) 兜底的 force 也不例外：它同样要发一次摘要请求、
+  // 往会话树写一条 compaction 条目，而那正是运维关掉这个键时想停掉的东西。
+  // 代价是关掉之后撞窗口的会话只能收到「压缩已关闭」的提示、自己新建会话。
+  if (!policy.enabled) {
     return { kind: "skipped", reason: "disabled", overThreshold: false };
   }
 
@@ -204,17 +216,16 @@ export async function maybeCompact(
   try {
     const result = await harness.compact(policy.summaryInstructions);
     const after = await session.buildContext();
-    const pureAfter = pureEstimate(after.messages);
-    // 同口径比较。混用 usage-based 的 tokensBefore 与纯估算的 pureAfter
+    const tokensAfter = pureEstimate(after.messages);
+    // 同口径比较。混用 usage-based 的 tokensBefore 与纯估算的 tokensAfter
     // 会系统性高估回收比例，这道守卫就永远不触发
-    const reclaimed = pureBefore > 0 ? (pureBefore - pureAfter) / pureBefore : 0;
+    const reclaimed = pureBefore > 0 ? (pureBefore - tokensAfter) / pureBefore : 0;
     state.ineffectiveStreak = reclaimed < REQUIRED_RECLAIM_RATIO ? state.ineffectiveStreak + 1 : 0;
     return {
       kind: "compacted",
       tokensBefore: result.tokensBefore,
-      tokensAfter: estimateContextTokens(after.messages).tokens,
+      tokensAfter,
       pureBefore,
-      pureAfter,
       contextWindow: harness.getModel().contextWindow,
     };
   } catch (error) {
