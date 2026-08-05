@@ -5,6 +5,7 @@ import {
   createPgSession,
   createHarness as createRealHarness,
   DEFAULT_SYSTEM_PROMPT,
+  isContextOverflow,
   maybeCompact,
   resolveModel,
 } from "@petrel/agent";
@@ -47,6 +48,25 @@ export type HarnessNotice =
  * 质量足够，这里只补「用中文」这一条要求，不接管整条摘要链路。
  */
 const SUMMARY_INSTRUCTIONS = "用中文输出摘要；文件路径、函数名、错误信息原样保留不译。";
+
+/**
+ * (d) overflow 兜底的用户文案。
+ *
+ * 必须按压缩结果分支。无条件说「已压缩，请重发」会在三种情况下形成死循环
+ * （摘要限流 / 单条消息本身超窗口 / 守卫阻断）：用户重发 → 又爆窗 → 又被告知已压缩。
+ */
+function overflowMessage(outcome: CompactionOutcome): string {
+  if (outcome.kind === "compacted") {
+    return "上下文超出模型窗口，已自动压缩历史，请重新发送刚才那条消息";
+  }
+  if (outcome.kind === "failed") {
+    return `上下文超出模型窗口，且自动压缩失败（${outcome.error.message}）。请新建会话继续`;
+  }
+  if (outcome.reason === "nothing-to-compact") {
+    return "单条消息或单轮内容超出模型窗口，压缩无法解决。请缩短输入或换用更大窗口的模型";
+  }
+  return "上下文超出模型窗口，压缩已无法再回收空间。请新建会话继续";
+}
 
 /** 空闲多久后回收。5 分钟：够覆盖「用户读完回答再追问」，又不会让内存长期挂着。 */
 const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
@@ -468,7 +488,30 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
                 return (
                   held.harness
                     .prompt(message)
-                    .then(() => undefined)
+                    .then(async (result) => {
+                      // pi 模型调用失败不抛异常也不发 error 事件，原因写在 assistant
+                      // 消息的 errorMessage 里（CLAUDE.md 硬约束第 3 条），所以检测点在这
+                      if (!isContextOverflow(held.harness, result)) return;
+                      const recoveryPromise = maybeCompact(
+                        held.harness,
+                        held.session,
+                        held.compactionState,
+                        { ...env.compaction, summaryInstructions: SUMMARY_INSTRUCTIONS },
+                        { force: true },
+                      );
+                      held.compaction = recoveryPromise;
+                      const recovery = await recoveryPromise.catch(
+                        (error: unknown): CompactionOutcome => ({
+                          kind: "failed",
+                          error: error instanceof Error ? error : new Error(String(error)),
+                        }),
+                      );
+                      held.compaction = undefined;
+                      notify({ phase: "end", outcome: recovery });
+                      // 不自动重发：pi 在 prompt() 时已把 user message 落进会话树，
+                      // 重发会在树里留下两条一样的 user 消息，前端出现重复气泡
+                      throw new Error(overflowMessage(recovery));
+                    })
                     // settled 事件通常已经复位过；这里兜住「prompt 抛异常没走到 agent_end」
                     // 的情况，否则这个会话会永远卡在 running=true，再也接不了新消息
                     .finally(() => {

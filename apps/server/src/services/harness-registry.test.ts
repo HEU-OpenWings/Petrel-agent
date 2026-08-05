@@ -313,13 +313,20 @@ describe("createHarnessRegistry", () => {
 /**
  * 造一个「窗口很小、且会话已经超阈值」的实例，用来触发压缩。
  *
- * 窗口取 40000（阈值 32000）而不是更小：pi 硬编码 keepRecentTokens = 20000，
+ * 窗口取 48000（阈值 38400）而不是更小：pi 硬编码 keepRecentTokens = 20000，
  * 阈值离它太近的话压缩几乎切不掉东西。见 spec §10.1。
+ *
+ * 48000 而不是最初的 40000：20 组预置内容的真实 usage（含 system prompt 等固定
+ * 开销）约 40145 token，Task 9 加入 isContextOverflow() 之后，即使模型正常回答、
+ * 只是没能提前压缩，也会因为 usage.input(40145) > contextWindow(40000) 被
+ * pi-ai 的「静默溢出」检测（case 2）判定为溢出，触发本不该触发的补救压缩，
+ * 让「压缩失败不阻断本轮」「守卫挡住但确实超阈值」这两条 Task 7 测试跟着改变行为。
+ * 48000 留出约 8000 token 余量，两个阈值判定的相对关系不变（该超阈值的还是会超）。
  */
 function compactionFactory() {
   const faux = fauxProvider({
     tokensPerSecond: 10_000,
-    models: [{ id: "faux-compaction", contextWindow: 40_000, maxTokens: 8192 }],
+    models: [{ id: "faux-compaction", contextWindow: 48_000, maxTokens: 8192 }],
   });
   const models = createModels();
   models.setProvider(faux.provider);
@@ -575,4 +582,148 @@ describe("createHarnessRegistry 的自动压缩", () => {
 
     expect(second.harness).not.toBe(first.harness);
   });
+});
+
+/**
+ * (d) overflow 兜底专用的会话构造。
+ *
+ * 与 compactionFactory() 用同一套模型/chunk，但只铺 14 组（约 28000 token）而不是
+ * 20 组：compactionFactory() 的 40000 token 是特意做成「一上来就超阈值」（见其注释），
+ * 这对 (d) 的测试是干扰——每次 send() 最前面都会先跑一次**非强制**的 maybeCompact()，
+ * 20 组会让这次探测性检查本身就判定超阈值、发起一次真实的摘要请求，把测试特意排布
+ * 给「真正那次 prompt()」的 mock 响应提前吃掉（实测：只给 2 个响应时，第 1 个被这次
+ * 探测性压缩吃掉，第 2 个被 prompt() 吃掉，走到 (d) 的补救压缩时反而没响应可用，
+ * 抛 `no more faux responses queued`，而不是测试想验证的 outcome）。
+ * 28000 token 留在阈值（32000）之下，探测性检查会判 below-threshold 直接跳过、
+ * 不发请求；但仍然高于 keepRecentTokens（20000），force:true 时真的有内容可压，
+ * 不会一上来就撞 Nothing to compact。
+ */
+function overflowRecoveryFactory() {
+  const faux = fauxProvider({
+    tokensPerSecond: 10_000,
+    models: [{ id: "faux-compaction", contextWindow: 40_000, maxTokens: 8192 }],
+  });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const chunk = "一".repeat(4000);
+  return {
+    faux,
+    async create(sessionId: string) {
+      const session = await createMemorySession(sessionId);
+      for (let i = 0; i < 14; i++) {
+        await session.appendMessage({
+          role: "user",
+          content: [{ type: "text", text: chunk }],
+          timestamp: Date.now(),
+        });
+        await session.appendMessage(fauxAssistantMessage([fauxText(chunk)]));
+      }
+      return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+    },
+  };
+}
+
+describe("createHarnessRegistry 的 overflow 兜底", () => {
+  const OVERFLOW = fauxAssistantMessage([fauxText("")], {
+    stopReason: "error",
+    errorMessage: "This model's maximum context length is 40000 tokens",
+  });
+
+  /** 跑一轮并把抛出的错误文案取回来。不用 rejects.toThrow：要对同一条文案做多次断言 */
+  async function sendAndCatch(handle: { send: (m: string) => Promise<void> }, message: string) {
+    try {
+      await handle.send(message);
+      return "";
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  it("压缩成功时文案要求重发", async () => {
+    const factory = overflowRecoveryFactory();
+    factory.faux.setResponses([OVERFLOW, fauxAssistantMessage([fauxText("## Goal\n摘要")])]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    const text = await sendAndCatch(handle, "问题");
+    handle.release();
+
+    expect(text).toContain("已自动压缩历史，请重新发送");
+  });
+
+  /**
+   * 这条是评审抓出的死循环：压缩没成功却告诉用户「已压缩，请重发」，
+   * 用户重发 → 又爆窗 → 又被告知已压缩，无限循环。
+   */
+  it("摘要失败时文案不出现「已自动压缩」", async () => {
+    const factory = overflowRecoveryFactory();
+    factory.faux.setResponses([
+      OVERFLOW,
+      fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "rate limited" }),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    const text = await sendAndCatch(handle, "问题");
+    handle.release();
+
+    expect(text).toContain("自动压缩失败");
+    expect(text).not.toContain("已自动压缩");
+  });
+
+  /**
+   * ⑦ 的补救压缩发生在 prompt() 之后，那时 chain 已经放行、running 也已复位成
+   * false。若临界区不 await held.compaction，第二个请求会径直发起自己的压缩，
+   * 两个 compact() 撞在一起，后者必抛 busy。
+   */
+  it("补救压缩期间的第二个请求不会并发发起第二次压缩", async () => {
+    const factory = overflowRecoveryFactory();
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    let summaryCalls = 0;
+    factory.faux.setResponses([
+      OVERFLOW,
+      async () => {
+        summaryCalls += 1;
+        await summaryGate;
+        return fauxAssistantMessage([fauxText("## Goal\n摘要")]);
+      },
+      fauxAssistantMessage([fauxText("第二轮回答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    const first = sendAndCatch(handle, "问题");
+    // 等补救压缩真的开始（第一轮的 prompt 已经返回 overflow）
+    await new Promise<void>((resolve) => {
+      const tick = () => (summaryCalls > 0 ? resolve() : setTimeout(tick, 5));
+      tick();
+    });
+    const second = handle.send("第二个问题");
+    releaseSummary();
+    await Promise.all([first, second.catch(() => undefined)]);
+    handle.release();
+
+    // 只有一次摘要请求：第二个请求等的是同一条 compaction promise，没有自己再压
+    expect(summaryCalls).toBe(1);
+  });
+
+  // 计划原文这里还有一条「没东西可压时提示缩短输入或换模型」的测试，用「连续两轮
+  // 都撞窗口」模拟第二轮命中 Nothing to compact。经实测排查（见 harness-registry.ts
+  // 里 maybeCompact 调用点上方的注释）：pi 的 Nothing to compact 只在
+  // `branchEntries[last].type === "compaction"`（自上次压缩后再没写过任何东西）时抛出，
+  // 而 (d) 的补救压缩必然发生在 harness.prompt() 已经把这一轮的 user/assistant 消息
+  // 写回会话树之后——也就是说触发补救压缩时 branchEntries 的最后一条永远是刚写入的
+  // message，不可能是 compaction。实测连续两轮撞窗口，第二轮的补救压缩总能在旧的保
+  // 留区里找到「还能再切一点」的内容（findCutPoint 按 token 累加，颗粒度到不了刚好
+  // 卡在边界），需要额外的第三个 mock 响应，且结果是 kind:"compacted" 而不是
+  // "nothing-to-compact"。也就是说 (d) 路径下 maybeCompact 的 force:true 调用只可能
+  // 落到 "compacted" | "failed"，skip 分支里 disabled/below-threshold/cooldown/
+  // ineffective 都被 force 绕过，唯一没被绕过的 skip 原因 nothing-to-compact 又要求
+  // 一个「压缩后到下一次压缩前没有任何新写入」的状态，这与「先有 overflow 才会触发
+  // 补救压缩」互斥。结论：overflowMessage() 的 nothing-to-compact 分支目前经由 (d)
+  // 是不可达的，保留它只是为了 TS 对 CompactionOutcome 的穷尽性检查与未来防御性——
+  // 这条测试没有办法在不弄虚作假的前提下写出来，故不补。
 });
