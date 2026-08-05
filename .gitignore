@@ -3,3 +3,5 @@ node_modules/
 *.tsbuildinfo
 .env
 *.log
+
+docs/prd/
