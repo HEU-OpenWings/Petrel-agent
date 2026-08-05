@@ -88,8 +88,6 @@ describe("compaction", () => {
   );
 
   it.each(["0", "-1", "1.5", "abc"])("COMPACTION_ABSOLUTE_CAP 非正整数抛错：%s", async (raw) => {
-    await expect(loadEnv({ COMPACTION_ABSOLUTE_CAP: raw })).rejects.toThrow(
-      "COMPACTION_ABSOLUTE_CAP",
-    );
+    await expect(loadEnv({ COMPACTION_ABSOLUTE_CAP: raw })).rejects.toThrow("COMPACTION_ABSOLUTE_CAP");
   });
 });
