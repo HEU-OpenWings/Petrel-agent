@@ -6,6 +6,7 @@ import {
   estimateTokens,
   type Session,
 } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 /**
  * 阈值策略。
@@ -216,4 +217,34 @@ export async function maybeCompact(
     state.cooldownUntil = Date.now() + COOLDOWN_MS;
     return { kind: "failed", error: error instanceof Error ? error : new Error(String(error)) };
   }
+}
+
+/**
+ * 各家 provider 报「上下文超窗口」的说法不统一，只能关键词匹配。
+ * 全部小写后比对，新 provider 出现新说法时往这里加。
+ */
+const OVERFLOW_PATTERNS = [
+  "context length",
+  "context_length_exceeded",
+  "too many tokens",
+  "maximum context",
+] as const;
+
+/**
+ * 这条失败的 assistant 消息是不是撞了模型的上下文窗口？
+ *
+ * 吃 harness 而不是 contextWindow：窗口从 harness.getModel() 读，这样 apps/server
+ * 不必碰 pi 的 Model 类型（依赖方向是 server → agent，pi 接线只在 agent 与 ai）。
+ */
+export function isContextOverflow(harness: AgentHarness, message: AssistantMessage): boolean {
+  if (message.stopReason !== "error") return false;
+
+  const text = (message.errorMessage ?? "").toLowerCase();
+  if (OVERFLOW_PATTERNS.some((pattern) => text.includes(pattern))) return true;
+
+  // 关键词兜不住的情况：有的 provider 只回一个通用错误，但 usage 已经把
+  // 超窗口的事实摆出来了（pi-ai 的 utils/overflow.ts 对「静默超窗」走的也是
+  // usage.input 与 contextWindow 比较这条路，只是它只在 stopReason "stop" 时用；
+  // 这里额外兜底 stopReason "error" 但关键词没命中的情况）
+  return message.usage.input > harness.getModel().contextWindow;
 }

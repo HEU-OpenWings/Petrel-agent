@@ -7,7 +7,12 @@ import {
   type Usage,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { type CompactionPolicy, createCompactionState, maybeCompact } from "./compaction.ts";
+import {
+  type CompactionPolicy,
+  createCompactionState,
+  isContextOverflow,
+  maybeCompact,
+} from "./compaction.ts";
 import { createHarness } from "./harness.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
@@ -329,5 +334,57 @@ describe("maybeCompact 的抗抖动守卫", () => {
     // 这里会先失败并指明要重新校准会话长度，而不是让下面那条断言静默失去意义
     expect(reclaimed).toBeLessThan(0.1);
     expect(state.ineffectiveStreak).toBe(1);
+  });
+});
+
+describe("isContextOverflow", () => {
+  /**
+   * 检测点是 prompt() 的返回值：pi 在模型调用失败时既不抛异常也不发 error 事件，
+   * 而是把原因写进 assistant 消息的 errorMessage（stopReason: "error"）。
+   * 见 CLAUDE.md「消费 pi AgentEvent 的硬约束」第 3 条。
+   */
+  it.each([
+    "This model's maximum context length is 65536 tokens",
+    "context_length_exceeded",
+    "Too many tokens in request",
+    "MAXIMUM CONTEXT exceeded",
+  ])("errorMessage 命中关键词：%s", async (errorMessage) => {
+    const { harness } = await fixture();
+    const message = fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage });
+
+    expect(isContextOverflow(harness, message)).toBe(true);
+  });
+
+  it("usage.input 超过 contextWindow 时命中，即使 errorMessage 没有关键词", async () => {
+    const { harness } = await fixture();
+    const message = {
+      ...fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "500 oops" }),
+      usage: {
+        input: CONTEXT_WINDOW + 1,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: CONTEXT_WINDOW + 1,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      } satisfies Usage,
+    };
+
+    expect(isContextOverflow(harness, message)).toBe(true);
+  });
+
+  it("普通错误不命中", async () => {
+    const { harness } = await fixture();
+    const message = fauxAssistantMessage([fauxText("")], {
+      stopReason: "error",
+      errorMessage: "connection reset by peer",
+    });
+
+    expect(isContextOverflow(harness, message)).toBe(false);
+  });
+
+  it("成功的回答不命中", async () => {
+    const { harness } = await fixture();
+
+    expect(isContextOverflow(harness, fauxAssistantMessage([fauxText("正常回答")]))).toBe(false);
   });
 });
