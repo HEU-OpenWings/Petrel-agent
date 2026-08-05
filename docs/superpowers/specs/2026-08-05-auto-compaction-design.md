@@ -138,7 +138,8 @@ abort 不能被压缩挡住」。**(b) 在我们这里没有独立价值。**
 
 ## 5. 组件与边界
 
-新增一个模块，改动三个现有文件。**不动** `pg-storage.ts`、`entries.ts`、`services/session.ts`。
+新增一个模块，改动**六个**现有文件（三个服务端 + 一个 config + 两个前端，见 §9.2）。
+**不动** `pg-storage.ts`、`entries.ts`、`services/session.ts`。
 
 ### 5.1 `packages/agent/src/compaction.ts`（新增）
 
@@ -152,7 +153,16 @@ maybeCompact(
   session: Session,
   state: CompactionState,
   policy: CompactionPolicy,
-  options?: { force?: boolean },
+  options: {
+    /** 本轮即将 prompt 的用户消息。必传：判定发生在 prompt() 之前，
+     *  这条消息还不在 session 里，不算进去就会漏判。见 §7.1 */
+    pendingMessage?: string;
+    /** (d) 兜底：无视阈值与 cooldown */
+    force?: boolean;
+    /** 同步生命周期回调，见 §6 与 §9.1。策略层在真正要调 harness.compact()
+     *  之前才发 "start"，所以低于阈值的普通请求不会产生任何 notice */
+    onPhase?: (phase: "start") => void;
+  },
 ): Promise<CompactionOutcome>
 
 /** (d) 兜底判定。吃 harness 而不是 contextWindow：窗口从 harness.getModel() 读，
@@ -171,7 +181,10 @@ interface CompactionPolicy {
 type CompactionOutcome =
   | { kind: "skipped"; reason: "disabled" | "below-threshold" | "nothing-to-compact"
                              | "cooldown" | "ineffective"; overThreshold: boolean }
-  | { kind: "compacted"; tokensBefore: number; tokensAfter: number }
+  // 两对数：usage-based 的给埋点与前端展示，纯字符估算的给 ineffective 守卫。
+  // 混用会让守卫失效，见 §8.1.3
+  | { kind: "compacted"; tokensBefore: number; tokensAfter: number;
+      pureBefore: number; pureAfter: number }
   | { kind: "failed"; error: Error }
 ```
 
@@ -200,6 +213,8 @@ compaction: Promise<CompactionOutcome> | undefined;
 compactionState: CompactionState;
 /** 压缩期间收到 abort 的兑现标记，见 §6⑤ */
 abortRequested: boolean;
+/** 已被 evict（会话删除 / 用户禁用）。压缩结束后一律不再 prompt，见 §6 evict 一段 */
+retired: boolean;
 ```
 
 ### 5.3 `apps/server/src/http/routes/chat.ts`（改）
@@ -225,22 +240,39 @@ registry 不知道 token 阈值；route 不知道压缩策略。三者可独立�
 send(message, { onNotice }):
   ① 同步：if (held.compaction) onNotice({ phase: "start" })   // 我是等待者，先给个解释
   ② await held.chain：
-       ③ if (held.compaction) await held.compaction           // 别人正在压，等它
+       ③ if (held.compaction) {                               // 别人正在压，等它
+            onNotice({ phase: "start" })                      //   ①漏发时在这里补
+            await held.compaction
+          }
+          if (held.retired) → 抛「会话已删除」，不 prompt          // 见本节 evict 一段
           if (held.running) → followUp 分支（原样不动，不压缩：正在跑，phase 不是 idle）
           else:
-       ④ onNotice({ phase: "start" })                         // 我是触发者
-          held.compaction = maybeCompact(...)                 // ← 唯一的网络 I/O 等待点
+       ④ held.compaction = maybeCompact(..., {                // ← 唯一的网络 I/O 等待点
+            pendingMessage: message,
+            onPhase: (p) => onNotice({ phase: p }),           // 策略层确认要压才回调
+          })
           outcome = await held.compaction
           held.compaction = undefined
-          onNotice({ phase: "end", outcome })
-       ⑤ if (held.abortRequested) { held.abortRequested = false; 不 prompt，直接结束本轮 }
+          if (outcome.kind !== "skipped" || outcome.overThreshold)
+            onNotice({ phase: "end", outcome })               // 低于阈值时静默
+       ⑤ if (held.abortRequested || held.retired) { 复位标记; 不 prompt，直接结束本轮 }
        ⑥ held.running = true
           result = await harness.prompt(message)              // 返回值不再丢弃
        ⑦ (d) 兜底：if (result.stopReason === "error" && isContextOverflow(harness, result))
             held.compaction = maybeCompact(..., { force: true })   // 无视阈值与 cooldown
-            await held.compaction; held.compaction = undefined
-            抛出「上下文超出模型窗口，已自动压缩历史，请重新发送」→ route 发 event: error
+            outcome = await held.compaction; held.compaction = undefined
+            按 §8.3 的文案表抛出对应错误 → route 发 event: error
 ```
+
+**通知只在真要压的时候发**（④ 的 `onPhase`）：如果在调 `maybeCompact()` 之前就发
+`start`，那么**每一个空闲请求**都会先闪一次「正在压缩」再立刻结束——绝大多数请求
+根本不到阈值。所以 `start` 由策略层在阈值判定通过、即将调 `harness.compact()` 那一刻
+同步回调发出；`end` 也只在「真压了」或「被守卫挡住且确实超阈值」时发。
+
+**③ 要补发等待提示**：① 是同步读 `held.compaction`，但两个 `send()` 几乎同时进来时，
+第二个可能在第一个（在 ④ 里）设上 `held.compaction` **之前**就跑完了 ①，于是漏掉提示，
+然后在 ③ 静默等几秒。③ 里再判一次并补发，两处都发到时按 `phase: "start"` 幂等处理
+（前端对同一会话的重复 start 只显示一个指示器）。
 
 **为什么压缩互斥不能只靠 `chain`**：`chain` 在 ⑥ 发起 prompt 之后就放行了
 （这是 `harness-registry.ts` 现有注释反复强调的——绝不能把「等整轮跑完」串进 chain，
@@ -264,6 +296,22 @@ send(message, { onNotice }):
   `registry.abort()` 里的 `harness.abort()` → `waitForIdle()` 立刻返回，压缩照跑。
   若不加 ⑤，结果是「用户点了停止，却照样跑了一轮」。所以 `abort()` 在
   `entry.compaction !== undefined` 时置 `abortRequested = true`，由 ⑤ 兑现。
+- **`evict()` 必须纳入互斥，否则压缩期间删会话会留下孤儿实例。**
+  现在 `evict()`（`harness-registry.ts:394`）是「先从 Map 删除、再 `harness.abort()`」，
+  而 `DELETE /api/sessions/:id`（`routes/sessions.ts:89`）是「先删库、再 evict」。
+  压缩期间走这条路：`abort()` 里的 `waitForIdle()` 立刻返回（§2.11），压缩照跑，
+  而 `session_entries.session_id` 是 `onDelete: "cascade"`（`schema.ts:46`）
+  —— 条目已被连带删除，摘要跑完 `appendCompaction` 撞外键约束，
+  日志里出现一堆不指向根因的 FK 错误；接着 ⑤ 也不会拦（`abortRequested` 没被置），
+  于是继续对着一个已删的会话发起 `prompt()`。
+  **修法**：`Entry` 再加一个 `retired: boolean`，`evict()` 的顺序改为
+  「置 `retired = true` → 从 Map 删除 → 若 `entry.compaction` 存在则 `await` 它
+  （catch 住并只记日志）→ `harness.abort()`」，由 ③ 与 ⑤ 两处兑现。
+  **`harness-registry.ts:393` 那条注释也要改**：它现在写着「就算这里抛错，常驻实例
+  也已经不在 registry 里、不会继续往这个已删的会话写」——引入压缩后这条不变量不再成立，
+  正是本条要恢复的东西。
+  同一条路径覆盖 **admin 禁用用户**（`routes/admin.ts` 也调 `evict()`），
+  否则禁用后压缩仍会继续产生模型调用。
 - **`followUp` 分支不压缩**：正在跑，`phase !== "idle"`，`compact()` 必抛。
   这一轮的上下文压力留给下一轮的 pre-prompt 判定。
 - **前端信号**：`onNotice` 是**同步**回调，route 把它 push 进已有的 `sse-queue`
@@ -275,18 +323,41 @@ send(message, { onNotice }):
 
 `packages/config` 新增：
 
-| 键 | 默认值 | 含义 |
-| --- | --- | --- |
-| `COMPACTION_ENABLED` | `true` | 总开关 |
-| `COMPACTION_THRESHOLD_RATIO` | `0.8` | 占模型 `contextWindow` 的比例 |
-| `COMPACTION_ABSOLUTE_CAP` | `120000` | 绝对上限，控成本与延迟 |
+| 键 | 默认值 | 合法范围 | 含义 |
+| --- | --- | --- | --- |
+| `COMPACTION_ENABLED` | `true` | 只接受 `"true"` / `"false"` | 总开关 |
+| `COMPACTION_THRESHOLD_RATIO` | `0.8` | `0 < ratio < 1` 的有限数 | 占模型 `contextWindow` 的比例 |
+| `COMPACTION_ABSOLUTE_CAP` | `120000` | 正整数 | 绝对上限，控成本与延迟 |
 
-判定就一行：
+**非法值一律启动即 throw，附中文说明与合法范围**——沿用 `packages/config/src/index.ts`
+里 `oneOf()` / `port()` 已有的写法，不做「悄悄回落到默认值」。
+必须挡住的输入：`NaN`、空串、`ratio <= 0`、`ratio >= 1`、`cap <= 0`、非整数 cap、
+`"1"` / `"yes"` 这类非标准布尔。放过任意一个的后果是**永不压缩或每轮都尝试压缩**，
+而且没有任何报错指向配置。新增三项各配一条 config 单测。
+
+### 7.1 判定式
 
 ```
+contextTokens  = estimateContextTokens(await session.buildContext()).tokens
+pendingTokens  = pendingMessage ? estimateTokens(asUserMessage(pendingMessage)) : 0
 effectiveWindow = min(model.contextWindow * ratio, absoluteCap)
-需要压缩 = tokens > effectiveWindow
+需要压缩 = contextTokens + pendingTokens > effectiveWindow
 ```
+
+**`pendingTokens` 不能省。** 判定发生在 `harness.prompt(message)` **之前**，
+那条消息还没进会话树，`buildContext()` 里看不到它。漏算的后果是一整类可以在
+请求前避免的 overflow 被推到 (d)：已有上下文 48k、阈值 51.2k、新消息 8k 时，
+判定说「不必压」，真实请求 56k 直接爆窗，用户被要求手动重发。
+这正是 Codex 自己承认还没修的那个洞（`session/turn.rs:159-162` 的 TODO：
+pre-turn 压缩发生在「记录 context 更新 + 新用户消息」之前）。我们一开始就要算进去。
+
+**已知的估算缺口：固定开销不在内。** `buildSessionContext()` 返回
+`{ ...state, messages }`，**system prompt 不在 `messages` 里**，工具定义也不在。
+所以 `estimateContextTokens()` 从来不含系统提示与 tool schema。
+当前只有 1 个工具、system prompt 一句话，误差可忽略；但**子项目 C（tool/skill 管理）
+落地后会变成真问题**——Hermes 为此专门记了一条（50+ 工具能占 20-30k tokens）。
+本期不实现固定开销估算，列入 §12.9；届时的挂点是在判定式里加一项
+`fixedOverheadTokens`（系统提示字符估算 + 工具 schema 序列化后的字符估算）。
 
 得到的实际阈值：`deepseek-v4-flash`（1M 窗口）→ **12 万**；
 SiliconFlow `DeepSeek-V3`（64k 窗口）→ **51.2k**。
@@ -322,7 +393,15 @@ SiliconFlow `DeepSeek-V3`（64k 窗口）→ **51.2k**。
    但我们的实例本身 5 分钟就被 idle TTL 回收，60s 足够避免每轮都撞限流。）
    **只挡 pre-prompt 主动压缩，不挡 (d) 兜底**——兜底时上下文已经真的爆了，冷却无意义。
 3. **`ineffective`** —— 连续两次压缩各回收不足 10% 就停止自动压缩。
-   `tokensAfter` 用压缩后立刻再 `buildContext()` + 纯字符估算得到。
+   **`tokensBefore` 与 `tokensAfter` 必须用同一种估算口径，否则这个守卫会失效。**
+   `harness.compact()` 返回的 `CompactResult.tokensBefore` 是 usage-based 的
+   （含 provider 计入的 system prompt 等固定开销），而压缩后拿不到新的 usage，
+   只能纯字符估算——两个数不可比，相减会系统性高估回收比例，`ineffective` 永远不触发。
+   所以 ineffective 单独算一对纯字符估算值（`pureBefore` / `pureAfter`，
+   `pureBefore` 在调 `harness.compact()` 之前算），只用于这一个守卫；
+   §7 的阈值判定继续用更准的 usage-based 估算。
+   `CompactionOutcome.compacted` 里同时带上两对数（usage-based 的用于埋点与展示，
+   纯估算的用于守卫），别只留一对。
 
 **被守卫挡住、但确实超了阈值时必须告警**（`skipped` 带 `overThreshold: true`）：
 发 `onNotice({ phase: "blocked", reason })`，前端提示「上下文已超阈值但自动压缩暂时不可用
@@ -346,8 +425,25 @@ Codex 那种「压缩失败就整轮丢弃、用户消息压根不记录」对 H
   （`context length` / `context_length_exceeded` / `too many tokens` / `maximum context`，
   大小写不敏感）**或** `usage.input > contextWindow`。
 - **处置**：立刻 `maybeCompact(..., { force: true })`（无视阈值与 cooldown），
-  然后**不自动重发**，向前端发 `event: error`：
-  「上下文超出模型窗口，已自动压缩历史，请重新发送刚才那条消息」。
+  然后**不自动重发**，向前端发 `event: error`。
+  **文案必须按 `CompactionOutcome` 分支，不能无条件说「已压缩」**：
+
+  | outcome | 文案 |
+  | --- | --- |
+  | `compacted` | 「上下文超出模型窗口，已自动压缩历史，请重新发送刚才那条消息」 |
+  | `failed` | 「上下文超出模型窗口，且自动压缩失败（原因）。请新建会话继续」 |
+  | `skipped / nothing-to-compact` | 「单条消息或单轮内容超出模型窗口，压缩无法解决。请缩短输入或换用更大窗口的模型」 |
+  | `skipped / ineffective` | 「上下文超出模型窗口，压缩已无法再回收空间。请新建会话继续」 |
+
+  无条件说「已压缩，请重发」会在摘要限流、单条消息本身超窗口、守卫阻断这三种情况下
+  形成**死循环**：用户重发 → 又 overflow → 又被告知已压缩请重发。
+- **(d) 仍然依赖一次成功的 LLM 请求，这与 §3 引用的 cline 结论（
+  「补救路径不能再依赖另一次成功的 LLM 请求」）相违。本期接受这个缺口**，
+  代价由上面的文案分支承担——压不动时明确告诉用户压不动，而不是让他徒劳重试。
+  确定性降级（不调 LLM、机械拼一份摘要）是 (d) 的升级路径，见 §12.8；
+  可行性已核实：`Session.appendCompaction()` 是 public 方法（`session.d.ts:37`），
+  不需要接管 `session_before_compact` hook，但它绕开 `harness.compact()` 的
+  phase 检查，属于 §4 明确反对的那类做法，要做得连并发保护一起接。
 - **为什么不自动重发**：pi 在 `prompt()` 时已把 user message 落进会话树。
   自动重发会在树里留下**两条一模一样的 user 消息**，前端 transcript 出现重复气泡。
   pi CLI 能自动重试一次，是因为它直接改 `agent.state.messages` 数组
@@ -367,8 +463,38 @@ Codex 那种「压缩失败就整轮丢弃、用户消息压根不记录」对 H
   过滤 `message` 条目投影，**不受 compaction 影响**。
   **这一条不许改成 `session.buildContext()`**——压缩发生后用户刷新会看到历史凭空消失。
   两条读路径的分工是本设计的前提，不是实现细节。
-- **SSE 上多出三类信号**：`onNotice` 的 `start` / `end` / `blocked`，
-  以及 pi 原生的 `session_compact`（带摘要内容）。前端渲染成一条分隔线式的提示即可。
+### 9.1 SSE 契约
+
+新增**一个**事件名，与现有的 `agent` / `error` 并列：
+
+```
+event: compaction
+data: { "phase": "start" }
+data: { "phase": "end", "outcome": { "kind": "compacted", "tokensBefore": n, "tokensAfter": m } }
+data: { "phase": "end", "outcome": { "kind": "failed" } }
+data: { "phase": "blocked", "reason": "cooldown" | "ineffective" }
+```
+
+`outcome` 只透出前端要用的字段，**不原样透传 `CompactionOutcome`**：
+`failed` 的 `error` 不给前端（内部信息，只进日志）。
+压缩结束时 pi 原生的 `session_compact` 事件（带摘要正文）仍经 `event: agent` 透传。
+
+### 9.2 前端改动在本期范围内
+
+`apps/web/src/composables/useAgentStream.js:120-127` 现在只处理 `error` 与 `agent`
+两种 frame，其余**静默丢弃**；`apply()` 的 switch 也不认 `session_compact`。
+所以服务端发得再对，不改前端就没有任何用户可见效果——「§9 承诺的提示」与
+「只改三个服务端文件」这两句原本是矛盾的。本期把前端一并做掉：
+
+- `composables/useAgentStream.js`：认 `event: compaction`，归约出
+  `compacting: Ref<boolean>` 与一条插进 `messages` 的压缩标记；
+  `apply()` 处理 `session_compact`（拿摘要正文）
+- `components/chat/`：一个分隔线式的压缩提示组件（分隔线 + 「上下文已压缩」+ 可展开摘要），
+  `compacting` 为真时显示指示器
+- `blocked` 与 (d) 的 `event: error` 走现有的 `error.value` 渠道，不需要新组件
+
+`apps/web` 没有 typecheck、`pnpm run lint` 也不可用（v0.4 遗留），所以前端这部分
+**靠 compose 起服务人工验证**，不写自动化测试——与仓库现状一致，不为本期单独补前端测试设施。
 
 ## 10. 测试
 
@@ -388,6 +514,15 @@ Codex 那种「压缩失败就整轮丢弃、用户消息压根不记录」对 H
 - **`ineffective`**：连续两次回收不足 10% → `skipped / ineffective`，且 `overThreshold: true`
 - **`cooldown`**：摘要调用失败 → `failed`；60s 内再判定 → `skipped / cooldown`；
   `force: true` 无视 cooldown
+- **`pendingMessage` 计入阈值**（§7.1）：构造「已有上下文低于阈值、但加上当前输入后
+  超过阈值」的会话 → `compacted`；同一份上下文不传 `pendingMessage` 时 → `below-threshold`。
+  这一对用例是 §7.1 那个洞的回归测试，缺了就等于没修。
+- **`nothing-to-compact` 归到 skipped 而非 failed**（§5.1）：短会话调 `maybeCompact` →
+  `skipped / nothing-to-compact`，且**不设置冷却**（紧接着再判定不会返回 `cooldown`）
+- **notice 只在真要压时发**（§6④）：低于阈值的判定**一次 `onPhase` 都不回调**；
+  超阈值时回调恰好一次
+- **ineffective 用同口径估算**（§8.1.3）：断言守卫读的是纯字符估算的那一对，
+  而不是 usage-based 的 `tokensBefore`——否则回收比例被高估、守卫永不触发
 - `isContextOverflow()` 单测：关键词命中、`usage.input > contextWindow` 命中、
   普通错误不命中
 
@@ -404,10 +539,22 @@ Codex 那种「压缩失败就整轮丢弃、用户消息压根不记录」对 H
 - 压缩期间 `sweep()` 与 `evictOldestIdle()` 都不回收该实例
 - 压缩期间 `abort()` → 压缩结束后**不发起 prompt**（`abortRequested` 兑现）
 - 压缩失败 → 不阻断本轮，照常 prompt
+- **两个 `send()` 同步发起**：第一个进入压缩，第二个仍收到 `phase: "start"`
+  （§6③ 的补发路径），不会静默等待
+- **压缩期间 `evict()`（删会话）** → 压缩结束后**不 prompt**、不产生 FK 错误，
+  `evict()` 本身不抛（`retired` 兑现，§6 evict 一段）
+- **压缩期间 admin 禁用用户** → 同上，不再产生新的模型调用
+- **⑦ 的补救压缩与新请求互斥**：`prompt()` 返回 overflow 错误后，
+  第二个请求不会并发发起第二次压缩（③ 的 `await held.compaction`）
+- **(d) 文案按 outcome 分支**（§8.3）：`compacted` / `failed` /
+  `nothing-to-compact` / `ineffective` 四种各断言一条不同的错误文案，
+  尤其**压缩没成功时不出现「已自动压缩」字样**
 
 ### 10.3 `apps/server/src/http/routes/chat.test.ts`（增补）
 
-- SSE 流里出现压缩 notice 帧与透传的 `session_compact` 事件
+- SSE 流里出现 `event: compaction` 帧（§9.1 的 payload 形状）与透传的
+  `session_compact` 事件；`failed` 的 `error` 字段**不出现在 payload 里**
+- 低于阈值的普通请求**不产生任何 `event: compaction` 帧**
 - **压缩后 `GET /:id/messages` 返回的 transcript 一条不少**，同时
   `session.buildContextEntries()` 已经变短——两者在同一个用例里一起断言，
   把「模型侧变短」与「用户侧不变」钉在一起
@@ -423,6 +570,12 @@ Codex 那种「压缩失败就整轮丢弃、用户消息压根不记录」对 H
 2. **前端刷新历史一条不少** —— `GET /api/sessions/:id/messages` 的返回数量与压缩前一致。
 3. **压缩期间的并发请求不撞 `phase !== "idle"` 报错** —— 第二个请求排队后走 `followUp`，
    既不抛 `busy`，也不出现「消息被静默吞掉」（§2.12 那条路被 §6②③ 堵死）。
+4. **压缩期间删会话不留孤儿** —— `DELETE /api/sessions/:id` 后，压缩结束不再发起
+   `prompt()`，日志里没有外键约束错误（§6 evict 一段）。
+5. **压不动时用户被明确告知** —— 单条消息本身超窗口的会话发一次请求，
+   得到的错误文案是「压缩无法解决」而**不是**「已自动压缩，请重发」（§8.3）。
+6. **低于阈值的请求零噪音** —— 普通短会话的一次请求，SSE 里没有任何
+   `event: compaction` 帧（§6④）。
 
 ## 12. 已知限制
 
@@ -437,6 +590,16 @@ Codex 那种「压缩失败就整轮丢弃、用户消息压根不记录」对 H
 7. **压缩延迟落在触发那一轮的用户身上**（选 (a) 的直接代价），第二个并发请求还要
    额外多等这几秒。后续优化是 (c) 后台压缩，需要连带引入 Aider 的陈旧结果丢弃与
    oh-my-pi 的队列排空。
+8. **(d) 没有不依赖 LLM 的确定性降级**（§8.3）。摘要模型限流、或单条消息本身就超窗口时，
+   压缩帮不上忙，用户只能新建会话。本期靠文案分支把这件事说清楚，不让用户徒劳重试。
+   升级路径：用 `Session.appendCompaction()` 写一条机械拼出的摘要（Hermes 的
+   `_FALLBACK_SUMMARY` 与 Codex 的 `token_budget` 路径都是这个思路），
+   但要连并发保护一起接，因为它绕开 `harness.compact()` 的 phase 检查。
+9. **阈值估算不含固定开销**（§7.1）。system prompt 与工具 schema 都不在
+   `buildContext().messages` 里，所以估算天生偏低。当前 1 个工具 + 一句系统提示，
+   误差可忽略；**子项目 C（tool/skill 管理）落地时必须补**，否则工具一多就系统性漏判。
+10. **前端压缩提示没有自动化测试**（§9.2）。`apps/web` 没有 typecheck、
+    `pnpm run lint` 也不可用（v0.4 遗留），这部分靠 compose 起服务人工验证。
 
 ## 13. 非目标
 
