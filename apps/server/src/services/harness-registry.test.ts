@@ -599,6 +599,47 @@ describe("createHarnessRegistry 的自动压缩", () => {
     expect(registry.size()).toBe(0);
   });
 
+  /**
+   * evict 之后，**排队中的那个请求**该看到什么。
+   *
+   * 上一条用例里发起压缩的是第一个请求，它压完从 `abortRequested || retired`
+   * 分支静默返回，走不到 retired 门禁；只有排在临界区里等压缩的第二个请求才会
+   * 撞上那道门禁。这是「会话被删掉时，还挂在上面的那个连接得到什么」的唯一定义，
+   * 而它原先被 `.catch(() => undefined)` 吞掉——改成 resolve 或抛别的类型都不会红。
+   */
+  it("压缩期间 evict 后，排队中的第二个请求收到 forbidden", async () => {
+    const factory = compactionFactory();
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    let summaryCalls = 0;
+    factory.faux.setResponses([
+      async () => {
+        summaryCalls += 1;
+        await summaryGate;
+        return fauxAssistantMessage([fauxText("## Goal\n摘要")]);
+      },
+      fauxAssistantMessage([fauxText("不该出现的回答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    const first = handle.send("第一个问题");
+    const second = handle.send("第二个问题");
+    await new Promise<void>((resolve) => {
+      const tick = () => (summaryCalls > 0 ? resolve() : setTimeout(tick, 5));
+      tick();
+    });
+    const evicting = registry.evict(SESSION_ID);
+    releaseSummary();
+
+    await expect(second).rejects.toMatchObject({ kind: "forbidden" });
+    await evicting;
+    await first.catch(() => undefined);
+    handle.release();
+  });
+
   it("evict 之后同一会话的新请求拿到新实例", async () => {
     const factory = compactionFactory();
     factory.faux.setResponses([
@@ -656,6 +697,92 @@ function overflowRecoveryFactory() {
   };
 }
 
+/**
+ * 「registry 有没有把该传的东西传给 maybeCompact」这一层的测试。
+ *
+ * 上面那些用例全靠 fixture 本身已超阈值触发压缩，所以把 `pendingMessage: message`
+ * 或 `summaryInstructions` 那两行删掉它们照样全绿——而 spec §7.1 把「待发消息必须
+ * 算进阈值」列为一个专门修掉的洞，接线断了就等于洞回来了。
+ */
+describe("createHarnessRegistry 与 maybeCompact 的接线", () => {
+  it("待发消息算进阈值：长消息触发压缩，同一份上下文下短消息不触发", async () => {
+    // 28000 token 的会话，阈值 32000（窗口 40000 × 0.8）：只有把待发消息算进去才会超
+    const withLong = overflowRecoveryFactory();
+    withLong.faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("回答")]),
+    ]);
+    const longRegistry = createHarnessRegistry({ db, createHarness: withLong.create });
+    const longHandle = await longRegistry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+    const longNotices: HarnessNotice[] = [];
+
+    await longHandle.send("问".repeat(24_000), { onNotice: (n) => longNotices.push(n) });
+    longHandle.release();
+
+    expect(longNotices.map((n) => n.phase)).toEqual(["start", "end"]);
+
+    // 成对的另一半：同一份 fixture 发一条短消息，必须一条通知都没有。
+    // 缺了这一半，上面那条断言换成任何「总会压」的实现也能过
+    const withShort = overflowRecoveryFactory();
+    withShort.faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
+    const shortRegistry = createHarnessRegistry({ db, createHarness: withShort.create });
+    const shortHandle = await shortRegistry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+    const shortNotices: HarnessNotice[] = [];
+
+    await shortHandle.send("短问题", { onNotice: (n) => shortNotices.push(n) });
+    shortHandle.release();
+
+    expect(shortNotices).toEqual([]);
+  });
+
+  it("摘要请求带上「用中文」这条 customInstructions", async () => {
+    const factory = compactionFactory();
+    let summaryContext = "";
+    factory.faux.setResponses([
+      (context) => {
+        summaryContext = JSON.stringify(context);
+        return fauxAssistantMessage([fauxText("## Goal\n摘要")]);
+      },
+      fauxAssistantMessage([fauxText("回答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    await handle.send("问题");
+    handle.release();
+
+    // pi 库层那份英文提示词已经够用，我们只追加这一条要求；断言它真的到了模型面前
+    expect(summaryContext).toContain("用中文输出摘要");
+  });
+
+  /**
+   * 总开关关掉之后端到端会怎样。registry 原先直读全局 `env.compaction`，
+   * 这条路径在测试里根本构造不出来（改进程 env 会污染同一进程的其他用例），
+   * 所以给 options 开了个 `compaction` 注入口。
+   */
+  it("总开关关掉时不压缩、不发通知，但照常回答", async () => {
+    const factory = compactionFactory();
+    factory.faux.setResponses([fauxAssistantMessage([fauxText("照常回答")])]);
+    const registry = createHarnessRegistry({
+      db,
+      createHarness: factory.create,
+      compaction: { enabled: false, thresholdRatio: 0.8, absoluteCap: 120_000 },
+    });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+    const notices: HarnessNotice[] = [];
+
+    await handle.send("问题", { onNotice: (notice) => notices.push(notice) });
+    handle.release();
+
+    expect(notices).toEqual([]);
+    // 一次摘要调用都没发生：唯一排的那个响应被本轮的回答消费掉了
+    expect(factory.faux.getPendingResponseCount()).toBe(0);
+    const entries = await handle.session.buildContextEntries();
+    expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
+    expect(JSON.stringify(await handle.session.getEntries())).toContain("照常回答");
+  });
+});
+
 describe("createHarnessRegistry 的 overflow 兜底", () => {
   const OVERFLOW = fauxAssistantMessage([fauxText("")], {
     stopReason: "error",
@@ -702,6 +829,74 @@ describe("createHarnessRegistry 的 overflow 兜底", () => {
 
     expect(text).toContain("自动压缩失败");
     expect(text).not.toContain("已自动压缩");
+  });
+
+  /**
+   * 总开关优先于 force：关掉之后 (d) 兜底也不再压。文案必须说清是被关掉了，
+   * 而不是「压缩已无法再回收空间」——后者会让人以为是会话本身没救了。
+   */
+  it("总开关关掉时 (d) 兜底也不压，文案说明已关闭", async () => {
+    const factory = overflowRecoveryFactory();
+    // 只排一个响应：本轮的 prompt 撞窗口。若 force 绕过了总开关，这里会因为
+    // 补救压缩找不到响应而抛 `no more faux responses queued`，测试同样会红
+    factory.faux.setResponses([OVERFLOW]);
+    const registry = createHarnessRegistry({
+      db,
+      createHarness: factory.create,
+      compaction: { enabled: false, thresholdRatio: 0.8, absoluteCap: 120_000 },
+    });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    const text = await sendAndCatch(handle, "问题");
+    handle.release();
+
+    expect(text).toContain("自动压缩已关闭");
+    const entries = await handle.session.buildContextEntries();
+    expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
+  });
+
+  /**
+   * abort() 只要看到 entry.compaction 非空就置 abortRequested，而消费点只有
+   * pre-prompt 那一个分支。落在补救压缩期间的置位若没人清掉，会一直挂在实例上，
+   * 等用户下一次 send() 时命中——那一轮不 prompt、不报错、SSE 空流关闭，
+   * 用户这条消息静默消失（CLAUDE.md 硬约束 8 点名的那类故障）。
+   */
+  it("补救压缩期间 abort 之后，下一条消息仍然会被处理", async () => {
+    const factory = overflowRecoveryFactory();
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    let summaryCalls = 0;
+    factory.faux.setResponses([
+      OVERFLOW,
+      async () => {
+        summaryCalls += 1;
+        await summaryGate;
+        return fauxAssistantMessage([fauxText("## Goal\n摘要")]);
+      },
+      fauxAssistantMessage([fauxText("下一轮的回答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "问题");
+
+    const first = sendAndCatch(handle, "问题");
+    // 等补救压缩真的开始，abort() 才会撞上「compaction 正在进行」这个状态；
+    // 早了的话置位会落到别的分支，这条用例就测不到目标行为
+    await new Promise<void>((resolve) => {
+      const tick = () => (summaryCalls > 0 ? resolve() : setTimeout(tick, 5));
+      tick();
+    });
+    await registry.abort(SESSION_ID, TEST_USER_ID);
+    releaseSummary();
+    await first;
+
+    await handle.send("下一个问题");
+    handle.release();
+
+    const text = JSON.stringify(await handle.session.getEntries());
+    expect(text).toContain("下一个问题");
+    expect(text).toContain("下一轮的回答");
   });
 
   /**

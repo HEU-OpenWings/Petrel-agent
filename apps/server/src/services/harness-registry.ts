@@ -1,4 +1,10 @@
-import type { AgentHarness, CompactionOutcome, CompactionState, Session } from "@petrel/agent";
+import type {
+  AgentHarness,
+  CompactionOutcome,
+  CompactionPolicy,
+  CompactionState,
+  Session,
+} from "@petrel/agent";
 import {
   createCompactionState,
   createMemorySession,
@@ -60,7 +66,9 @@ const SUMMARY_INSTRUCTIONS = "用中文输出摘要；文件路径、函数名�
  * 的这条消息」（compact() 不会砍掉最新的一轮），压完 tokensAfter 依然 > contextWindow，
  * 提示「已压缩请重发」只会让用户对着同一条巨型消息再爆一次窗。所以 compacted 分支
  * 要用 outcome.contextWindow 再判一次「压完还超不超窗口」，不能看到 kind:"compacted"
- * 就直接报「已压缩」。
+ * 就直接报「已压缩」。这一判断依赖 tokensAfter 是**纯字符估算**（见
+ * CompactionOutcome 上的注释）：换成 usage-based 的数就会因为 retainedTail 里那条
+ * 压缩前的旧 usage 而恒真，两条文案正好互换。
  *
  * nothing-to-compact 分支在这条 (d) 路径上并入下面的通用 skip 文案（不单独分支）：
  * pi 的 `Nothing to compact` 只在 `prepareCompaction` 发现分支最后一条已经是
@@ -83,6 +91,11 @@ function overflowMessage(outcome: CompactionOutcome): string {
     // 个别 SDK 甚至会回显请求 id 或 key 片段——那不是用户该看到的东西。
     // 原始 error 只进日志，见调用点 logger.warn(...)。
     return "上下文超出模型窗口，且自动压缩失败。请新建会话继续";
+  }
+  if (outcome.reason === "disabled") {
+    // COMPACTION_ENABLED=false 时 force 也不再穿透（总开关优先于守卫），
+    // 所以这条路径是可达的：得说清是被关掉了，而不是「压不动了」
+    return "上下文超出模型窗口，而自动压缩已关闭。请新建会话继续";
   }
   return "上下文超出模型窗口，压缩已无法再回收空间。请新建会话继续";
 }
@@ -169,11 +182,22 @@ export interface HarnessRegistryOptions {
   now?: () => number;
   idleTtlMs?: number;
   maxSessions?: number;
+  /**
+   * 压缩策略，默认取 `env.compaction`。
+   *
+   * 存在的理由是可测性：直读全局 env 的话，「总开关关掉后端到端会怎样」这条
+   * 路径在测试里根本构造不出来（改进程 env 会影响同一进程里的其他用例）。
+   */
+  compaction?: Omit<CompactionPolicy, "summaryInstructions">;
 }
 
 export function createHarnessRegistry(options: HarnessRegistryOptions) {
   const { db } = options;
   const now = options.now ?? (() => Date.now());
+  const compactionPolicy: CompactionPolicy = {
+    ...(options.compaction ?? env.compaction),
+    summaryInstructions: SUMMARY_INSTRUCTIONS,
+  };
   const idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
   const sessionRepo = createSessionRepository(db);
@@ -472,7 +496,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
               held.harness,
               held.session,
               held.compactionState,
-              { ...env.compaction, summaryInstructions: SUMMARY_INSTRUCTIONS },
+              compactionPolicy,
               { pendingMessage: message, onPhase: () => notify({ phase: "start" }) },
             );
             held.compaction = compactionPromise;
@@ -511,11 +535,17 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
                       // pi 模型调用失败不抛异常也不发 error 事件，原因写在 assistant
                       // 消息的 errorMessage 里（CLAUDE.md 硬约束第 3 条），所以检测点在这
                       if (!isContextOverflow(held.harness, result)) return;
+                      // evict() 可能正好落在 prompt() resolve 与下面那行赋值之间：
+                      // 那一瞬 entry.compaction 是 undefined，evict() 不等待就返回，
+                      // 而这里再发起压缩就会往已删会话的树上写，撞 session_entries
+                      // 的 cascade 外键——正是 Task 8 要消灭的那批不指向根因的报错。
+                      // 顺带省掉一次注定要白扔的摘要调用
+                      if (held.retired) return;
                       const recoveryPromise = maybeCompact(
                         held.harness,
                         held.session,
                         held.compactionState,
-                        { ...env.compaction, summaryInstructions: SUMMARY_INSTRUCTIONS },
+                        compactionPolicy,
                         { force: true },
                       );
                       held.compaction = recoveryPromise;
@@ -526,6 +556,13 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
                         }),
                       );
                       held.compaction = undefined;
+                      // abort() 只要看到 compaction 非空就置位，而唯一的消费点在
+                      // 上面 pre-prompt 那个分支。落在这段补救压缩期间的置位没人兑现，
+                      // 会一直挂在实例上，等到用户下一次 send() 时命中——那一轮
+                      // 不 prompt、不报错、SSE 空流关闭，用户这条消息静默消失
+                      // （CLAUDE.md 硬约束 8 点名的那类故障）。本轮已经在结束的路上，
+                      // 这个请求不需要它，直接清掉
+                      held.abortRequested = false;
                       notify({ phase: "end", outcome: recovery });
                       if (recovery.kind === "failed") {
                         // 原始 error 只进日志：overflowMessage() 给用户的文案里不带
