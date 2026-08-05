@@ -436,10 +436,6 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
   剩下的是 SSE 的 `persisted` 事件与前端断线重连——两者要一起做，单独加事件没有消费方。
   **地基已就位**：`SessionStorage.getEntries({ afterEntrySeq, limit })` 的游标就是为增量推送
   准备的，而且现在「连接断开 agent 继续跑完」已经成立，重连只需要补齐 `afterEntrySeq` 之后的条目
-- **上下文管理（下一轮）**：`harness.compact()` 只能手动调且硬编码 `DEFAULT_COMPACTION_SETTINGS`、
-  要求 `phase === "idle"`，所以自动触发要自己写（在 `prompt()` 之前判断），自定义阈值只能通过
-  `session_before_compact` hook 接管摘要生成。用量数据来自 `estimateContextTokens` 与
-  `getSessionStats()`
 - **记忆系统（后续）**：pi 没有跨会话记忆。`custom` / `custom_message` 条目类型可以把记忆写进
   会话树，`before_agent_start` 与 `context` hook 可在每轮注入；archival 检索走 pgvector
   （compose 里已是 `pgvector/pgvector:pg17`）。业界共识是「工作记忆是上下文预算问题、
@@ -450,6 +446,30 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
 - **HEU-8 / HEU-14 人工审批**：pi 无 LangGraph 的图级 `interrupt`，只能在工具边界暂停，
   改用 `beforeToolCall` preflight 挂起 + `POST /api/chat/:id/approve` 恢复。
   动工前先审计 v0.4 的 HITL 触发点是否都在工具边界
+
+### 子项目 B：上下文自动压缩（已实施）
+
+设计：[2026-08-05-auto-compaction-design.md](superpowers/specs/2026-08-05-auto-compaction-design.md) ·
+计划：[2026-08-05-auto-compaction.md](superpowers/plans/2026-08-05-auto-compaction.md)
+
+时机是 (a) pre-prompt 判阈值 + (d) 撞窗口后被动兜底。阈值 =
+`min(模型 contextWindow × COMPACTION_THRESHOLD_RATIO, COMPACTION_ABSOLUTE_CAP)`，
+默认 `0.8 / 120000`，即 1M 窗口的默认模型 12 万、64k 的备选模型 51.2k。
+
+遗留待办（来自设计文档 §12）：
+
+- [ ] **固定开销估算**——阈值估算不含 system prompt 与工具 schema（它们不在
+  `buildContext().messages` 里）。当前 1 个工具误差可忽略，**必须在子项目 C
+  （tool/skill 管理）落地时一起补**，否则工具一多就系统性漏判。
+- [ ] **压缩可中断**——pi 的 `compact()` 内部 signal 永不 abort，现在点「停止」
+  只能保证压完不再跑新一轮。要能真中断得接管 `session_before_compact` hook。
+- [ ] **(d) 的确定性降级**——摘要模型限流时压缩帮不上忙。可用
+  `Session.appendCompaction()` 写一条机械拼出的摘要（不需要接管 hook），
+  但要连并发保护一起接。
+- [ ] **mid-turn 压缩**——`harness.compact()` 要求 `phase === "idle"`，
+  单轮内 tool result 顶爆窗口时只能落到 (d)。
+- [ ] **`keepRecentTokens` 可配**——现在沿用 pi 硬编码的 20000。
+  升级触发条件：埋点显示 64k 模型上连续两次压缩各回收不足 10%。
 
 ### M3 知识库
 MinerU 客户端与解析兜底（HEU-15）· jobs 队列（HEU-16）· markdown 结构感知分块（HEU-17）·

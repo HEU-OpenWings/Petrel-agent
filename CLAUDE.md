@@ -157,6 +157,13 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
    `phase === "idle"`**。文档里说的「超阈值自动触发」与 `settings.json` 都是 pi CLI 层的实现，
    harness 里没有。另外 **`phase` 是私有字段没有 getter**，要判断是否在跑只能自己订阅
    `agent_start` / `settled` 维护标记（`harness-registry.ts` 就是这么做的）。
+8. **`phase === "compaction"` 时 `prompt()` 抛 `busy`，而 `followUp()` 不抛**——
+   它只往队列 push，此时没有 run 会消费，`waitForIdle()` await 的 `runPromise`
+   只在 `prompt()`/`skill()` 里创建，压缩期间它是上一轮那个**已 resolve** 的。
+   于是 `send()` 立刻返回、SSE 关流、**用户这条消息永久消失且没有任何报错**。
+   所以压缩的互斥必须由 `harness-registry` 自己做（`Entry.compaction` 这条 promise），
+   不能指望 harness。另外 `compact()` 内部的 signal 是 `new AbortController().signal`，
+   **pi 的压缩不可取消**，`abort()` 只能保证「压完不再发起新一轮」。
 
 模型 API key 由 pi-ai 的 auth 机制从 `DEEPSEEK_API_KEY` / `SILICONFLOW_API_KEY` 解析，这是
 「`@petrel/config` 是唯一读 env 的位置」的**唯一例外**。
@@ -215,6 +222,16 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 16. **在主仓库根跑测试时 `vitest` 会把 `.claude/worktrees/` 里的副本一起跑掉**，报一批与当前
     代码无关的失败。加 `--exclude '**/.claude/**'`。在 worktree 里面跑不受影响
     （那里没有嵌套的 `.claude/worktrees/`）。
+17. **`getSessionStats()` 不能当上下文阈值信号**：它是**全会话累计**（逐条 assistant /
+    compaction / branch_summary 的 usage 相加），压缩后继续涨、永不回落。用它做阈值
+    等于「聊够久就无条件压缩」。当前上下文有多大只能问
+    `estimateContextTokens(await session.buildContext())`，而且那个数**不含 system prompt
+    与 tool schema**（它们不在 `buildContext().messages` 里）。
+18. **pi 硬编码 `keepRecentTokens: 20000`，所以低于约 2 万 token 的会话压不动**，
+    而且后果比「压了但没切掉」更糟：`prepareCompaction` 此时不返回 `undefined`，
+    于是 `compact()` 照样发一次摘要请求、拿回一段基于空对话的废摘要、再写入一条
+    compaction 条目——白花一次模型调用。生产上走不到（阈值远高于 20k），
+    但写压缩测试时必须造 8 万字符以上的会话才能看到真实效果。
 
 ## 重构现状
 
