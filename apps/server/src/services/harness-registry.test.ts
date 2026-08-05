@@ -316,12 +316,14 @@ describe("createHarnessRegistry", () => {
  * 窗口取 48000（阈值 38400）而不是更小：pi 硬编码 keepRecentTokens = 20000，
  * 阈值离它太近的话压缩几乎切不掉东西。见 spec §10.1。
  *
- * 48000 而不是最初的 40000：20 组预置内容的真实 usage（含 system prompt 等固定
- * 开销）约 40145 token，Task 9 加入 isContextOverflow() 之后，即使模型正常回答、
- * 只是没能提前压缩，也会因为 usage.input(40145) > contextWindow(40000) 被
- * pi-ai 的「静默溢出」检测（case 2）判定为溢出，触发本不该触发的补救压缩，
- * 让「压缩失败不阻断本轮」「守卫挡住但确实超阈值」这两条 Task 7 测试跟着改变行为。
- * 48000 留出约 8000 token 余量，两个阈值判定的相对关系不变（该超阈值的还是会超）。
+ * 48000 而不是最初的 40000：原来的数字让 fixture 处在「阈值 32000 < 内容 40000 =
+ * 窗口 40000」这种不真实的状态——内容恰好等于窗口，压缩失败/被守卫挡住时，模型
+ * 依然「成功」应答，但 usage.input(40145，含 system prompt 等固定开销) 已经比
+ * 窗口大，会被 pi-ai 的静默溢出检测（case 2）正确地判定为溢出（这不是误报，是
+ * fixture 本身处在不该出现的区间）。改成 48000 后是「阈值 38400 < 内容 40000 <
+ * 窗口 48000」，内容真的落在阈值以上、窗口以下这个合理区间：该触发压缩的地方
+ * 照常触发（40000 > 38400），压缩失败/被挡住时也不会连带被判定成真实溢出——
+ * 那是 (d) 兜底该管的另一件事，不该被这两条 Task 7 测试意外撞见。
  */
 function compactionFactory() {
   const faux = fauxProvider({
@@ -704,26 +706,51 @@ describe("createHarnessRegistry 的 overflow 兜底", () => {
     const second = handle.send("第二个问题");
     releaseSummary();
     await Promise.all([first, second.catch(() => undefined)]);
-    handle.release();
 
-    // 只有一次摘要请求：第二个请求等的是同一条 compaction promise，没有自己再压
+    // 只有一次摘要请求：第二个请求等的是同一条 compaction promise，没有自己再压。
+    // 但这条断言只能证明没有并发压缩，证明不了第二条消息没被丢——如果 held.compaction
+    // 没赋值，第二个请求会落到 held.running 仍为 true 的 followUp 分支，followUp()
+    // 本身不检查 phase 所以不报错，但排进去的消息从未被真正处理，等 rescue 结束、
+    // running 复位后 waitForIdle() 发现 harness 已经 idle，直接 resolve——消息静默
+    // 丢失且没有任何报错。这正是整块并发逻辑要防的头号故障，必须直接断言消息落地。
     expect(summaryCalls).toBe(1);
+    const text = JSON.stringify(await handle.session.getEntries());
+    expect(text).toContain("第二个问题");
+    handle.release();
   });
 
-  // 计划原文这里还有一条「没东西可压时提示缩短输入或换模型」的测试，用「连续两轮
-  // 都撞窗口」模拟第二轮命中 Nothing to compact。经实测排查（见 harness-registry.ts
-  // 里 maybeCompact 调用点上方的注释）：pi 的 Nothing to compact 只在
-  // `branchEntries[last].type === "compaction"`（自上次压缩后再没写过任何东西）时抛出，
-  // 而 (d) 的补救压缩必然发生在 harness.prompt() 已经把这一轮的 user/assistant 消息
-  // 写回会话树之后——也就是说触发补救压缩时 branchEntries 的最后一条永远是刚写入的
-  // message，不可能是 compaction。实测连续两轮撞窗口，第二轮的补救压缩总能在旧的保
-  // 留区里找到「还能再切一点」的内容（findCutPoint 按 token 累加，颗粒度到不了刚好
-  // 卡在边界），需要额外的第三个 mock 响应，且结果是 kind:"compacted" 而不是
-  // "nothing-to-compact"。也就是说 (d) 路径下 maybeCompact 的 force:true 调用只可能
-  // 落到 "compacted" | "failed"，skip 分支里 disabled/below-threshold/cooldown/
-  // ineffective 都被 force 绕过，唯一没被绕过的 skip 原因 nothing-to-compact 又要求
-  // 一个「压缩后到下一次压缩前没有任何新写入」的状态，这与「先有 overflow 才会触发
-  // 补救压缩」互斥。结论：overflowMessage() 的 nothing-to-compact 分支目前经由 (d)
-  // 是不可达的，保留它只是为了 TS 对 CompactionOutcome 的穷尽性检查与未来防御性——
-  // 这条测试没有办法在不弄虚作假的前提下写出来，故不补。
+  /**
+   * 真实的死循环条件不是 nothing-to-compact（见 overflowMessage() 上方注释），
+   * 是「压缩成功了，但上下文仍然超窗口」：单条消息本身就大到超过模型窗口时，
+   * compact() 不会砍掉即将 prompt 的这条消息（retainedTail 恒定保留最新一轮），
+   * 压完 tokensAfter 依然 > contextWindow，「已压缩请重发」只会让用户对着同一条
+   * 巨型消息再爆一次窗。
+   *
+   * 用空会话 + 一条约 50000 token 的巨型消息构造：40000 token 的窗口下，
+   * 无论怎么压缩，这一条消息自己就超了。
+   */
+  it("压缩后仍超窗口时提示缩短输入或换模型", async () => {
+    const faux = fauxProvider({
+      tokensPerSecond: 10_000,
+      models: [{ id: "faux-compaction", contextWindow: 40_000, maxTokens: 8192 }],
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const HUGE = "一".repeat(200_000);
+    faux.setResponses([OVERFLOW, fauxAssistantMessage([fauxText("## Goal\n摘要")])]);
+    const registry = createHarnessRegistry({
+      db,
+      createHarness: async (sessionId) => {
+        const session = await createMemorySession(sessionId);
+        return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+      },
+    });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, HUGE);
+
+    const text = await sendAndCatch(handle, HUGE);
+    handle.release();
+
+    expect(text).toContain("压缩无法解决");
+    expect(text).not.toContain("已自动压缩历史，请重新发送");
+  });
 });

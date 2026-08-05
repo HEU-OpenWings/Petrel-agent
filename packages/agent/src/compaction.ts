@@ -49,6 +49,13 @@ export type CompactionOutcome =
        */
       pureBefore: number;
       pureAfter: number;
+      /**
+       * 压缩发生时的模型窗口。调用方要判断「压完还超不超窗口」（单条消息本身就
+       * 超窗口，压缩救不了）就需要这个数，而 apps/server 不许碰 pi 的 Model 类型——
+       * 策略层本来就读了 harness.getModel().contextWindow 来算阈值，顺手带出去
+       * 是最诚实的做法，不用再让调用方另外传一遍。
+       */
+      contextWindow: number;
     }
   | { kind: "failed"; error: Error };
 
@@ -208,6 +215,7 @@ export async function maybeCompact(
       tokensAfter: estimateContextTokens(after.messages).tokens,
       pureBefore,
       pureAfter,
+      contextWindow: harness.getModel().contextWindow,
     };
   } catch (error) {
     if (isNothingToCompact(error)) {

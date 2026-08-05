@@ -52,18 +52,34 @@ const SUMMARY_INSTRUCTIONS = "用中文输出摘要；文件路径、函数名�
 /**
  * (d) overflow 兜底的用户文案。
  *
- * 必须按压缩结果分支。无条件说「已压缩，请重发」会在三种情况下形成死循环
- * （摘要限流 / 单条消息本身超窗口 / 守卫阻断）：用户重发 → 又爆窗 → 又被告知已压缩。
+ * 必须按压缩结果分支。无条件说「已压缩，请重发」会在几种情况下形成死循环：
+ * 用户重发 → 又爆窗 → 又被告知已压缩。
+ *
+ * 真实的死循环条件不是「压缩没成功」，而是**压缩成功了、但上下文仍然超窗口**——
+ * 典型场景是单条消息本身就大到超过模型窗口：retainedTail 必然保留「即将 prompt
+ * 的这条消息」（compact() 不会砍掉最新的一轮），压完 tokensAfter 依然 > contextWindow，
+ * 提示「已压缩请重发」只会让用户对着同一条巨型消息再爆一次窗。所以 compacted 分支
+ * 要用 outcome.contextWindow 再判一次「压完还超不超窗口」，不能看到 kind:"compacted"
+ * 就直接报「已压缩」。
+ *
+ * nothing-to-compact 分支在这条 (d) 路径上并入下面的通用 skip 文案（不单独分支）：
+ * pi 的 `Nothing to compact` 只在 `prepareCompaction` 发现分支最后一条已经是
+ * compaction 条目时抛出（`agent-harness.js:653`、`compaction.js:430`），意思是
+ * 「上次压缩后再没写过任何东西」；而 (d) 的补救压缩必然发生在 `harness.prompt()`
+ * 已经把这一轮的 user/assistant 消息追加进会话树之后，两个条件互斥——补救压缩
+ * 永远看不到「最后一条是 compaction」这个前提，所以这个 skip 原因经由这条路径
+ * 不可达。保留判断分支只是徒增一个测不到的分叉，故与 ineffective/cooldown 等
+ * 一起归到通用 skip 文案；不是漏写，是这条路径下不可能发生。
  */
 function overflowMessage(outcome: CompactionOutcome): string {
   if (outcome.kind === "compacted") {
+    if (outcome.tokensAfter > outcome.contextWindow) {
+      return "单条消息或单轮内容超出模型窗口，压缩无法解决。请缩短输入或换用更大窗口的模型";
+    }
     return "上下文超出模型窗口，已自动压缩历史，请重新发送刚才那条消息";
   }
   if (outcome.kind === "failed") {
     return `上下文超出模型窗口，且自动压缩失败（${outcome.error.message}）。请新建会话继续`;
-  }
-  if (outcome.reason === "nothing-to-compact") {
-    return "单条消息或单轮内容超出模型窗口，压缩无法解决。请缩短输入或换用更大窗口的模型";
   }
   return "上下文超出模型窗口，压缩已无法再回收空间。请新建会话继续";
 }
