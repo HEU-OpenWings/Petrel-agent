@@ -16,6 +16,11 @@ let close: () => Promise<void>;
 
 // 建库慢，整个文件复用一个实例，用例之间靠清表隔离
 beforeAll(async () => {
+  // GET /preferences 的模型清单来自 listConfiguredModels()——只列「已配置」的 provider。
+  // 测试环境不配真实 key，这里 stub 一个让 DeepSeek 被判为已配置，模型清单才非空
+  // （firstModelId 与「带回可用模型清单」两条断言依赖它）。pi 的 envApiKeyAuth 实时读
+  // process.env，所以 vi.stubEnv 在请求时生效。
+  vi.stubEnv("DEEPSEEK_API_KEY", "test-stub");
   const testDb = await createTestDb();
   state.db = testDb.db;
   reset = testDb.reset;

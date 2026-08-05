@@ -1,4 +1,4 @@
-import { listModels } from "@petrel/agent";
+import { listConfiguredModels, listModels } from "@petrel/agent";
 import { createPreferencesRepository, getDb } from "@petrel/database";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -53,7 +53,9 @@ export const account = new Hono<AppEnv>()
   .get("/preferences", async (c) => {
     const repo = createPreferencesRepository(getDb());
     const preferences = await repo.findByUserId(c.get("currentUser").id);
-    return c.json({ preferences, models: listModels() });
+    // 只返回已配置（API key 可解析）的 provider 的模型，没配 key 的厂商不下拉——
+    // 校验「model id 是否注册」仍用同步的 listModels()（见下方 PUT 与 chat.ts）
+    return c.json({ preferences, models: await listConfiguredModels() });
   })
 
   .put("/preferences", async (c) => {
