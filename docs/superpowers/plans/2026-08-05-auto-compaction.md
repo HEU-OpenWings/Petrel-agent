@@ -2495,7 +2495,7 @@ pnpm vitest run apps/web/src/composables/useAgentStream.test.js --exclude '**/.c
 export PATH="/c/Program Files/nodejs:$PATH"
 pnpm run typecheck
 pnpm run lint
-pnpm run test -- --exclude '**/.claude/**'
+pnpm run test --exclude '**/.claude/**'
 ```
 
 预期：三条全 PASS。`pnpm run lint` 的配置已排除 `apps/web`，所以前端改动不参与。
@@ -2531,6 +2531,6 @@ spec §8.1 要求的「被守卫挡住但确实超阈值时必须告警」单独
 
 另外确认：
 
-- [ ] `pnpm run typecheck` / `pnpm run lint` / `pnpm run test -- --exclude '**/.claude/**'` 全绿
+- [ ] `pnpm run typecheck` / `pnpm run lint` / `pnpm run test --exclude '**/.claude/**'` 全绿
 - [ ] `docker compose up -d` 起来后 `/api/system/health` 正常、聊天可用
 - [ ] `.env.template` 里三个新键都在，且默认值与 `packages/config` 一致
