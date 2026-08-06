@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# 同一分支/PR 的新一次 push 会取消仍在跑的旧运行，避免排队浪费
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint · typecheck · test · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # 必须在 setup-node 之前：cache: pnpm 需要 pnpm 已在 PATH 上才能定位 store。
+      # 版本由 package.json 的 packageManager 字段决定，此处不重复硬编码。
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 以下四步顺序执行，任一失败即整个 job 失败。
+      # 单 job 是有意的取舍：pnpm install 是耗时大头，拆成并行 job 要重复安装数次，
+      # 省下的墙钟时间抵不上多出的 Actions 分钟数。PR 量变大后再考虑拆分。
+      - name: Lint (Biome)
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      # 后端 tsc + 前端 vite build。apps/web 没有 lint 与 typecheck，
+      # 构建是它目前唯一的自动化验证手段。
+      - name: Build
+        run: pnpm run build
