@@ -28,11 +28,20 @@ export class QuotaError extends Error {
 }
 
 /**
- * 滚动窗口的起点（now - windowHours）。窗口长度来自 env，集中在这里算，
- * 避免调用方各算各的导致口径漂移。返回 Date 给 repository 的 gte(recorded_at)。
+ * 滚动窗口的长度（毫秒）。每次现算而非模块级常量：env.quotaWindowHours 在测试里
+ * 通过 getter 动态返回（见 quota.test.ts 的 mock），模块加载时求值会固化成当时的值，
+ * 测试改 windowHours 不会生效——这正是 review 🔴#1「默认值遮蔽」的一个变体。
+ * `since` 与 `secondsUntilUnderLimit` 的过期计算必须用同一个数，否则 Retry-After 会偏。
+ */
+function windowMs(): number {
+  return env.quotaWindowHours * 60 * 60 * 1000;
+}
+
+/**
+ * 滚动窗口的起点（now - windowMs）。返回 Date 给 repository 的 gte(recorded_at)。
  */
 export function windowStart(now: number = Date.now()): Date {
-  return new Date(now - env.quotaWindowHours * 60 * 60 * 1000);
+  return new Date(now - windowMs());
 }
 
 export function createQuotaService(db: Database) {
@@ -75,7 +84,9 @@ export function createQuotaService(db: Database) {
 
       if (used >= limit) {
         // 算 Retry-After：累计过期计算。算不出则省略 header（不返回伪值）。
-        const retryAfter = await guardQuery(() => usageRepo.secondsUntilUnderLimit(user.id, since, limit));
+        const retryAfter = await guardQuery(() =>
+          usageRepo.secondsUntilUnderLimit(user.id, since, limit, windowMs()),
+        );
         throw new QuotaError(
           `已达到最近 ${env.quotaWindowHours} 小时的 token 配额，请稍后重试`,
           "exceeded",

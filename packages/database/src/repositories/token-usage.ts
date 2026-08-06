@@ -88,14 +88,20 @@ export function createTokenUsageRepository(db: Database) {
      * 思路：按 recorded_at 升序累计用户的窗口内用量，找出「累计量越过 (已用 - 上限)」
      * 的那条记录——它过期之后，窗口内用量就降到上限以下，可以重试。
      *
-     * 实现成一条窗口函数 SQL：累计和减去当前窗口已用量，等于「这条记录及其更早的
-     * 还在窗口内的记录」之和；最早一条使「已用 - (该条及更早之和) < 上限」的记录的
-     * 过期时刻即 Retry-After。
+     * `windowMs` 是滚动窗口的毫秒长度（与 `since` 同源，都来自 env QUOTA_WINDOW_HOURS）。
+     * 由调用方传入：database 层不读 env，且过期时刻 = recorded_at + windowMs 必须与
+     * 窗口判定口径一致——配 `QUOTA_WINDOW_HOURS=1` 时若这里写死 24h，算出的 Retry-After
+     * 会比真实可重试时刻晚 23 小时，比省略 header 更糟（返回一个伪值）。
      *
      * 若算不出（边界情况、刚好打满），返回 undefined——调用方据此省略 Retry-After header，
      * 不返回一个可能仍无法重试的伪值。
      */
-    async secondsUntilUnderLimit(userId: string, since: Date, limit: number): Promise<number | undefined> {
+    async secondsUntilUnderLimit(
+      userId: string,
+      since: Date,
+      limit: number,
+      windowMs: number,
+    ): Promise<number | undefined> {
       // 窗口内、按时间升序累计。only those within the current window can expire into availability.
       const rows = await db.execute(sql`
         SELECT recorded_at, total_tokens,
@@ -112,12 +118,15 @@ export function createTokenUsageRepository(db: Database) {
       // 超出额：要让最早多少 token 过期。
       const overflow = usedTotal - limit;
       if (overflow <= 0) return undefined;
-      // 累计找到第一条使 running >= overflow 的记录——它过期后即可重试
+      // 累计找到第一条使 acc 严格大于 overflow 的记录——它过期后窗口内用量降到 limit 以下。
+      // 注意判据是 > 而非 >=：拒绝条件是 used >= limit，放行需 used - expired < limit，
+      // 即 acc > overflow。acc === overflow 时过期后恰好 used === limit，仍会被拒。
       let acc = 0;
       for (const r of entries) {
         acc += Number(r.total_tokens);
-        if (acc >= overflow) {
-          const expiresAt = new Date(r.recorded_at).getTime() + 24 * 60 * 60 * 1000;
+        if (acc > overflow) {
+          // 过期时刻 = 该条 recorded_at + 窗口长度。窗口翻转后它移出窗口，不再计入 used
+          const expiresAt = new Date(r.recorded_at).getTime() + windowMs;
           const diff = Math.ceil((expiresAt - Date.now()) / 1000);
           return diff > 0 ? diff : 0;
         }

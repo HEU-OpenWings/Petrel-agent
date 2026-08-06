@@ -690,7 +690,7 @@ describe("自动压缩", () => {
     const user = await registerUser("long@x.io");
     await sessionRepo.upsert({ id: sessionId, userId: user.id, title: "长会话" });
     const { createPgSession } = await import("@petrel/agent");
-    const session = createPgSession(db as never, sessionId, new Date());
+    const session = createPgSession(db as never, sessionId, new Date(), user.id);
     const chunk = "一".repeat(4000);
     for (let i = 0; i < 20; i++) {
       await session.appendMessage({
@@ -1006,11 +1006,10 @@ describe("POST /api/chat HEU-40 配额拦截", () => {
     expect(body).toContain("恢复后回答");
   });
 
-  it("enforcement 开启时 admin 豁免拦截", async () => {
+  it("配额覆盖为 0 时普通用户被拦（429）；admin 豁免由 quota.test.ts 覆盖", async () => {
     state.quotaEnforcement = true;
-    // 当前测试用户 a@x.io 不是 admin（ADMIN_EMAILS 未配），用 admin 端点无法提权；
-    // 这里直接给该用户加 quota 覆盖不够，要测 admin 豁免需把用户变 admin。
-    // 直接用 user_quota_limits 把额度降到 0，验证普通用户被拦；admin 豁免由 quota.test.ts 覆盖。
+    // 当前测试用户 a@x.io 不是 admin（ADMIN_EMAILS 未配），无法在 e2e 里测 admin 豁免。
+    // 这里给该用户设额度覆盖为 0，验证普通用户被拦；admin 豁免的单元覆盖在 quota.test.ts。
     const user = await (await import("@petrel/database"))
       .createUserRepository(state.db!)
       .findByEmail("a@x.io");
@@ -1021,6 +1020,5 @@ describe("POST /api/chat HEU-40 配额拦截", () => {
     const response = await postChat({ message: "你好", sessionId: SESSION_ID });
     await readAll(response);
     expect(response.status).toBe(429);
-});
   });
 });

@@ -1,4 +1,4 @@
-import { createSessionRepository, createTokenUsageRepository, type Database } from "@petrel/database";
+import { createSessionRepository, createTokenUsageRepository, type Database, sql } from "@petrel/database";
 import { createTestDb, TEST_USER_EMAIL, TEST_USER_ID } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -136,14 +136,44 @@ describe("quota service", () => {
     });
   });
 
-  it("超出额度时拒绝，带 retryAfterSeconds（算得出时为正）", async () => {
+  it("超出额度时拒绝，retryAfterSeconds 用非默认窗口算出精确秒数（防 24h 硬编码）", async () => {
+    // 用 1 小时窗口而非默认 24h：若 secondsUntilUnderLimit 退回硬编码 24h，
+    // 算出的 Retry-After 会是 ~86400s 而非 ~3600s。默认窗口下两者观测等价（review 🔴#1 的
+    // 「默认值遮蔽」），只有非默认窗口才能区分「读配置」与「硬编码」。
+    state.windowHours = 1;
     state.limit = 100;
     await insertUsage(300);
     const err = (await quota.check(normalUser).catch((e) => e)) as QuotaErrorInstance;
     expect(err.kind).toBe("exceeded");
-    if (err.retryAfterSeconds !== undefined) {
-      expect(err.retryAfterSeconds).toBeGreaterThan(0);
-    }
+    // 不能用 `if (x !== undefined) expect(x>0)`：undefined 时无条件通过（review 🔵 空转）。
+    expect(err.retryAfterSeconds, "Retry-After 必须算得出，不能是 undefined").toBeDefined();
+    // 事实 recorded_at ≈ now，1h 窗口过期时刻 ≈ now+3600s。给窄区间 [1, 4000]：
+    // - 上界 4000 排除硬编码 24h（会返回 ~86400）；
+    // - 下界 1 排除「已过期返回 0」。
+    expect(err.retryAfterSeconds).toBeGreaterThan(0);
+    expect(err.retryAfterSeconds, "若仍是 24h 硬编码，此值会 ≈86400").toBeLessThan(4000);
+  });
+
+  // 滚动窗口语义：超出窗口的旧用量不计入配额。这是整个配额语义的核心，
+  // review 🔵 指出原本没有任何用例覆盖。insertFact 的 recorded_at 走 defaultNow()
+  // 无法手动指定，所以用底层 SQL 直接写一条窗口外（48h 前）的旧事实，
+  // 再走 insertFact 写一条窗口内的新事实，验证 sumWindowUsage 只算窗口内的。
+  it("滚动窗口外的旧用量不计入配额", async () => {
+    state.limit = 1000;
+    state.windowHours = 24;
+    // 窗口外的旧事实（48 小时前）：不应被计入
+    await db.execute(sql`INSERT INTO token_usage
+      (entry_id, user_id, session_id, source_type, input_tokens, output_tokens,
+       cache_read_tokens, cache_write_tokens, total_tokens, cost_total, recorded_at)
+      VALUES (${crypto.randomUUID()}, ${TEST_USER_ID}, ${SESSION_ID}, 'message', 0, 9999, 0, 0, 9999, '0.01',
+              ${new Date(Date.now() - 48 * 60 * 60 * 1000)})`);
+    // 窗口内的新事实：300，应被计入
+    await insertUsage(300);
+    // 若旧用量也被计入，used = 9999 + 300 ≫ 1000，会被拒绝。只算窗口内则 300 < 1000 放行。
+    await expect(quota.check(normalUser)).resolves.toBeUndefined();
+    // 反向钉死：sumWindowUsage 的窗口起点之后只有 300
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    expect(await usageRepo.sumWindowUsage(TEST_USER_ID, since)).toBe(300);
   });
 
   it("admin 豁免拒绝（计量由 storage 层的 appendEntry 完成，与本函数无关）", async () => {

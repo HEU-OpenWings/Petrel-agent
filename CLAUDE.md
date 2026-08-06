@@ -46,7 +46,8 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
   用 `createProvider` 自行注册。默认模型是 DeepSeek 官方的 `deepseek-v4-flash`，走
   **Responses API**（`openai-responses.lazy`，DeepSeek 官方不提供 chat/completions）；
   SiliconFlow 的 `deepseek-ai/DeepSeek-V3` 走 `openai-completions.lazy`，留作限流时的备选。
-- `packages/database` — Drizzle schema 与 repository。`sessions` / `session_entries`。
+- `packages/database` — Drizzle schema 与 repository。`sessions` / `session_entries` /
+  `user_preferences` / `token_usage` / `user_quota_limits`（后两张见「配额与计量」）。
   **一条会话是一棵 append-only 的条目树**：顺序由 `parent_id` 链决定，`entry_seq`（bigserial）
   只用于 `getEntries({ afterEntrySeq })` 的游标分页，不参与语义定序。条目有 11 种类型
   （`message` 只是其一，还有 `compaction` / `model_change` / `active_tools_change` / `leaf` …），
@@ -145,7 +146,9 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 
 `ADMIN_EMAILS` 名单里的邮箱在注册与每次登录时自动提升为 admin，不做反向降级。
 
-**尚未实现（公开部署前必须先做）**：配额与 token 计量、注册限流、邮箱验证、密码重置。
+**HEU-40 配额与 token 计量已落地**（`feat/quota-usage-metering`），但 `QUOTA_ENFORCEMENT`
+默认 `false`——部署后先只计量不拦截，验证事实一致性再开拦截，最后才开放注册，见「配额与计量」。
+**尚未实现（公开部署前必须先做）**：注册限流、邮箱验证、密码重置。
 登录失败限流（同一邮箱 5 次失败锁 15 分钟）是单实例内存的，进程重启即失效、多副本部署下无效。
 
 改密码是 `POST /api/account/password`（挂在 `requireAuth` 之下，不在公开的 `/api/auth`
@@ -154,6 +157,23 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 `users` 加 `tokenVersion` 并让 `requireAuth` 比对。另外旧密码校验与登录**共用同一个
 失败计数器**，所以改密码连错 5 次也会连带锁住登录 15 分钟——有意的取舍，人已经在
 登录态里，锁住的只是重新登录。
+
+### 配额与计量（HEU-40）
+
+每次 run 的 usage 归属到 user 落库；用户在滚动时间窗内超配额明确拒绝。公开注册的前置。
+
+- **两张表**（`packages/database/src/schema.ts`）：
+  - `token_usage`（append-only 事实表）：一条 usage-bearing 的会话树条目对应一行，**幂等键是 `entry_id`**（pi uuidv7，`ON CONFLICT (entry_id) DO NOTHING` 保证重试/并发/followUp 只计一次）。**`session_id` 故意不做指向 `session_entries` 的级联外键**——删会话不应让用量事实消失，否则删掉超额会话即可恢复额度绕过配额；只有 `user_id` 级联。DB 级 `CHECK` 钉死 `total_tokens = 四分量之和`，防御 pi 升级后字段名漂移导致的全零污染。`cost_total` 用 `numeric(20,12)`（聚合 SUM 不漂移）。三索引：`(user_id, recorded_at)` 配额热查询、`(recorded_at)` 时序统计、`(session_id, recorded_at)` 审计。
+  - `user_quota_limits`（用户覆盖额度，无窗口状态）：**不维护 `used_tokens` 计数**——滚动窗口的已用量每次由 `SUM(token_usage)` 实时算，缓存计数在窗口翻转/重试/修复时都会漂移。`token_limit` 允许 `0`（禁用该用户调用模型但仍计量），`null` 表示跟随系统默认。
+- **usage 提取的唯一翻译点**：`packages/agent/src/session/usage.ts` 的 `extractFact()`，把 pi 的 `SessionTreeEntry` → `UsageFact`。**字段名编译期钉死**（`Pick<Usage, "input"|"output"|"cacheRead"|"cacheWrite"|"cost">`），**不读 `usage.totalTokens`**（某些 provider 不填，读了会静默归零）；`totalTokens` 由四分量相加，再被 DB CHECK 二次校验。三类 usage-bearing entry：`message`（仅 assistant role）、`compaction`、`branch_summary`。
+- **事务双写**：`PgSessionStorage.appendEntry` 内**同一事务**写 `session_entries` + `token_usage`——取代 post-run 投影，因为快照差在并发/followUp 下有竞态，且进程在投影前退出会留永久缺口。`createMemorySession()` 降级不双写。
+- **配额拦截**（`services/quota.ts` → `routes/chat.ts`）：`acquire`（归属校验已完成）之后、`streamSSE`（开了流只能用 `event:error` 无法用 HTTP 状态码区分超配额）之前。软阈值（事后结算 + 下轮拦截，接受并发 in-flight 微量超额，**不宣称严格硬上限**）。超限 → `QuotaError(exceeded)` → `onError` 翻成 **429 + `Retry-After`**（算不出准确过期则省略 header，不返回伪值）。
+- **fail-closed**：memory 降级（会话表故障）与配额查询失败一律 `QuotaError(unavailable)` → **503，不调用模型**——这是对旧「能聊不落库」的**有意行为变更**。注意整个 DB 挂掉是另一个结果（`requireAuth` 查库失败先 500，请求进不到 handler）。
+- **admin**：豁免拦截（用量仍双写落库，只不拒绝）。
+- **配置**（`packages/config`，env 三项）：`QUOTA_TOKEN_LIMIT`（dev 默认 1_000_000）、`QUOTA_WINDOW_HOURS`（默认 24）、`QUOTA_ENFORCEMENT`（默认 **false**）。**默认值是 dev 占位，生产开放注册前必须据真实用量分布重配**。
+- **admin 端点**（挂 `requireAdmin` 之下）：`PUT /api/admin/users/:id/quota`（body `{tokenLimit: 非负整数|null}`，`null` 恢复默认）、`DELETE /api/admin/users/:id/quota`（幂等）。
+- migration `0006_motionless_angel`（schema-only，无 `CONCURRENTLY`）。
+- **`.env.template` 尚需手动补 3 项**（QUOTA_TOKEN_LIMIT / QUOTA_WINDOW_HOURS / QUOTA_ENFORCEMENT）——写入时受权限限制，PR 说明已标注。
 
 ### 消费 pi AgentEvent 的硬约束（已核对 pi 的 `types.d.ts`，勿凭文档记忆）
 
