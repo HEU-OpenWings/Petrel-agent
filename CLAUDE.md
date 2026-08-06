@@ -271,6 +271,7 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 登录已在 HEU-7 重做，走 v0.5 的 `/api/auth`），
 另有约 8000 行待删的旧对话代码与知识图谱/思维导图组件。
 
+系统架构与子系统策略的长期文档在 [docs/tech/](docs/tech/README.md)（架构说明、上下文压缩策略）。
 计划、待办与组件处置清单在 [docs/backend-plan.md](docs/backend-plan.md) 与
 [docs/frontend-plan.md](docs/frontend-plan.md)，动工前先看对应章节；任务跟踪在 Linear 的
 **HEU-OpenWings / Agent base 重构升级** 项目（文档里的 `HEU-x`）。
