@@ -463,7 +463,49 @@ describe("createHarnessRegistry 的自动压缩", () => {
     await Promise.all([first, second]);
     handle.release();
 
-    expect(waiterNotices.some((notice) => notice.phase === "start")).toBe(true);
+    expect(waiterNotices.map((notice) => notice.phase)).toEqual(["start", "end"]);
+  });
+
+  it("压缩期间的新 acquire 不会改写已排队请求的 systemPrompt 与模型", async () => {
+    const factory = compactionFactory();
+    let summaryStarted = false;
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    let seenSystem: string | undefined;
+    factory.faux.setResponses([
+      async () => {
+        summaryStarted = true;
+        await summaryGate;
+        return fauxAssistantMessage([fauxText("## Goal\n摘要")]);
+      },
+      (context) => {
+        seenSystem = context.systemPrompt;
+        return fauxAssistantMessage([fauxText("回答")]);
+      },
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const first = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题", {
+      systemPrompt: "第一个提示",
+    });
+    const sending = first.send("第一个问题");
+    await new Promise<void>((resolve) => {
+      const tick = () => (summaryStarted ? resolve() : setTimeout(tick, 5));
+      tick();
+    });
+
+    const second = await registry.acquire(SESSION_ID, TEST_USER_ID, "第二个问题", {
+      systemPrompt: "第二个提示",
+      modelId: "deepseek-ai/DeepSeek-V3",
+    });
+    expect(first.harness.getModel().id).toBe("faux-compaction");
+    releaseSummary();
+    await sending;
+    first.release();
+    second.release();
+
+    expect(seenSystem).toBe("第一个提示");
   });
 
   it("压缩失败不阻断本轮，照常 prompt", async () => {

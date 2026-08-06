@@ -409,21 +409,22 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       held.refCount += 1;
       held.lastUsedAt = now();
 
-      // systemPrompt 由 before_agent_start hook 在下一次新 run 开始时读取。
-      // 当前正在跑时这里只更新下一轮的值，不会改变已开始的 run（含 followUp）。
-      held.systemPrompt = assembly.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-
-      // 复用已有实例时按请求里的 modelId 换模型。undefined 也是一个明确状态：
-      // 表示用户清空了显式选择、恢复系统默认，不能直接跳过。
-      //
-      // 只在确实变化时调：setModel 会往会话树写一条 model_change 条目，
-      // 每轮无脑调会写一堆无用条目。
-      // 正在跑时跳过：当轮（含 followUp 排队的消息）已经在用旧模型了。
-      if (!held.running && held.modelId !== assembly.modelId) {
+      async function applyAssembly(): Promise<void> {
+        held.systemPrompt = assembly.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+        if (held.modelId === assembly.modelId) return;
         const desired = resolveModel({ modelId: assembly.modelId });
         await held.harness.setModel(desired);
         held.modelId = assembly.modelId;
       }
+
+      // 保留 acquire() 原有的「空闲实例立即反映模型偏好」契约，但也纳入 chain：
+      // 不串行的话，setModel() 内部写 session 的 await 会与刚发起的 send() 交错。
+      // 已在运行/压缩时不碰共享配置，交给这个 handle 自己的 send() 在空闲后应用。
+      const configured = held.chain.then(async () => {
+        if (!held.running && !held.compaction) await applyAssembly();
+      });
+      held.chain = configured.catch(() => undefined);
+      await configured;
 
       let released = false;
       return {
@@ -445,8 +446,12 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         send(message: string, options: SendOptions = {}): Promise<void> {
           const notify = options.onNotice ?? (() => undefined);
           let outcome: Promise<void> | undefined;
+          let waitingNoticeStarted = false;
           // 同步读：我如果是「等待者」，先给个解释，别让前端看起来卡死
-          if (held.compaction) notify({ phase: "start" });
+          if (held.compaction) {
+            notify({ phase: "start" });
+            waitingNoticeStarted = true;
+          }
 
           const started = held.chain.then(async () => {
             // 压缩的互斥不靠 chain：chain 在发起 prompt 之后就放行了，
@@ -454,8 +459,20 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
             // 那时第二个请求会径直走到下面自己再压一次，两个 compact() 撞在一起
             // 后者必抛 busy
             if (held.compaction) {
-              notify({ phase: "start" }); // 上面那次同步读可能早于第一个请求设值
-              await held.compaction.catch(() => undefined);
+              if (!waitingNoticeStarted) {
+                notify({ phase: "start" }); // 上面那次同步读可能早于第一个请求设值
+                waitingNoticeStarted = true;
+              }
+              const activeCompaction = held.compaction;
+              const waitedOutcome = await activeCompaction.catch(
+                (error: unknown): CompactionOutcome => ({
+                  kind: "failed",
+                  error: error instanceof Error ? error : new Error(String(error)),
+                }),
+              );
+              // 等待者自己不会收到发起者 onNotice 的 end；既然上面给它发过 start，
+              // 这里必须配对收尾，否则前端会把「正在压缩」保持到整轮回答结束。
+              notify({ phase: "end", outcome: waitedOutcome });
             }
             if (held.retired) {
               throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
@@ -486,6 +503,11 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
               // 并发请求会等整轮结束后才进入临界区，无法加入当前 run。
               return undefined;
             }
+
+            // 请求配置必须在它自己的临界区里应用。若在 acquire() 时直接改共享
+            // Entry，预压缩期间到达的第二个 acquire 会在第一轮真正 prompt 之前
+            // 覆盖 systemPrompt / model，导致先到请求使用后到请求的配置。
+            await applyAssembly();
 
             // 超阈值就先压。与 running+outcome 同一个模式：把 held.compaction
             // 赋值成「正在进行」的 promise 后立刻从 chain 里放行，绝不在这里
