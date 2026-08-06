@@ -21,6 +21,13 @@ export const users = pgTable("users", {
   // 用 text 而不是 pg enum：enum 加值要 migration，应用层收窄更灵活
   role: text("role").notNull().default("user"),
   disabled: boolean("disabled").notNull().default(false),
+  // 邮箱验证与密码重置：只存 token 的 sha256 哈希，明文只出现在邮件链接里；
+  // 验证 token 24h、重置 token 30min，各自单槽（再次申请覆盖旧的）
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+  emailVerifyTokenHash: text("email_verify_token_hash"),
+  emailVerifyTokenExpiresAt: timestamp("email_verify_token_expires_at", { withTimezone: true }),
+  passwordResetTokenHash: text("password_reset_token_hash"),
+  passwordResetTokenExpiresAt: timestamp("password_reset_token_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

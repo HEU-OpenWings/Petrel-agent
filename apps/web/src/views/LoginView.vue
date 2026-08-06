@@ -31,11 +31,22 @@
           show-icon
           class="login-error"
         />
+        <a-alert
+          v-if="successMessage"
+          type="success"
+          :message="successMessage"
+          show-icon
+          class="login-error"
+        />
 
         <a-button type="primary" html-type="submit" size="large" block :loading="submitting">
           {{ isRegister ? '注册' : '登录' }}
         </a-button>
       </a-form>
+
+      <div v-if="!isRegister" class="login-forgot">
+        <a href="/api/auth/forgot-password">忘记密码？</a>
+      </div>
 
       <div class="login-switch">
         <span>{{ isRegister ? '已经有账号了？' : '还没有账号？' }}</span>
@@ -60,19 +71,26 @@ const userStore = useUserStore()
 const isRegister = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
+const successMessage = ref('')
 const form = reactive({ email: '', password: '' })
 
 function toggleMode() {
   isRegister.value = !isRegister.value
   errorMessage.value = ''
+  successMessage.value = ''
 }
 
 async function handleSubmit() {
   submitting.value = true
   errorMessage.value = ''
+  successMessage.value = ''
   try {
     if (isRegister.value) {
       await userStore.register(form.email, form.password)
+      // 验证邮件已发出、未自动登录：切回登录模式让用户去收信
+      successMessage.value = `验证邮件已发送到 ${form.email}，请查收后登录`
+      isRegister.value = false
+      return
     } else {
       await userStore.login(form.email, form.password)
     }
@@ -122,6 +140,16 @@ async function handleSubmit() {
 
 .login-error {
   margin-bottom: 16px;
+}
+
+.login-forgot {
+  margin-top: 12px;
+  text-align: right;
+  font-size: 14px;
+}
+
+.login-forgot a {
+  color: var(--main-color);
 }
 
 .login-switch {

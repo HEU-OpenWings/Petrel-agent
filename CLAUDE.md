@@ -33,7 +33,7 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
 [pi](https://github.com/earendil-works/pi)。
 
 - `apps/server`（`@petrel/server`）— Hono HTTP 应用。`src/http/app.ts` 挂载路由，
-  当前有 `system`（health）、`auth`（注册/登录/登出/me）、`chat`（SSE）、
+  当前有 `system`（health）、`auth`（注册/登录/登出/me/邮箱验证/忘记与重置密码）、`chat`（SSE）、
   `sessions`（会话 CRUD）、`account`（用户偏好与改密码）与 `admin`（用户管理）。
   **`app.ts` 的挂载顺序有安全含义**：`system` 与 `auth` 是仅有的两个公开前缀，
   `app.use("/api/*", requireAuth)` 之下的路由自动受保护（`admin` 再叠一层 `requireAdmin`）。
@@ -150,6 +150,18 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 默认 `false`——部署后先只计量不拦截，验证事实一致性再开拦截，最后才开放注册，见「配额与计量」。
 **尚未实现（公开部署前必须先做）**：注册限流、邮箱验证、密码重置。
 登录失败限流（同一邮箱 5 次失败锁 15 分钟）是单实例内存的，进程重启即失效、多副本部署下无效。
+
+**注册即发验证邮件，未验证不能登录**（登录在校验密码之后返回 403，不构成枚举）；
+验证链接 24h 有效、可重复点击。忘记密码走 `POST /api/auth/forgot-password`（恒 200 防枚举）
+→ 邮件里的重置链接（30min 有效、一次性）→ `POST /api/auth/reset-password`；
+重置成功会顺带把邮箱标记为已验证。验证/忘记/重置的浏览器页面由后端渲染最小 HTML
+（SPA 页面留后续），邮件通道是 nodemailer + SMTP，开发/测试默认 console 传输
+（邮件打到日志，含链接），生产强制 smtp（`MAIL_TRANSPORT=smtp` 缺配置即启动失败）。
+
+**限流全部是单实例内存的，进程重启即失效、多副本部署下无效（风控轮做 Redis）**：
+登录失败（同一邮箱 5 次锁 15 分钟）、注册（按 IP，默认 5 次/15 分钟）、
+忘记密码与重发验证（按邮箱，默认 3 次/15 分钟）。
+
 
 改密码是 `POST /api/account/password`（挂在 `requireAuth` 之下，不在公开的 `/api/auth`
 前缀里——改凭据的端点靠 handler 手写校验，哪天漏了就等于认证绕过）。它**不失效其他

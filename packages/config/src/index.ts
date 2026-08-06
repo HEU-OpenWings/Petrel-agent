@@ -5,6 +5,7 @@
 
 type NodeEnv = "development" | "production" | "test";
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+type MailTransport = "console" | "smtp";
 
 const NODE_ENVS: readonly NodeEnv[] = ["development", "production", "test"];
 const LOG_LEVELS: readonly LogLevel[] = ["trace", "debug", "info", "warn", "error", "fatal"];
@@ -111,6 +112,33 @@ function booleanEnv(name: string, raw: string | undefined, fallback: boolean): b
   if (lower === "true") return true;
   if (lower === "false") return false;
   throw new Error(`环境变量 ${name} 非法：${raw}，应为 true 或 false`);
+ * 邮件传输通道。
+ *
+ * 开发与测试默认 `console`（邮件打到日志，含验证/重置链接），零外部依赖即可跑通；
+ * 生产环境**必须** `smtp`——console 传输下验证/重置邮件永远发不出去，
+ * 等于把用户锁在门外，所以宁可与 JWT_SECRET 一样让进程起不来。
+ */
+function mailTransport(raw: string | undefined, nodeEnv: NodeEnv): MailTransport {
+  if (raw === "console" || raw === "smtp") return raw;
+  if (nodeEnv === "production") {
+    throw new Error("生产环境必须配置 MAIL_TRANSPORT=smtp");
+  }
+  return "console";
+}
+
+/** SMTP 服务器地址。生产环境缺失即启动失败；非生产不校验（console 传输用不到） */
+function smtpHost(raw: string | undefined, nodeEnv: NodeEnv): string {
+  const value = raw?.trim();
+  if (value) return value;
+  if (nodeEnv === "production") {
+    throw new Error("生产环境必须配置 SMTP_HOST");
+  }
+  return "";
+}
+
+/** 从分钟换算毫秒的限流窗口。minutes 必须是正整数，非法即启动失败 */
+function windowMs(name: string, raw: string | undefined, fallbackMinutes: number): number {
+  return positiveInt(name, raw, fallbackMinutes) * 60_000;
 }
 
 /** 开发与测试环境的回落密钥。生产环境不允许走到这里，见 jwtSecret() */
@@ -150,6 +178,37 @@ export const env = {
   databaseUrl: process.env.DATABASE_URL ?? "postgres://petrel:petrel@localhost:5432/petrel",
   jwtSecret: jwtSecret(process.env.JWT_SECRET, nodeEnv),
   adminEmails: adminEmails(process.env.ADMIN_EMAILS),
+  /** 邮件里的链接前缀。生产必须指到站点对外域名 */
+  publicApiUrl: process.env.PUBLIC_API_URL?.trim() || "http://localhost:5050",
+  /** 后端渲染 HTML 页里的「返回登录」链接（前端 SPA 地址） */
+  publicWebUrl: process.env.PUBLIC_WEB_URL?.trim() || "http://localhost:5173",
+  mail: {
+    transport: mailTransport(process.env.MAIL_TRANSPORT, nodeEnv),
+    from: process.env.MAIL_FROM?.trim() || "Petrel <no-reply@petrel.local>",
+    smtp: {
+      host: smtpHost(process.env.SMTP_HOST, nodeEnv),
+      port: port("SMTP_PORT", process.env.SMTP_PORT, 587),
+      secure: bool("SMTP_SECURE", process.env.SMTP_SECURE, false),
+      user: process.env.SMTP_USER?.trim() || "",
+      password: process.env.SMTP_PASSWORD ?? "",
+    },
+  },
+  rateLimit: {
+    // 注册限流按 IP；默认 5 次 / 15 分钟
+    registerMax: positiveInt("REGISTER_RATE_LIMIT_MAX", process.env.REGISTER_RATE_LIMIT_MAX, 5),
+    registerWindowMs: windowMs(
+      "REGISTER_RATE_LIMIT_WINDOW_MINUTES",
+      process.env.REGISTER_RATE_LIMIT_WINDOW_MINUTES,
+      15,
+    ),
+    // 忘记密码 / 重发验证限流按邮箱；默认 3 次 / 15 分钟
+    authMailMax: positiveInt("AUTH_MAIL_RATE_LIMIT_MAX", process.env.AUTH_MAIL_RATE_LIMIT_MAX, 3),
+    authMailWindowMs: windowMs(
+      "AUTH_MAIL_RATE_LIMIT_WINDOW_MINUTES",
+      process.env.AUTH_MAIL_RATE_LIMIT_WINDOW_MINUTES,
+      15,
+    ),
+  },
   /**
    * vLLM 本地服务的 baseUrl。vLLM 不像 Ollama 有约定俗成的默认端口，
    * 实际地址取决于本机启动参数（`--host` / `--port`），所以从 env 读。

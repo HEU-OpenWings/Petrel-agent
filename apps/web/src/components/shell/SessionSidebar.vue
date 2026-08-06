@@ -43,9 +43,14 @@
         <template v-if="userStore.isLoggedIn">
           <span class="avatar fallback">{{ initial }}</span>
           <span class="name">{{ userStore.displayName || '已登录' }}</span>
-          <button class="icon-btn settings" type="button" title="设置" @click="emit('open-settings')">
-            <Settings :size="16" />
-          </button>
+          <div class="user-actions">
+            <button class="icon-btn" type="button" title="退出登录" @click="onLogout">
+              <LogOut :size="16" />
+            </button>
+            <button class="icon-btn" type="button" title="设置" @click="emit('open-settings')">
+              <Settings :size="16" />
+            </button>
+          </div>
         </template>
         <RouterLink v-else to="/login" class="login">
           <LogIn :size="16" />
@@ -63,13 +68,14 @@ import {
   CircleCheck,
   LibraryBig,
   LogIn,
+  LogOut,
   Pencil,
   Settings,
   SquarePen,
   Trash2,
   Users
 } from 'lucide-vue-next'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { useUserStore } from '@/stores/user'
 
@@ -77,6 +83,7 @@ const emit = defineEmits(['new-chat', 'select', 'open-settings'])
 
 const sessionStore = useSessionStore()
 const userStore = useUserStore()
+const router = useRouter()
 
 onMounted(() => sessionStore.refresh())
 
@@ -120,6 +127,13 @@ async function onRemove(item) {
     return
   }
   if (wasCurrent) emit('new-chat')
+}
+
+async function onLogout() {
+  // logout() 先同步清本地 user 再发请求（见 stores/user.js 的注释），
+  // 所以这里等不等请求完成都能立刻跳登录页；await 只是保证顺序可读
+  await userStore.logout()
+  router.push('/login')
 }
 </script>
 
@@ -272,8 +286,10 @@ async function onRemove(item) {
   text-overflow: ellipsis;
 }
 
-.settings {
-  flex: 0 0 auto;
+.user-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin-left: auto;
 }
 
