@@ -77,6 +77,19 @@ function positiveInt(name: string, raw: string | undefined, fallback: number): n
   return value;
 }
 
+/**
+ * 简单字符串配置。空串按「未设置」处理（与 bool / ratio / positiveInt 同口径）。
+ * 用于 baseUrl 这类没有固定校验规则的自由文本。不做 trim：URL 里的空格本就非法，
+ * 让它原样透传比悄悄改写更易定位问题。
+ *
+ * 保留 `name` 形参与同文件的 port/bool/ratio 等校验函数签名一致，便于将来给
+ * 字符串加格式校验时复用；当前不做校验故未使用，前缀下划线表明有意。
+ */
+function stringEnv(_name: string, raw: string | undefined, fallback: string): string {
+  if (raw === undefined || raw === "") return fallback;
+  return raw;
+}
+
 /** 非负整数（含 0）。HEU-40 配额参数：token 上限、窗口小时数都用它。 */
 function nonNegativeInt(name: string, raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw === "") return fallback;
@@ -137,6 +150,14 @@ export const env = {
   databaseUrl: process.env.DATABASE_URL ?? "postgres://petrel:petrel@localhost:5432/petrel",
   jwtSecret: jwtSecret(process.env.JWT_SECRET, nodeEnv),
   adminEmails: adminEmails(process.env.ADMIN_EMAILS),
+  /**
+   * vLLM 本地服务的 baseUrl。vLLM 不像 Ollama 有约定俗成的默认端口，
+   * 实际地址取决于本机启动参数（`--host` / `--port`），所以从 env 读。
+   *
+   * 走 @petrel/config 而非 pi-ai 的 auth 机制：pi-ai 只识别凭据类 env
+   * （API key / OAuth），不解析 baseUrl。留空时回落到最常见的 `:8000/v1`。
+   */
+  vllmBaseUrl: stringEnv("VLLM_BASE_URL", process.env.VLLM_BASE_URL, "http://localhost:8000/v1"),
   /**
    * 上下文自动压缩。阈值 = min(模型 contextWindow × thresholdRatio, absoluteCap)。
    *
