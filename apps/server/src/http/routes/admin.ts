@@ -116,9 +116,19 @@ export const admin = new Hono<AppEnv>()
     return c.json({ ok: true });
   })
 
-  /** HEU-40：删除某用户的配额覆盖，恢复系统默认。无覆盖时幂等成功。 */
+  /**
+   * HEU-40：删除某用户的配额覆盖，恢复系统默认。
+   *
+   * 与 PUT 同口径校验用户存在（404）：用户不存在也返回 200 会让前端两套语义难写——
+   * PUT 不存在 → 404，DELETE 不存在 → 200，前端无法据状态码判断「id 是否有效」。
+   * 覆盖行不存在时仍幂等成功（删一个没有的东西不是错误），区分点在用户存不存在。
+   */
   .delete("/users/:id/quota", async (c) => {
     const id = requireUuid(c.req.param("id"));
+    const userRepo = createUserRepository(getDb());
+    if (!(await userRepo.findById(id))) {
+      throw new HTTPException(404, { message: "用户不存在" });
+    }
     const limitsRepo = createQuotaLimitsRepository(getDb());
     await limitsRepo.deleteLimit(id);
     return c.json({ ok: true });

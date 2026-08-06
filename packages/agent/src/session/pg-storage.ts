@@ -129,6 +129,18 @@ export class PgSessionStorage implements SessionStorage {
     // 任何 SessionTreeEntry 都写 session_entries；只有 usage-bearing 的（message/compaction/
     // branch_summary 且字段齐全）才额外写 token_usage。extractFact 负责判断，不携带 usage 的返回 undefined。
     const fact = extractFact(entry, this.userId, this.sessionId);
+    // 无 usage 的条目（user message / leaf / model_change / tool 结果……，占绝大多数）
+    // 不需要双写：只写 session_entries，省一次 BEGIN/COMMIT 往返。事务只在「要双写」时才开。
+    if (!fact) {
+      await this.entries.append({
+        id: entry.id,
+        sessionId: this.sessionId,
+        parentId: entry.parentId,
+        type: entry.type,
+        payload: toPayload(entry),
+      });
+      return;
+    }
     await this.db.transaction(async (tx) => {
       await this.entries.append(
         {
@@ -140,10 +152,8 @@ export class PgSessionStorage implements SessionStorage {
         },
         tx as Database,
       );
-      if (fact) {
-        // entry_id 幂等：pi 重试/并发都不会重复计。onConflictDoNothing 在 repository 里。
-        await this.usageRepo.insertFact(fact, tx as Database);
-      }
+      // entry_id 幂等：pi 重试/并发都不会重复计。onConflictDoNothing 在 repository 里。
+      await this.usageRepo.insertFact(fact, tx as Database);
     });
   }
 

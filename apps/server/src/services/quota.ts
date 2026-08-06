@@ -38,6 +38,15 @@ function windowMs(): number {
 }
 
 /**
+ * 配额拦截是否开启。供 chat 路由的 fail-closed 降级判断复用——memory 降级的 503 也
+ * 要受这个开关控制，enforcement=false 时降级放行，kill switch 才能完整回滚旧行为。
+ * 每次现读 env（同 windowMs 的理由：模块级常量会固化）。
+ */
+export function isEnforcementEnabled(): boolean {
+  return env.quotaEnforcement;
+}
+
+/**
  * 滚动窗口的起点（now - windowMs）。返回 Date 给 repository 的 gte(recorded_at)。
  */
 export function windowStart(now: number = Date.now()): Date {
@@ -84,8 +93,9 @@ export function createQuotaService(db: Database) {
 
       if (used >= limit) {
         // 算 Retry-After：累计过期计算。算不出则省略 header（不返回伪值）。
+        // used 已由上面的 sumWindowUsage 算出，直接传入，避免 secondsUntilUnderLimit 再算一次。
         const retryAfter = await guardQuery(() =>
-          usageRepo.secondsUntilUnderLimit(user.id, since, limit, windowMs()),
+          usageRepo.secondsUntilUnderLimit(user.id, since, limit, windowMs(), used),
         );
         throw new QuotaError(
           `已达到最近 ${env.quotaWindowHours} 小时的 token 配额，请稍后重试`,

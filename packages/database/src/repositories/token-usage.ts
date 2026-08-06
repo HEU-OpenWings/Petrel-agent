@@ -85,13 +85,20 @@ export function createTokenUsageRepository(db: Database) {
     /**
      * 配额拒绝时，计算距离「有足够旧用量过期后能再次放行」还需要多久（秒）。
      *
-     * 思路：按 recorded_at 升序累计用户的窗口内用量，找出「累计量越过 (已用 - 上限)」
+     * 思路：按 recorded_at 升序累计用户的窗口内用量，找出「累计量严格越过 (已用 - 上限)」
      * 的那条记录——它过期之后，窗口内用量就降到上限以下，可以重试。
+     *
+     * 实现成一条窗口函数 SQL：running = 按时间升序的累计和。把窗口结果包进 CTE 再筛
+     * `running > overflow ORDER BY recorded_at LIMIT 1`——这样数据库只回一行，
+     * 不再把全窗口的事实拉进内存做 JS 累加（被拒正是用户在猛打的时刻，放大效应要避开）。
      *
      * `windowMs` 是滚动窗口的毫秒长度（与 `since` 同源，都来自 env QUOTA_WINDOW_HOURS）。
      * 由调用方传入：database 层不读 env，且过期时刻 = recorded_at + windowMs 必须与
      * 窗口判定口径一致——配 `QUOTA_WINDOW_HOURS=1` 时若这里写死 24h，算出的 Retry-After
      * 会比真实可重试时刻晚 23 小时，比省略 header 更糟（返回一个伪值）。
+     *
+     * overflow 由调用方算好传入（= sumWindowUsage 的结果 - limit），<= 0 时调用方不会进入
+     * 这里（check() 已据此先判 exceeded）。本函数仍兜底 overflow<=0 返回 undefined。
      *
      * 若算不出（边界情况、刚好打满），返回 undefined——调用方据此省略 Retry-After header，
      * 不返回一个可能仍无法重试的伪值。
@@ -101,37 +108,33 @@ export function createTokenUsageRepository(db: Database) {
       since: Date,
       limit: number,
       windowMs: number,
+      usedTotal: number,
     ): Promise<number | undefined> {
-      // 窗口内、按时间升序累计。only those within the current window can expire into availability.
-      const rows = await db.execute(sql`
-        SELECT recorded_at, total_tokens,
-               sum(total_tokens) OVER (ORDER BY recorded_at) AS running
-        FROM token_usage
-        WHERE user_id = ${userId} AND recorded_at >= ${since}
-        ORDER BY recorded_at
-      `);
-      const result = rows as unknown as {
-        rows: { recorded_at: string; total_tokens: string; running: string }[];
-      };
-      const entries = result.rows;
-      const usedTotal = entries.reduce((acc, r) => acc + Number(r.total_tokens), 0);
       // 超出额：要让最早多少 token 过期。
       const overflow = usedTotal - limit;
       if (overflow <= 0) return undefined;
-      // 累计找到第一条使 acc 严格大于 overflow 的记录——它过期后窗口内用量降到 limit 以下。
-      // 注意判据是 > 而非 >=：拒绝条件是 used >= limit，放行需 used - expired < limit，
-      // 即 acc > overflow。acc === overflow 时过期后恰好 used === limit，仍会被拒。
-      let acc = 0;
-      for (const r of entries) {
-        acc += Number(r.total_tokens);
-        if (acc > overflow) {
-          // 过期时刻 = 该条 recorded_at + 窗口长度。窗口翻转后它移出窗口，不再计入 used
-          const expiresAt = new Date(r.recorded_at).getTime() + windowMs;
-          const diff = Math.ceil((expiresAt - Date.now()) / 1000);
-          return diff > 0 ? diff : 0;
-        }
-      }
-      return undefined;
+      // CTE 算按时间升序的累计和，再筛第一条 running 严格大于 overflow 的记录。
+      // 判据是 > 而非 >=：拒绝条件是 used >= limit，放行需 used - expired < limit，
+      // 即该条及更早之和 > overflow。等于 overflow 时过期后恰好 used === limit，仍会被拒。
+      const rows = await db.execute(sql`
+        WITH ordered AS (
+          SELECT recorded_at,
+                 sum(total_tokens) OVER (ORDER BY recorded_at) AS running
+          FROM token_usage
+          WHERE user_id = ${userId} AND recorded_at >= ${since}
+        )
+        SELECT recorded_at FROM ordered
+        WHERE running > ${overflow}
+        ORDER BY recorded_at
+        LIMIT 1
+      `);
+      const result = rows as unknown as { rows: { recorded_at: string }[] };
+      const target = result.rows[0];
+      if (!target) return undefined;
+      // 过期时刻 = 该条 recorded_at + 窗口长度。窗口翻转后它（及更早的）移出窗口，不再计入 used
+      const expiresAt = new Date(target.recorded_at).getTime() + windowMs;
+      const diff = Math.ceil((expiresAt - Date.now()) / 1000);
+      return diff > 0 ? diff : 0;
     },
   };
 }

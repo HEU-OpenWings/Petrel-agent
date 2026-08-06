@@ -466,12 +466,14 @@ describe("POST /api/chat 会话持久化", () => {
    * 上面那条覆盖的是「身份都验不出来」，这条才是 registry.acquire 的降级分支：
    * 用户已经登录（鉴权的用户查询正常），但会话仓储查不动。
    *
-   * HEU-40 起这条路径改为 fail-closed：降级到内存会话（persistence="memory"）时，
-   * usage 双写不会落库，chat 路由据此返回 503、不调用模型——而不是「能聊但不计量」。
-   * 这是公开注册前置的安全定位：不能让用户通过触发降级绕过配额计量。
-   * 旧行为（200 照常输出）是认证落地前「能用但记不住好过不能用」的取舍，已被 HEU-40 取代。
+   * HEU-40 的 fail-closed：降级到内存会话（persistence="memory"）时 usage 不落库。
+   * 该行为**受 QUOTA_ENFORCEMENT 开关控制**（review 🟡#7）：
+   * - enforcement 开启：503 不调用模型（不能让用户通过触发降级绕过配额计量）；
+   * - enforcement 关闭：放行，恢复配额引入前的「能聊不落库」——开关才是真正的 kill switch。
+   * 两条用例共同覆盖 flag on/off × dependency failed 矩阵。
    */
-  it("已登录但会话仓储查库失败时 fail-closed 返回 503，不调用模型", async () => {
+  it("enforcement 开启时，会话仓储查库失败 → fail-closed 503，不调用模型", async () => {
+    state.quotaEnforcement = true;
     state.sessionRepoBroken = true;
     faux.setResponses([fauxAssistantMessage([fauxText("降级也该被挡")])]);
 
@@ -483,6 +485,19 @@ describe("POST /api/chat 会话持久化", () => {
     expect(body).not.toContain("降级也该被挡");
     // 没有调用模型，也没有落库
     expect(await storedRoles()).toEqual([]);
+  });
+
+  it("enforcement 关闭时，会话仓储查库失败 → 放行（kill switch 可回滚旧行为）", async () => {
+    state.quotaEnforcement = false;
+    state.sessionRepoBroken = true;
+    faux.setResponses([fauxAssistantMessage([fauxText("降级也照常回答")])]);
+
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const body = await readAll(response);
+
+    // enforcement=false 是真正的 kill switch：降级也放行，恢复配额引入前的可用性
+    expect(response.status).toBe(200);
+    expect(body).toContain("降级也照常回答");
   });
 
   /**

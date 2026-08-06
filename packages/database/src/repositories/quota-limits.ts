@@ -26,20 +26,27 @@ export function createQuotaLimitsRepository(db: Database) {
       return typeof value === "string" ? Number(value) : value;
     },
 
-    /** 设置/更新覆盖额度。tokenLimit 为 undefined 时写 null（跟随默认）。 */
-    async upsertLimit(userId: string, tokenLimit: number | undefined): Promise<void> {
+    /**
+     * 设置/更新覆盖额度。tokenLimit 必须是具体数值。
+     *
+     * 「恢复系统默认」由 deleteLimit 负责（route 层 tokenLimit===null 时走它），
+     * 所以这里不接受 undefined——原先的 `number | undefined` 分支在 route 层不可达：
+     * tokenLimit===null → deleteLimit，否则一定是非负整数。收窄成 number 去掉投机灵活性。
+     * 列仍保持 nullable（getLimit 把 null 行等同于「无行」），只是当前不会被写入 null。
+     */
+    async upsertLimit(userId: string, tokenLimit: number): Promise<void> {
       await db
         .insert(userQuotaLimits)
         .values({
           userId,
-          tokenLimit: tokenLimit ?? null,
+          tokenLimit,
           // 显式用 DB 时钟，与 sessions.ts 的 touch 一致（避免 new Date() 毫秒精度翻转）
           updatedAt: sql`now()`,
         })
         .onConflictDoUpdate({
           target: userQuotaLimits.userId,
           set: {
-            tokenLimit: tokenLimit ?? null,
+            tokenLimit,
             updatedAt: sql`now()`,
           },
         });
