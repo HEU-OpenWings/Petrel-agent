@@ -124,7 +124,7 @@ const sessionStore = useSessionStore()
 const workspace = useWorkspaceStore()
 
 // 模型名以偏好为准：没选时 store 会取后端标了 isDefault 的那个，
-// 不再是写死的字符串（写死的那份已经和 packages/ai 的默认模型对不上了）
+// 不再是写死的字符串（写死的那份已经和 packages/agent 的默认模型对不上了）
 const modelLabel = computed(() => preferences.modelName || '默认模型')
 
 // AppShell 用 key 强制重挂载来实现「新对话」，卸载时只需要断开本地接收——

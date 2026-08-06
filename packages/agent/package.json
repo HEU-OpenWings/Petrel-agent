@@ -16,7 +16,7 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.83.0",
     "@earendil-works/pi-ai": "0.83.0",
-    "@petrel/ai": "workspace:*",
+    "@petrel/config": "workspace:*",
     "@petrel/database": "workspace:*"
   }
 }

@@ -5,8 +5,8 @@ import {
   Session,
 } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
-import { defaultModel, models as defaultModels, findModel, listModels } from "@petrel/ai";
 import type { Database } from "@petrel/database";
+import { defaultModel, models as defaultModels, findModel, listModels } from "./models/index.ts";
 import { PgSessionStorage } from "./session/pg-storage.ts";
 import { currentTime } from "./tools/current-time.ts";
 
@@ -35,10 +35,10 @@ export interface CreateHarnessOptions {
   models?: Models;
   model?: Model<Api>;
   /**
-   * 按 id 选模型，从 @petrel/ai 的注册表里查。
+   * 按 id 选模型，从 models/ 的注册表里查。
    *
    * 上层（apps/server）只传字符串、不碰 pi 的 Model 类型——依赖方向是
-   * server → agent → ai，且 pi 的接线只允许出现在 agent 与 ai 两个 package。
+   * server → agent，且 pi 的接线只允许出现在 agent 这个 package。
    */
   modelId?: string;
 }

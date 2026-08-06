@@ -31,7 +31,6 @@ services:
     volumes:
       - ./apps/server/src:/app/apps/server/src
       - ./packages/agent/src:/app/packages/agent/src
-      - ./packages/ai/src:/app/packages/ai/src
       - ./packages/config/src:/app/packages/config/src
       - ./packages/logger/src:/app/packages/logger/src
       - ./packages/database/src:/app/packages/database/src

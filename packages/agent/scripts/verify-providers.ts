@@ -2,7 +2,7 @@
  * HEU-9 验收脚本：对每个「已配置」的 provider 跑一次真实模型调用，打印 token / 成本统计。
  *
  * 用法（仓库根）：
- *   pnpm tsx packages/ai/scripts/verify-providers.ts
+ *   pnpm tsx packages/agent/scripts/verify-providers.ts
  *
  * 默认只跑「已配置」的 provider（getAuth 能解析出凭据的）。想验证某家厂商，
  * 就在环境变量里填它的 API key（见 .env.template）。
@@ -15,7 +15,7 @@
  * 凭据仍由 pi-ai 的 auth 机制从环境变量解析（DEEPSEEK_API_KEY / OPENAI_API_KEY / …），
  * 这是「@petrel/config 是唯一读 env 的位置」的既有例外，与运行时一致。
  */
-import { models } from "../src/index.ts";
+import { models } from "../src/models/index.ts";
 
 interface ProviderResult {
   provider: string;

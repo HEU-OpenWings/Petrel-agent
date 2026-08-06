@@ -57,8 +57,7 @@ petrel-agent/
 │        ├─ stores/session.js               # 会话列表与当前会话
 │        └─ views/ChatView.vue
 ├─ packages/
-│  ├─ agent/              # pi Agent 装配与内置工具（@petrel/agent）
-│  ├─ ai/                      # 模型 provider 注册；默认 deepseek-v4-flash（@petrel/ai）
+│  ├─ agent/              # pi Agent 装配、内置工具与模型 provider 注册（@petrel/agent）
 │  ├─ config/                  # 环境配置；全仓唯一读取 process.env（@petrel/config）
 │  ├─ database/                # Drizzle schema 与 repository（@petrel/database）
 │  └─ logger/                  # pino 日志与请求日志（@petrel/logger）
