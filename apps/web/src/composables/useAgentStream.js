@@ -1,5 +1,5 @@
 import { computed, ref, shallowRef } from 'vue'
-import { abortChat, streamChat } from '@/apis/chat_api'
+import { abortChat, compactChat, streamChat } from '@/apis/chat_api'
 
 /**
  * blocked 的文案按 reason 分。两种原因对用户的意味完全不同：cooldown 是「等一会儿
@@ -11,6 +11,17 @@ const BLOCKED_HINTS = {
   cooldown: '上一次自动压缩失败，正在冷却，稍后会自动重试。上下文已超过压缩阈值，必要时可新建会话',
   ineffective: '自动压缩已连续多次无法回收空间，上下文会一直逼近模型窗口，建议新建会话继续',
   default: '上下文已超过压缩阈值，但自动压缩暂时不可用，建议新建会话继续'
+}
+
+/**
+ * `/compact` 没压成时的说明。手动压缩走 force，cooldown / ineffective / below-threshold
+ * 三个守卫都被跳过，所以这里实际只可能收到 disabled 与 nothing-to-compact，
+ * 其余留一条兜底文案。
+ */
+const MANUAL_SKIP_HINTS = {
+  disabled: '压缩功能已在服务端关闭',
+  'nothing-to-compact': '上次压缩之后还没有新内容，无需再压',
+  default: '本次没有可回收的上下文'
 }
 
 /**
@@ -37,6 +48,13 @@ export function useAgentStream() {
    * 两回事，所以给它自己的槽位。
    */
   const warning = ref('')
+  /**
+   * 中性信息槽，给 `/compact` / `/context` 这类命令的回执用。
+   *
+   * 不并进 warning：那条是「上下文快撑爆了」的告警，而这里多数时候是
+   * 「压完了」「当前占用 12k」这种陈述，两者的分量与配色都不同。
+   */
+  const notice = ref('')
   /** 正在压缩上下文。压缩发生在回答开始之前，所以要独立于 running 显示 */
   const compacting = ref(false)
   /**
@@ -62,6 +80,7 @@ export function useAgentStream() {
     toolCalls.value = {}
     error.value = ''
     warning.value = ''
+    notice.value = ''
     compactions.value = []
     activeIndex = -1
   }
@@ -78,6 +97,7 @@ export function useAgentStream() {
     error.value = ''
     // 告警说的是「这个会话的上下文超阈值」，换会话就不再成立
     warning.value = ''
+    notice.value = ''
     // 同样的道理：不清的话上一个会话的压缩分隔线会残留到这个会话的列表里
     compactions.value = []
     activeIndex = -1
@@ -146,6 +166,8 @@ export function useAgentStream() {
     if (running.value || !message.trim()) return
     running.value = true
     error.value = ''
+    // 命令回执是上一轮的事，新一轮开始就作废（warning 不清，理由见它的注释）
+    notice.value = ''
     controller.value = new AbortController()
     activeSessionId.value = options.sessionId
 
@@ -235,15 +257,51 @@ export function useAgentStream() {
     }
   }
 
+  /**
+   * 手动压缩（`/compact` 命令）。
+   *
+   * 成功时复用自动压缩那套显示：清掉「压不动」的告警、插一条分隔线。
+   * 生成中不发请求——后端会回 409，本地先挡住少一次往返。
+   */
+  async function compactNow(sessionId) {
+    if (!sessionId || running.value || compacting.value) return
+    notice.value = ''
+    compacting.value = true
+    try {
+      const outcome = await compactChat(sessionId)
+      if (outcome?.kind === 'compacted') {
+        warning.value = ''
+        compactions.value.push({
+          id: ++compactionSeq,
+          atIndex: messages.value.length,
+          tokensBefore: outcome.tokensBefore,
+          tokensAfter: outcome.tokensAfter
+        })
+        return
+      }
+      if (outcome?.kind === 'failed') {
+        notice.value = '压缩失败，请稍后再试'
+        return
+      }
+      notice.value = MANUAL_SKIP_HINTS[outcome?.reason] ?? MANUAL_SKIP_HINTS.default
+    } catch (err) {
+      notice.value = err.message
+    } finally {
+      compacting.value = false
+    }
+  }
+
   return {
     messages,
     toolCalls,
     running,
     error,
     warning,
+    notice,
     canSend,
     compacting,
     compactions,
+    compactNow,
     send,
     stop,
     disconnect,

@@ -3,6 +3,7 @@ import type {
   CompactionOutcome,
   CompactionPolicy,
   CompactionState,
+  ContextUsage,
   Session,
 } from "@petrel/agent";
 import {
@@ -11,6 +12,7 @@ import {
   createPgSession,
   createHarness as createRealHarness,
   DEFAULT_SYSTEM_PROMPT,
+  inspectContext,
   isContextOverflow,
   maybeCompact,
   resolveModel,
@@ -24,14 +26,16 @@ import { logger } from "@petrel/logger";
  * routes/chat.ts 的 SessionOwnedByOther 同一模式：service 层只表达
  * 「哪一种失败」，翻译成状态码是调用方（route 层）的事。
  *
- * `kind` 区分两种互不相同的处置：
+ * `kind` 区分三种互不相同的处置：
  * - "forbidden"：越权，调用方应当挡下（chat 路由目前翻成 403）
  * - "capacity"：容量已满，是运维信号而非客户端的错，调用方按 503 处理
+ * - "busy"：会话正在生成回答，手动压缩此刻做不了（pi 的 compact() 要求 idle），
+ *   重试即可成功，调用方按 409 处理
  */
 export class HarnessRegistryError extends Error {
   constructor(
     message: string,
-    readonly kind: "forbidden" | "capacity",
+    readonly kind: "forbidden" | "capacity" | "busy",
   ) {
     super(message);
     this.name = "HarnessRegistryError";
@@ -98,6 +102,15 @@ function overflowMessage(outcome: CompactionOutcome): string {
     return "上下文超出模型窗口，而自动压缩已关闭。请新建会话继续";
   }
   return "上下文超出模型窗口，压缩已无法再回收空间。请新建会话继续";
+}
+
+/**
+ * maybeCompact() 自己已经把摘要失败收敛成 `kind: "failed"`，但它之前还有
+ * buildContext() 等几个 await 点，那里抛出来的仍是裸异常。手动压缩要把结果
+ * 作为 HTTP 响应体回给用户，不能让这类异常变成 500。
+ */
+function toFailedOutcome(error: unknown): CompactionOutcome {
+  return { kind: "failed", error: error instanceof Error ? error : new Error(String(error)) };
 }
 
 /** 空闲多久后回收。5 分钟：够覆盖「用户读完回答再追问」，又不会让内存长期挂着。 */
@@ -632,6 +645,72 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       // 用户点了停止却照样跑一轮
       if (entry.compaction) entry.abortRequested = true;
       await entry.harness.abort();
+    },
+
+    /**
+     * 手动压缩（前端 `/compact` 命令）。
+     *
+     * 与自动压缩共用 `held.compaction` 这条互斥 promise——两者都调 pi 的
+     * `compact()`，撞在一起后者必抛 busy。已经有压缩在跑时不再发起第二次，
+     * 而是 await 同一条 promise 并返回它的结果：用户敲命令的那一刻正好有一次
+     * 自动压缩在跑，他要的「压一下」已经在发生了。
+     *
+     * force: true——手动命令的语义就是「我说压就压」，不再看阈值与抗抖动守卫。
+     * 但总开关（COMPACTION_ENABLED）依然优先，此时返回 skipped/disabled。
+     *
+     * 归属校验用 findById 而不是 upsert（同 abort()）：手动命令面对的一定是
+     * 已经存在的会话，不该顺手把一个空会话建出来。
+     */
+    async compact(sessionId: string, userId: string): Promise<CompactionOutcome> {
+      if (!(await sessionRepo.findById(sessionId, userId))) {
+        throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
+      }
+      sweep();
+      const held = await acquireEntry(sessionId, userId);
+      held.lastUsedAt = now();
+
+      // 临界区只包「判断状态 + 发起压缩」，随后立刻放行 chain：真正的等待在
+      // 它外面。串进 chain 的话，压缩期间到达的对话请求要等这次压缩彻底跑完
+      // 才能进临界区，也就看不到 held.compaction 非空这个事实（同 send() 的注释）
+      //
+      // 结果用 { outcome } 包一层再返回：直接返回裸 promise 的话 started 会
+      // 采纳（adopt）它，要等压缩跑完才 settle，chain 也就跟着卡到那时候，
+      // 恰好毁掉上面说的那条性质
+      const started = held.chain.then(async (): Promise<{ outcome: Promise<CompactionOutcome> }> => {
+        if (held.compaction) return { outcome: held.compaction.catch(toFailedOutcome) };
+        if (held.retired) {
+          throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
+        }
+        if (held.running) {
+          throw new HarnessRegistryError("正在生成回答，请先停止本轮或稍后再试", "busy");
+        }
+        const promise = maybeCompact(held.harness, held.session, held.compactionState, compactionPolicy, {
+          force: true,
+        });
+        held.compaction = promise;
+        return {
+          outcome: promise.catch(toFailedOutcome).then((outcome) => {
+            held.compaction = undefined;
+            held.lastUsedAt = now();
+            return outcome;
+          }),
+        };
+      });
+      held.chain = started.catch(() => undefined);
+      return (await started).outcome;
+    },
+
+    /** 当前上下文占用（前端 `/context` 命令）。只读，不进 chain。 */
+    async inspect(sessionId: string, userId: string): Promise<ContextUsage> {
+      if (!(await sessionRepo.findById(sessionId, userId))) {
+        throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
+      }
+      sweep();
+      // 没有常驻实例时会装配一个，用的是系统默认模型——contextWindow 可能与用户
+      // 偏好的模型不同。命令是个粗略的量度，不值得为它把偏好读进 registry
+      const entry = await acquireEntry(sessionId, userId);
+      entry.lastUsedAt = now();
+      return inspectContext(entry.harness, entry.session, compactionPolicy);
     },
 
     /**

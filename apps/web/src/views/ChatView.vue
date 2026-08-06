@@ -37,6 +37,9 @@
              也不该被下一轮的 agent_start 或真错误盖掉 -->
         <div v-if="warning" class="warning" role="status">{{ warning }}</div>
 
+        <!-- /compact 与 /context 的回执。中性陈述，不与 warning 抢配色 -->
+        <div v-if="notice" class="notice" role="status">{{ notice }}</div>
+
         <div v-if="error" class="error">{{ error }}</div>
       </div>
     </main>
@@ -89,6 +92,7 @@ import CommandPalette from '@/components/chat/CommandPalette.vue'
 import CompactionDivider from '@/components/chat/CompactionDivider.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
+import { fetchContextUsage } from '@/apis/chat_api'
 import { fetchMessages } from '@/apis/session_api'
 import { useAgentStream } from '@/composables/useAgentStream'
 import { useCommandPalette } from '@/composables/useCommandPalette'
@@ -103,8 +107,10 @@ const {
   running,
   error,
   warning,
+  notice,
   compacting,
   compactions,
+  compactNow,
   send,
   stop,
   disconnect,
@@ -184,8 +190,40 @@ function newChat() {
   sessionStore.startNew()
 }
 
+/** 12345 → 12.3k。命令回执是粗略量度，精确到个位没有意义 */
+function formatTokens(value) {
+  return value < 1000 ? `${Math.round(value)}` : `${(value / 1000).toFixed(1)}k`
+}
+
+// 手动压缩。running 的拦截后端也做（409），这里先挡一次是为了给出理由：
+// compactNow() 在生成中只是静默返回，用户会以为命令没生效
+function runCompact() {
+  const sessionId = sessionStore.currentId
+  if (!sessionId) return
+  if (running.value) {
+    notice.value = '正在生成回答，先停止本轮再压缩'
+    return
+  }
+  void compactNow(sessionId)
+}
+
+async function runContext() {
+  const sessionId = sessionStore.currentId
+  if (!sessionId) return
+  try {
+    const usage = await fetchContextUsage(sessionId)
+    notice.value =
+      `上下文约 ${formatTokens(usage.tokens)} token，` +
+      `压缩阈值 ${formatTokens(usage.threshold)}，模型窗口 ${formatTokens(usage.contextWindow)}`
+  } catch (err) {
+    notice.value = err.message
+  }
+}
+
 const palette = useCommandPalette([
   { name: 'new', description: '新对话', run: newChat },
+  { name: 'compact', description: '压缩上下文', run: runCompact },
+  { name: 'context', description: '查看上下文占用', run: runContext },
   { name: 'workspace', description: '开合右栏', run: () => layout.toggleRight() },
   { name: 'sidebar', description: '开合左栏', run: () => layout.toggleLeft() }
 ])
@@ -355,6 +393,15 @@ watch(
   background: var(--color-warning-50);
   color: var(--color-warning-700);
   font-size: 13px;
+  word-break: break-word;
+}
+
+// 命令回执：比 warning 弱一档，与 .compacting 同为居中的次要信息
+.notice {
+  margin: 12px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
   word-break: break-word;
 }
 

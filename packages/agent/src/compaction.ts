@@ -172,6 +172,36 @@ export function effectiveWindow(contextWindow: number, policy: CompactionPolicy)
   return Math.min(contextWindow * policy.thresholdRatio, policy.absoluteCap);
 }
 
+/** `/context` 命令要展示的三个数，口径与 maybeCompact 的阈值判定完全一致 */
+export interface ContextUsage {
+  /** 当前上下文的 token 估算，与阈值判定同口径（见 estimateForDecision） */
+  tokens: number;
+  /** 超过它就会触发自动压缩 */
+  threshold: number;
+  contextWindow: number;
+}
+
+/**
+ * 只读地报告当前上下文占用。不改任何状态，因此不需要 harness 处于 idle。
+ *
+ * 必须走 estimateForDecision 而不是 pi 的 estimateContextTokens：后者在压缩后会
+ * 采信 retainedTail 里那条压缩前 assistant 的 usage，用户压完再看 `/context`
+ * 会发现数字纹丝不动（CLAUDE.md 坑 19）。
+ */
+export async function inspectContext(
+  harness: AgentHarness,
+  session: Session,
+  policy: CompactionPolicy,
+): Promise<ContextUsage> {
+  const context = await session.buildContext();
+  const contextWindow = harness.getModel().contextWindow;
+  return {
+    tokens: await estimateForDecision(session, context.messages),
+    threshold: effectiveWindow(contextWindow, policy),
+    contextWindow,
+  };
+}
+
 /**
  * 超阈值就压缩，否则原样返回。**要求 harness 处于 idle**——pi 的 compact() 会检查
  * phase，并发保护由调用方负责（见 harness-registry 的 Entry.compaction）。

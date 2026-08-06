@@ -99,6 +99,14 @@ event: compaction data: { phase: "start" }
 会话 CRUD 在 `/api/sessions`：`GET /` 列表 · `GET /:id/messages` 历史 · `PATCH /:id` 重命名 ·
 `DELETE /:id` 删除。
 
+前端的斜杠命令（`views/ChatView.vue` 里注册，机制在 `composables/useCommandPalette.js`）中，
+`/compact` 与 `/context` 走两条非 SSE 的端点：`POST /api/chat/compact` 手动压缩
+（`force: true`，绕过阈值与抗抖动守卫，但 `COMPACTION_ENABLED=false` 依然优先，
+返回 `{ outcome }`，与 SSE 帧共用 `projectOutcome` 这一份投影；生成中返回 **409**，
+因为 pi 的 `compact()` 要求 idle）与 `GET /api/chat/context?sessionId=` 报告
+`{ tokens, threshold, contextWindow }`。手动压缩与自动压缩共用 `Entry.compaction`
+这条互斥 promise——两者撞在一起后者必抛 busy。
+
 **harness 按 `sessionId` 常驻**（`services/harness-registry.ts`，进程内 Map + idle TTL 5 分钟 +
 容量上限 200，到顶且无空闲可淘汰则 503）。由此确立三条语义：
 

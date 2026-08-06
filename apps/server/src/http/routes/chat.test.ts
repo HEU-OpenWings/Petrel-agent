@@ -804,4 +804,111 @@ describe("自动压缩", () => {
 
     expect(text).not.toContain("event: compaction");
   });
+
+  /** 前端 `/compact` 与 `/context` 两条斜杠命令的服务端契约 */
+  describe("手动压缩命令", () => {
+    function postCompact(sessionId: string, withCookie: string) {
+      return app.request("/api/chat/compact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: withCookie },
+        body: JSON.stringify({ sessionId }),
+      });
+    }
+
+    it("POST /api/chat/compact 压缩成功，outcome 只透出三个字段", async () => {
+      const sessionId = "66666666-6666-6666-6666-666666666666";
+      const { cookie: longCookie, session } = await seedLongSession(sessionId);
+      // 只需要摘要那一次调用：手动压缩不 prompt
+      faux.setResponses([fauxAssistantMessage([fauxText("## Goal\n摘要")])]);
+
+      const response = await postCompact(sessionId, longCookie);
+      expect(response.status).toBe(200);
+
+      // 与 SSE 帧共用 projectOutcome，同样只能断言键集合：pureBefore / contextWindow
+      // 漏投影时任何数值断言都发现不了
+      const body = (await response.json()) as { outcome: Record<string, unknown> };
+      expect(Object.keys(body.outcome)).toEqual(["kind", "tokensBefore", "tokensAfter"]);
+      expect(body.outcome.kind).toBe("compacted");
+
+      const contextEntries = await session.buildContextEntries();
+      expect(contextEntries.some((entry) => entry.type === "compaction")).toBe(true);
+    });
+
+    it("摘要失败时 outcome 只剩 kind，不泄露 error", async () => {
+      const sessionId = "77777777-7777-7777-7777-777777777777";
+      const { cookie: longCookie } = await seedLongSession(sessionId);
+      faux.setResponses([
+        fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "秘密的内部报错" }),
+      ]);
+
+      const response = await postCompact(sessionId, longCookie);
+
+      // 压缩失败不是请求失败：用户要看到「压不动」这个结果，而不是一个 5xx
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { outcome: Record<string, unknown> };
+      expect(Object.keys(body.outcome)).toEqual(["kind"]);
+      expect(body.outcome.kind).toBe("failed");
+    });
+
+    it("正在生成回答时返回 409", async () => {
+      useFaux(CHUNKED);
+      faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+
+      const response = await postChat({ message: "讲个长故事", sessionId: SESSION_ID });
+      // 与 abort 用例同理：连接要持续读干，否则背压会卡住 harness
+      const { firstByte, done } = drain(response);
+      await firstByte;
+
+      const conflict = await postCompact(SESSION_ID, cookie);
+      expect(conflict.status).toBe(409);
+
+      await done;
+    });
+
+    it("压别人的会话返回 403", async () => {
+      const otherCookie = await registerAndLogin("other-compact@example.com");
+      const response = await postCompact(SESSION_ID, otherCookie);
+
+      expect(response.status).toBe(403);
+    });
+
+    it("GET /api/chat/context 报告当前占用与阈值", async () => {
+      const sessionId = "88888888-8888-8888-8888-888888888888";
+      const { cookie: longCookie } = await seedLongSession(sessionId);
+
+      const response = await app.request(`/api/chat/context?sessionId=${sessionId}`, {
+        headers: { Cookie: longCookie },
+      });
+      expect(response.status).toBe(200);
+
+      // 阈值 = min(48000 × 0.8, 120000)，两个数都由 fixture 与 env 默认值定死
+      const usage = (await response.json()) as Record<string, number>;
+      expect(usage).toEqual({
+        tokens: expect.any(Number),
+        threshold: 38_400,
+        contextWindow: 48_000,
+      });
+      // fixture 本来就是为「超阈值」造的，这一条同时守住 tokens 不是 0
+      expect(usage.tokens).toBeGreaterThan(usage.threshold as number);
+    });
+
+    it("看别人的会话占用返回 403", async () => {
+      const otherCookie = await registerAndLogin("other-context@example.com");
+      const response = await app.request(`/api/chat/context?sessionId=${SESSION_ID}`, {
+        headers: { Cookie: otherCookie },
+      });
+
+      expect(response.status).toBe(403);
+    });
+
+    it("sessionId 不是 UUID 时两个端点都返回 400", async () => {
+      const compact = await postCompact("not-a-uuid", cookie);
+      const context = await app.request("/api/chat/context?sessionId=not-a-uuid", {
+        headers: { Cookie: cookie },
+      });
+
+      expect(compact.status).toBe(400);
+      expect(context.status).toBe(400);
+    });
+  });
 });

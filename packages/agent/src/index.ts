@@ -18,7 +18,9 @@ export {
   type CompactionOutcome,
   type CompactionPolicy,
   type CompactionState,
+  type ContextUsage,
   createCompactionState,
+  inspectContext,
   isContextOverflow,
   maybeCompact,
 } from "./compaction.ts";
