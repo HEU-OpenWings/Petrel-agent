@@ -91,3 +91,17 @@ describe("compaction", () => {
     await expect(loadEnv({ COMPACTION_ABSOLUTE_CAP: raw })).rejects.toThrow("COMPACTION_ABSOLUTE_CAP");
   });
 });
+
+describe("vllmBaseUrl", () => {
+  // review 🔴#1：vLLM 的 baseUrl 必须真的从 env 读，否则用户改 VLLM_BASE_URL 无效。
+  // 这条测试钉死「env 配置会传到 env.vllmBaseUrl」——ai 包据此装配 provider。
+  it("显式值被采用", async () => {
+    const { env } = await loadEnv({ VLLM_BASE_URL: "http://localhost:8001/v1" });
+    expect(env.vllmBaseUrl).toBe("http://localhost:8001/v1");
+  });
+
+  it("留空回落到默认 :8000/v1", async () => {
+    const { env } = await loadEnv({ VLLM_BASE_URL: undefined });
+    expect(env.vllmBaseUrl).toBe("http://localhost:8000/v1");
+  });
+});

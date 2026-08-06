@@ -136,4 +136,37 @@ describe("listConfiguredModels", () => {
       ["id", "isDefault", "name", "provider", "providerName"].sort(),
     );
   });
+
+  // 不变式：选择器里的每个 id，findModel 解析出的 provider 必须等于摘要里的 provider。
+  // 否则会出现「用户选了 A provider 的模型，运行时 findModel 却解析到没配 key 的
+  // B provider」的故障（聚合平台代售同名模型时）。这条是 findModel 重名去重的回归锁。
+  it("每个已配置模型的 provider 与 findModel 解析结果一致", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-stub");
+
+    const configured = await listConfiguredModels();
+    for (const summary of configured) {
+      const resolved = findModel(summary.id);
+      expect(
+        resolved?.provider,
+        `模型 ${summary.id}：选择器显示 provider=${summary.provider}，` +
+          `但 findModel 解析到 ${resolved?.provider ?? "undefined"}，二者必须一致`,
+      ).toBe(summary.provider);
+    }
+  });
+
+  // 重名去重的核心故障链（review 🔴#2）：只配了聚合平台 QWEN_TOKEN_PLAN_API_KEY、
+  // 没配原厂 MOONSHOT_API_KEY 时，kimi-k2.6 同时挂在 moonshotai 与 qwen-token-plan 下。
+  // findModel 按注册顺序解析到 moonshotai（没配 key），若 listConfiguredModels 把
+  // qwen 那条也列出来，用户选中即运行报错。去重后这条不应出现。
+  it("只配聚合平台 key 时，重名模型不暴露解析不到的 provider", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "");
+    vi.stubEnv("MOONSHOT_API_KEY", "");
+    vi.stubEnv("QWEN_TOKEN_PLAN_API_KEY", "qwen-test-stub");
+
+    const configured = await listConfiguredModels();
+    // kimi-k2.6 被聚合平台代售，findModel 解析到没配 key 的 moonshotai——
+    // 去重后选择器不应出现它，否则用户选了必然运行时报错
+    const kimi = configured.filter((model) => model.id === "kimi-k2.6");
+    expect(kimi, "kimi-k2.6 应被去重（findModel 解析到未配置的 moonshotai）").toEqual([]);
+  });
 });

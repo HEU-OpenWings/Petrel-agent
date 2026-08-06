@@ -8,11 +8,11 @@ import { moonshotaiProvider } from "@earendil-works/pi-ai/providers/moonshotai";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { qwenTokenPlanProvider } from "@earendil-works/pi-ai/providers/qwen-token-plan";
 import { zaiProvider } from "@earendil-works/pi-ai/providers/zai";
+import { env } from "@petrel/config";
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 const SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1";
 const OLLAMA_BASE_URL = "http://localhost:11434/v1";
-const VLLM_DEFAULT_BASE_URL = "http://localhost:8000/v1";
 
 export const DEFAULT_PROVIDER_ID = "deepseek";
 export const DEFAULT_MODEL_ID = "deepseek-v4-flash";
@@ -90,7 +90,9 @@ const siliconflow = createProvider({
  * OpenAI 兼容端点自行注册——与上面 SiliconFlow 同一套（openai-completions.lazy）。
  *
  * 两者的共同点：通常**无 API key**、**baseUrl 可变**（取决于本机怎么起服务）。
- * - baseUrl：Ollama 用官方默认端口；vLLM 没有「默认」，从 VLLM_BASE_URL 读，给个常见值兜底。
+ * - baseUrl：Ollama 用官方默认端口（11434）；vLLM 无约定俗成的端口，从
+ *   `@petrel/config` 的 `env.vllmBaseUrl`（即 `VLLM_BASE_URL`）读，留空回落 `:8000/v1`。
+ *   baseUrl 不走 pi-ai 的 auth 机制——pi-ai 只识别凭据类 env，不解析 baseUrl。
  * - auth：仍走 envApiKeyAuth。key 缺失时 pi 的 resolve() 返回 undefined，该 provider
  *   被判「未配置」，listConfiguredModels() 自然不列它——除非显式配了 OLLAMA_API_KEY。
  *   这正是想要的：没起本地服务时，前端选择器不会出现一堆选了就报错的模型。
@@ -125,7 +127,7 @@ const vllmDefaultModel: Model<"openai-completions"> = {
   name: "vLLM 默认模型 (本地)",
   api: "openai-completions",
   provider: "vllm",
-  baseUrl: VLLM_DEFAULT_BASE_URL,
+  baseUrl: env.vllmBaseUrl,
   reasoning: false,
   input: ["text"],
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -136,7 +138,7 @@ const vllmDefaultModel: Model<"openai-completions"> = {
 const vllm = createProvider({
   id: "vllm",
   name: "vLLM (本地)",
-  baseUrl: VLLM_DEFAULT_BASE_URL,
+  baseUrl: env.vllmBaseUrl,
   auth: { apiKey: envApiKeyAuth("vLLM API key（本地通常留空）", ["VLLM_API_KEY"]) },
   models: [vllmDefaultModel],
   api: openAICompletionsApi(),
@@ -239,6 +241,17 @@ export function findModel(id: string): Model<Api> | undefined {
  *
  * 注册了多家本地/云 provider 但只配了 DeepSeek 时，前端只看到 DeepSeek 一项。
  * pi 的 getAuth 是 async（要读 env / 凭据存储 / 可能刷新 OAuth），所以这里也是 async。
+ *
+ * **重名去重**：聚合平台（qwen-token-plan / openrouter 等）会代售他厂同名模型
+ * （如 kimi-k2.6 同时挂在 moonshotai 与 qwen-token-plan 下），而偏好里只存 model id、
+ * 运行时由 `findModel(id)` 解析——后者按「默认 provider 优先」挑一条，挑中的未必是
+ * 选择器里展示的那条。若不去重，用户在只有 QWEN key 时选中 `kimi-k2.6`，
+ * `findModel` 却解析到没配 key 的 moonshotai 那条，运行即报错。
+ *
+ * 因此这里对每个 model id 只保留 `findModel` 真正会解析到的那一条 provider，
+ * 保证不变式：**选择器里的每个 id，findModel 解析出的 provider 等于摘要里的 provider**。
+ * 非默认 provider 上的重名条目被跳过——想用它们需要先把偏好键改成 (provider, id) 二元，
+ * 超出 HEU-9 范围。
  */
 export async function listConfiguredModels(): Promise<ModelSummary[]> {
   const summaries: ModelSummary[] = [];
@@ -246,6 +259,9 @@ export async function listConfiguredModels(): Promise<ModelSummary[]> {
     const auth = await models.getAuth(provider.id);
     if (!auth) continue;
     for (const model of provider.getModels()) {
+      // 重名去重：只暴露 findModel 会解析到的那一条，保证选择器与运行时解析一致
+      const resolved = findModel(model.id);
+      if (resolved && resolved.provider !== provider.id) continue;
       summaries.push({
         id: model.id,
         name: model.name,
