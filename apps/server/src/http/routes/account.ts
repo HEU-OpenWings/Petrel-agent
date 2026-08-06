@@ -1,4 +1,4 @@
-import { listModels } from "@petrel/agent";
+import { listConfiguredModels } from "@petrel/agent";
 import { createPreferencesRepository, getDb } from "@petrel/database";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -53,7 +53,9 @@ export const account = new Hono<AppEnv>()
   .get("/preferences", async (c) => {
     const repo = createPreferencesRepository(getDb());
     const preferences = await repo.findByUserId(c.get("currentUser").id);
-    return c.json({ preferences, models: listModels() });
+    // 只返回已配置（API key 可解析）的 provider 的模型，没配 key 的厂商不下拉。
+    // PUT 侧校验也用同一口径（见下方），读写一致，避免存入选择器里看不到的 id。
+    return c.json({ preferences, models: await listConfiguredModels() });
   })
 
   .put("/preferences", async (c) => {
@@ -68,10 +70,17 @@ export const account = new Hono<AppEnv>()
     const fields = body as { defaultModel?: unknown; systemPrompt?: unknown };
 
     const defaultModel = parseNullableString(fields.defaultModel, "defaultModel");
-    // 存一个未注册的 id 就是埋雷：设置面板显示「跟随默认」，但每条消息都在传它，
-    // 而 /api/chat 对未注册的 model 返回 400——对话直接失败且看不出原因
-    if (defaultModel !== null && !listModels().some((model) => model.id === defaultModel)) {
-      throw new HTTPException(400, { message: `模型未注册：${defaultModel}` });
+    // 与 GET 同口径：按「已配置」（API key 可解析）校验，而非全部注册模型。
+    // 否则能存一个选择器里根本看不到、且必然运行时失败的 model id——设置面板显示
+    // 「跟随默认」但每条消息都传它，/api/chat 拿到没配 key 的 provider 直接报错。
+    // PUT 本就是 async，await listConfiguredModels() 无副作用。
+    if (defaultModel !== null) {
+      const configured = await listConfiguredModels();
+      if (!configured.some((model) => model.id === defaultModel)) {
+        throw new HTTPException(400, {
+          message: `模型未配置或未注册：${defaultModel}（仅已配置 API key 的模型可设为默认）`,
+        });
+      }
     }
 
     const systemPrompt = parseNullableString(fields.systemPrompt, "systemPrompt");
