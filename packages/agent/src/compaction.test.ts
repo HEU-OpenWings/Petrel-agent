@@ -1,0 +1,473 @@
+import { type AgentMessage, InMemorySessionRepo, type Session } from "@earendil-works/pi-agent-core";
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  type Usage,
+} from "@earendil-works/pi-ai";
+import { describe, expect, it } from "vitest";
+import {
+  type CompactionPolicy,
+  createCompactionState,
+  isContextOverflow,
+  maybeCompact,
+} from "./compaction.ts";
+import { createHarness } from "./harness.ts";
+
+const SESSION_ID = "11111111-1111-1111-1111-111111111111";
+
+/**
+ * 窗口取 40000：阈值 = 40000 × 0.8 = 32000，而 pi 硬编码的 keepRecentTokens 是 20000。
+ * 两者必须留出足够间距，否则压缩「成功」却几乎没切掉东西（回收比例还会撞上
+ * ineffective 守卫的 10% 下限）。见 spec §10.1。
+ */
+const CONTEXT_WINDOW = 40_000;
+
+const POLICY: CompactionPolicy = {
+  enabled: true,
+  thresholdRatio: 0.8,
+  absoluteCap: 1_000_000,
+};
+
+/** 1 token ≈ 4 字符（pi 的 estimateTokens 就是 chars/4），所以 4000 字 = 1000 token */
+const CHUNK = "一".repeat(4000);
+
+async function fixture() {
+  const faux = fauxProvider({
+    tokensPerSecond: 10_000,
+    models: [{ id: "faux-compaction", contextWindow: CONTEXT_WINDOW, maxTokens: 8192 }],
+  });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const session = await new InMemorySessionRepo().create({ id: SESSION_ID });
+  const harness = createHarness({ session, models, model: faux.getModel() });
+  return { faux, harness, session, state: createCompactionState() };
+}
+
+/**
+ * 直接往会话树里塞消息，不跑 agent loop。
+ *
+ * 压缩只读这颗树，所以没必要为了造长会话真的跑几十轮模型调用——
+ * 那样一个用例要几秒。
+ */
+async function fill(session: Session, tokens: number): Promise<void> {
+  for (let i = 0; i < tokens / 2000; i++) {
+    await session.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: CHUNK }],
+      timestamp: Date.now(),
+    });
+    // fauxAssistantMessage 的 usage 是全 0，calculateContextTokens 因此返回 0，
+    // estimateContextTokens 会退回纯字符估算——测试里正需要这个确定性
+    await session.appendMessage(fauxAssistantMessage([fauxText(CHUNK)]));
+  }
+}
+
+/** 压缩会真的发一次摘要请求，得给 faux 备一条回答 */
+function queueSummary(faux: ReturnType<typeof fauxProvider>, text = "## Goal\n测试摘要") {
+  faux.setResponses([fauxAssistantMessage([fauxText(text)])]);
+}
+
+describe("maybeCompact 阈值判定", () => {
+  it("远低于阈值时不压", async () => {
+    const { harness, session, state } = await fixture();
+    await fill(session, 4000);
+
+    const outcome = await maybeCompact(harness, session, state, POLICY, {});
+
+    expect(outcome).toMatchObject({ kind: "skipped", reason: "below-threshold", overThreshold: false });
+  });
+
+  it("超阈值时压缩，buildContextEntries 里出现 compaction 条目且条目数变少", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    queueSummary(faux);
+    const before = (await session.buildContextEntries()).length;
+
+    const outcome = await maybeCompact(harness, session, state, POLICY, {});
+
+    expect(outcome.kind).toBe("compacted");
+    const after = await session.buildContextEntries();
+    expect(after.some((entry) => entry.type === "compaction")).toBe(true);
+    expect(after.length).toBeLessThan(before);
+  });
+
+  it("absoluteCap 比 window × ratio 更小时，以 cap 为准", async () => {
+    const { faux, harness, session, state } = await fixture();
+    // window × ratio = 32000，cap = 8000 → 阈值取 8000，10000 token 的会话就该压
+    await fill(session, 10_000);
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(harness, session, state, { ...POLICY, absoluteCap: 8000 }, {});
+
+    expect(outcome.kind).toBe("compacted");
+  });
+
+  it("enabled 为 false 时直接跳过，不看阈值", async () => {
+    const { harness, session, state } = await fixture();
+    await fill(session, 40_000);
+
+    const outcome = await maybeCompact(harness, session, state, { ...POLICY, enabled: false }, {});
+
+    expect(outcome).toMatchObject({ kind: "skipped", reason: "disabled" });
+  });
+
+  /**
+   * 总开关优先于 force。cooldown / ineffective 两道守卫刻意让 force 穿透（(d) 兜底
+   * 时上下文已经真的爆了，挡住它只会让用户彻底没救），但 enabled 不是守卫而是开关：
+   * 运维关掉它就是不想再有摘要模型调用、也不想再往会话树写 compaction 条目。
+   * 这条断言把「force 不得绕过总开关」写死，顺便保证被关掉时一次模型调用都不发。
+   */
+  it("enabled 为 false 时连 force 也不压", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(
+      harness,
+      session,
+      state,
+      { ...POLICY, enabled: false },
+      { force: true },
+    );
+
+    expect(outcome).toMatchObject({ kind: "skipped", reason: "disabled" });
+    expect(faux.getPendingResponseCount()).toBe(1);
+  });
+
+  /**
+   * 这一对是 spec §7.1 那个洞的回归测试。判定发生在 harness.prompt() 之前，
+   * 待发消息还不在会话树里；不算进去，一整类可以在请求前避免的爆窗会被推到 (d)，
+   * 用户被要求手动重发。Codex 自己也还没修这个洞（turn.rs:159-162 的 TODO）。
+   */
+  it("待发消息把总量顶过阈值时要压", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 30_000); // 低于阈值 32000
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(harness, session, state, POLICY, {
+      pendingMessage: "问".repeat(12_000), // 3000 token
+    });
+
+    expect(outcome.kind).toBe("compacted");
+  });
+
+  it("同一份上下文不传 pendingMessage 时不压", async () => {
+    const { harness, session, state } = await fixture();
+    await fill(session, 30_000);
+
+    const outcome = await maybeCompact(harness, session, state, POLICY, {});
+
+    expect(outcome).toMatchObject({ kind: "skipped", reason: "below-threshold" });
+  });
+
+  it("onPhase 只在真要压时回调一次", async () => {
+    const { faux, harness, session, state } = await fixture();
+    const phases: string[] = [];
+
+    await fill(session, 4000);
+    await maybeCompact(harness, session, state, POLICY, { onPhase: (p) => phases.push(p) });
+    // 低于阈值的普通请求一次都不该回调，否则每个请求都会在前端闪一次「正在压缩」
+    expect(phases).toEqual([]);
+
+    await fill(session, 40_000);
+    queueSummary(faux);
+    await maybeCompact(harness, session, state, POLICY, { onPhase: (p) => phases.push(p) });
+    expect(phases).toEqual(["start"]);
+  });
+});
+
+describe("maybeCompact 的 nothing-to-compact", () => {
+  /**
+   * harness.compact() 在「路径为空」或「最后一条已是 compaction 条目」时
+   * 抛 AgentHarnessError("compaction", "Nothing to compact")。这是正常结果不是故障：
+   * 归到 failed 会让每轮都触发 60s 冷却，把真正需要压缩的会话也一起挡住。
+   */
+  it("连着压两次，第二次是 skipped/nothing-to-compact 而不是 failed", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n第一次摘要")]),
+      fauxAssistantMessage([fauxText("## Goal\n第二次摘要")]),
+    ]);
+
+    expect((await maybeCompact(harness, session, state, POLICY, { force: true })).kind).toBe("compacted");
+    const second = await maybeCompact(harness, session, state, POLICY, { force: true });
+
+    expect(second).toMatchObject({ kind: "skipped", reason: "nothing-to-compact" });
+  });
+
+  /**
+   * 验的是「nothing-to-compact 走的是不设冷却的那条分支」，而不是被误归到 failed。
+   * Task 3 加这条测试时还没有任何冷却逻辑，那时它必然通过——是空转的，没验证任何
+   * 实际行为。Task 4 加上冷却之后它才真正开始验证行为：如果实现把
+   * nothing-to-compact 也设了冷却，第三次调用会被 skipped/cooldown 挡住而不是
+   * compacted，这条断言才会真的失败。
+   *
+   * 第三次调用**不能带 `force: true`**：force 会跳过冷却检查那一步，带着它的话
+   * 不管冷却有没有被错误设置，第三次都会直接压下去——那样这条测试又会退化成
+   * 空转（已用变异验证确认：给 catch 分支加一行无条件 `cooldownUntil = ...` 后，
+   * 带 force 的版本仍然通过，摘掉 force 才会真的失败，见 commit 说明）。
+   */
+  it("nothing-to-compact 不设置冷却", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+    ]);
+    await maybeCompact(harness, session, state, POLICY, { force: true });
+    await maybeCompact(harness, session, state, POLICY, { force: true });
+
+    // 冷却被误设的话，这里会拿到 skipped/cooldown（不带 force，才会真的过一遍冷却检查）
+    await fill(session, 40_000);
+    const third = await maybeCompact(harness, session, state, POLICY, {});
+    expect(third.kind).toBe("compacted");
+  });
+});
+
+/** 造一条带真实 usage 的 assistant 消息（fauxAssistantMessage 的 usage 是全 0） */
+function withUsage(text: string, totalTokens: number): AgentMessage {
+  const usage: Usage = {
+    input: totalTokens,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  return { ...fauxAssistantMessage([fauxText(text)]), usage };
+}
+
+describe("maybeCompact 的抗抖动守卫", () => {
+  /**
+   * 最要紧的一道。压缩后 buildContext() 返回 [摘要, ...retainedTail]，
+   * 而 retainedTail 里那些压缩前的 assistant 消息带着「反映压缩前完整上下文」的旧 usage。
+   * estimateContextTokens 直接采信它，就会刚压完立刻又判超阈值——每轮都压。
+   */
+  it("stale-usage：压缩后紧接着再判定一次，不会连压两次", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    // 一条「上下文 90000 token」的旧 usage，压缩后它仍留在 retainedTail 里
+    await session.appendMessage(withUsage("旧回答", 90_000));
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("## Goal\n不该被用到的第二次摘要")]),
+    ]);
+
+    expect((await maybeCompact(harness, session, state, POLICY, {})).kind).toBe("compacted");
+    const second = await maybeCompact(harness, session, state, POLICY, {});
+
+    expect(second).toMatchObject({ kind: "skipped", reason: "below-threshold" });
+  });
+
+  /**
+   * 上一条的反向分支，也是 estimateForDecision 比 pi CLI 的「压完就一律不再压」
+   * 更准的那个卖点：压缩之后又真的跑了一轮、拿回一条**晚于** compaction 条目的
+   * usage，那这条 usage 反映的就是压缩后的真实上下文，必须采信它而不是退回纯估算。
+   * 不采信的话，压缩后上下文重新涨回阈值以上时会一直压不动。
+   */
+  it("stale-usage：usage 晚于最近一次 compaction 时采信 usage", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n第一次摘要")]),
+      fauxAssistantMessage([fauxText("## Goal\n第二次摘要")]),
+    ]);
+
+    expect((await maybeCompact(harness, session, state, POLICY, {})).kind).toBe("compacted");
+    // 压缩之后新增的一条回答，usage 说「当前上下文 90000 token」——远超阈值 32000。
+    // 纯字符估算此刻只有两万上下，所以只有采信 usage 才会判超阈值。
+    // timestamp 要显式推后一秒：判定用的是严格大于，而这里两条记录都写在同一毫秒内
+    // （真实链路上隔着一整轮模型调用，不存在这个并列）
+    await session.appendMessage({
+      ...withUsage("压缩之后的新回答", 90_000),
+      timestamp: Date.now() + 1000,
+    });
+
+    expect((await maybeCompact(harness, session, state, POLICY, {})).kind).toBe("compacted");
+  });
+
+  /**
+   * tokensAfter 的口径回归。它曾经走 estimateContextTokens，于是采信了 retainedTail
+   * 里那条压缩前的 usage（90000），压缩后报出来的数几乎等于压缩前——registry 的
+   * overflowMessage() 拿它判「压完还超不超窗口」会恒真，(d) 兜底的两条文案因此互换。
+   * 这里用一条 usage=90000 的消息把陷阱重建出来：断言 tokensAfter 明显小于它，
+   * 也小于窗口，否则就是又采信了 stale usage。
+   */
+  it("tokensAfter 不采信 retainedTail 里的旧 usage", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    await session.appendMessage(withUsage("旧回答", 90_000));
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(harness, session, state, POLICY, {});
+
+    expect(outcome.kind).toBe("compacted");
+    if (outcome.kind !== "compacted") return;
+    expect(outcome.tokensAfter).toBeLessThan(CONTEXT_WINDOW);
+  });
+
+  it("cooldown：摘要失败后 60s 内不再主动压，但 force 能穿透", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "rate limited" }),
+      fauxAssistantMessage([fauxText("## Goal\n补上的摘要")]),
+    ]);
+
+    const failed = await maybeCompact(harness, session, state, POLICY, {});
+    expect(failed.kind).toBe("failed");
+    expect(state.cooldownUntil).toBeGreaterThan(Date.now());
+
+    const blocked = await maybeCompact(harness, session, state, POLICY, {});
+    expect(blocked).toMatchObject({ kind: "skipped", reason: "cooldown", overThreshold: true });
+
+    // (d) 兜底时上下文已经真的爆了，冷却毫无意义，必须能穿透
+    const forced = await maybeCompact(harness, session, state, POLICY, { force: true });
+    expect(forced.kind).toBe("compacted");
+  });
+
+  /**
+   * ineffective 的前后值必须同口径。harness.compact() 返回的 tokensBefore 是
+   * usage-based（含 provider 计入的固定开销），而压缩后拿不到新 usage 只能纯估算——
+   * 两个数相减会系统性高估回收比例，守卫永不触发。所以单独算一对 pure 值。
+   *
+   * 补了一条 withUsage 消息（原计划的 fixture 只有 fill()，全是零 usage）：
+   * fauxAssistantMessage 的 usage 全 0，harness.compact() 算出的 tokensBefore
+   * 在没有任何真实 usage 时会退回纯字符估算——跟 pureBefore 用的是同一个公式，
+   * 数值必然相等，这条断言在原 fixture 下无法验证任何东西。塞一条带真实 usage
+   * 的消息进去，才能让 usage-based 的 tokensBefore 与纯估算的 pureBefore 真正分叉。
+   */
+  it("compacted 同时给出 usage-based 与纯估算两个压缩前的数", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 40_000);
+    await session.appendMessage(withUsage("旧回答", 90_000));
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(harness, session, state, POLICY, {});
+
+    expect(outcome.kind).toBe("compacted");
+    if (outcome.kind !== "compacted") return;
+    expect(outcome.pureBefore).toBeGreaterThan(outcome.tokensAfter);
+    // 两个数是不同口径，不该恰好相等——相等说明实现把它们接成了同一个来源
+    expect(outcome.pureBefore).not.toBe(outcome.tokensBefore);
+  });
+
+  it("ineffective：连续两次回收不足 10% 后停止自动压缩", async () => {
+    const { faux, harness, session, state } = await fixture();
+    // 直接把状态推到「已经连续两次无效」，避免为了造两次低回收压缩而依赖
+    // keepRecentTokens 的精确数值（那是 pi 的内部常量，不该被测试绑死）
+    state.ineffectiveStreak = 2;
+    await fill(session, 40_000);
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(harness, session, state, POLICY, {});
+
+    expect(outcome).toMatchObject({ kind: "skipped", reason: "ineffective", overThreshold: true });
+    // 被挡住时一次模型调用都不该发生
+    expect(faux.getPendingResponseCount()).toBe(1);
+  });
+
+  it("一次有效压缩把 ineffectiveStreak 清零", async () => {
+    const { faux, harness, session, state } = await fixture();
+    state.ineffectiveStreak = 1;
+    await fill(session, 40_000);
+    queueSummary(faux);
+
+    await maybeCompact(harness, session, state, POLICY, {});
+
+    expect(state.ineffectiveStreak).toBe(0);
+  });
+
+  /**
+   * 覆盖 ineffectiveStreak 递增分支本身（上面两条用例都是直接赋值构造前置状态，
+   * 从未真的走过 `+1` 那条路）。刻意把会话长度只造得比 pi 的 keepRecentTokens
+   * （硬编码 20000）多一点：压缩后 retainedTail 几乎保留全部内容，回收比例必然
+   * 低于 REQUIRED_RECLAIM_RATIO（实测 pureBefore=22000、tokensAfter≈20003，回收
+   * ≈9.1%）。`absoluteCap` 调到很小以确保能过阈值判定——实际会话本身没到默认
+   * 阈值 32000，不然阈值判定会先挡在前面，走不到这条低回收压缩。
+   */
+  it("低回收的一次压缩把 ineffectiveStreak 从 0 加到 1", async () => {
+    const { faux, harness, session, state } = await fixture();
+    await fill(session, 22_000);
+    queueSummary(faux);
+
+    const outcome = await maybeCompact(harness, session, state, { ...POLICY, absoluteCap: 1000 }, {});
+
+    expect(outcome.kind).toBe("compacted");
+    if (outcome.kind !== "compacted") return;
+    const reclaimed = (outcome.pureBefore - outcome.tokensAfter) / outcome.pureBefore;
+    // 哨兵：保证这条用例真的走在低回收路径上。pi 若改了 keepRecentTokens，
+    // 这里会先失败并指明要重新校准会话长度，而不是让下面那条断言静默失去意义
+    expect(reclaimed).toBeLessThan(0.1);
+    expect(state.ineffectiveStreak).toBe(1);
+  });
+});
+
+describe("isContextOverflow", () => {
+  /**
+   * 检测点是 prompt() 的返回值：pi 在模型调用失败时既不抛异常也不发 error 事件，
+   * 而是把原因写进 assistant 消息的 errorMessage（stopReason: "error"）。
+   * 见 CLAUDE.md「消费 pi AgentEvent 的硬约束」第 3 条。
+   */
+  it.each([
+    "This model's maximum context length is 65536 tokens",
+    "context_length_exceeded",
+    "Too many tokens in request",
+    "Your input exceeds the context window of this model",
+  ])("errorMessage 命中关键词：%s", async (errorMessage) => {
+    const { harness } = await fixture();
+    const message = fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage });
+
+    expect(isContextOverflow(harness, message)).toBe(true);
+  });
+
+  it("静默溢出：stopReason 仍是 stop，但 usage.input 超过 contextWindow 时命中", async () => {
+    const { harness } = await fixture();
+    const message = {
+      ...fauxAssistantMessage([fauxText("")]),
+      usage: {
+        input: CONTEXT_WINDOW + 1,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: CONTEXT_WINDOW + 1,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      } satisfies Usage,
+    };
+
+    expect(isContextOverflow(harness, message)).toBe(true);
+  });
+
+  it("普通错误不命中", async () => {
+    const { harness } = await fixture();
+    const message = fauxAssistantMessage([fauxText("")], {
+      stopReason: "error",
+      errorMessage: "connection reset by peer",
+    });
+
+    expect(isContextOverflow(harness, message)).toBe(false);
+  });
+
+  it("限流不被误判成溢出", async () => {
+    const { harness } = await fixture();
+    // 这句文案同时命中 /rate limit/i（pi-ai 的排除表）与 /too many tokens/i（溢出表）——
+    // 排除表优先。我们自己手搓关键词表的第一版没有排除表，会把这种限流误判成溢出：
+    // 用户只是被限流，却会收到「上下文超出模型窗口，已压缩历史，请重发」，还白压一次
+    const message = fauxAssistantMessage([fauxText("")], {
+      stopReason: "error",
+      errorMessage: "Rate limit exceeded, too many tokens per minute",
+    });
+
+    expect(isContextOverflow(harness, message)).toBe(false);
+  });
+
+  it("成功的回答不命中", async () => {
+    const { harness } = await fixture();
+
+    expect(isContextOverflow(harness, fauxAssistantMessage([fauxText("正常回答")]))).toBe(false);
+  });
+});

@@ -12,6 +12,18 @@ export type {
 // 转出给 apps/server：让它拿到模型清单又不必依赖 @petrel/ai，
 // 守住「pi 的接线只在 agent 与 ai」这条约束
 export { listModels, type ModelSummary } from "@petrel/ai";
+// 只转出 apps/server 真正消费的那几个。effectiveWindow / CompactionSkipReason /
+// MaybeCompactOptions 目前只在 packages/agent 内部用到，需要时再加
+export {
+  type CompactionOutcome,
+  type CompactionPolicy,
+  type CompactionState,
+  type ContextUsage,
+  createCompactionState,
+  inspectContext,
+  isContextOverflow,
+  maybeCompact,
+} from "./compaction.ts";
 export {
   type CreateHarnessOptions,
   createHarness,

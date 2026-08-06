@@ -1,14 +1,45 @@
+import type { CompactionOutcome } from "@petrel/agent";
 import { listModels } from "@petrel/agent";
 import { getDb } from "@petrel/database";
 import { logger } from "@petrel/logger";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
-import { createHarnessRegistry, HarnessRegistryError } from "../../services/harness-registry.ts";
+import {
+  createHarnessRegistry,
+  type HarnessNotice,
+  HarnessRegistryError,
+} from "../../services/harness-registry.ts";
 import type { AppEnv } from "../../types.ts";
 import { createSseQueue } from "../sse-queue.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * 只透出前端要用的字段，不原样透传 CompactionOutcome。
+ *
+ * failed 的 error 是内部信息（可能带 provider 的原始报错），只进日志不进响应；
+ * compacted 的 pureBefore / contextWindow 是内部字段。
+ *
+ * SSE 帧与 POST /compact 的响应体共用这一份：分成两处投影的话，哪天只改了一处
+ * 就等于从另一处漏出内部字段。
+ */
+function projectOutcome(outcome: CompactionOutcome) {
+  if (outcome.kind === "compacted") {
+    return {
+      kind: "compacted",
+      tokensBefore: outcome.tokensBefore,
+      tokensAfter: outcome.tokensAfter,
+    };
+  }
+  if (outcome.kind === "failed") return { kind: "failed" };
+  return { kind: "skipped", reason: outcome.reason };
+}
+
+function toCompactionFrame(notice: HarnessNotice) {
+  if (notice.phase !== "end") return notice;
+  return { phase: "end", outcome: projectOutcome(notice.outcome) };
+}
 
 /**
  * registry 是进程级单例：常驻实例的全部意义就是跨请求复用，
@@ -34,10 +65,11 @@ export function __resetRegistry(): void {
  * registry 只表达「哪一种失败」，不认识 HTTP（同 services/auth.ts 的 AuthError 那套）。
  * forbidden 是越权 → 403；capacity 是运维信号，不是客户端的错 → 503。
  */
+const REGISTRY_ERROR_STATUS = { forbidden: 403, capacity: 503, busy: 409 } as const;
+
 function toHttpException(error: unknown): never {
   if (error instanceof HarnessRegistryError) {
-    const status = error.kind === "forbidden" ? 403 : 503;
-    throw new HTTPException(status, { message: error.message });
+    throw new HTTPException(REGISTRY_ERROR_STATUS[error.kind], { message: error.message });
   }
   throw error;
 }
@@ -150,7 +182,16 @@ export const chat = new Hono<AppEnv>()
       const pumpDone = queue.pump((frame) => stream.writeSSE(frame));
 
       try {
-        await handle.send(message);
+        await handle.send(message, {
+          /**
+           * 同步入队，绝不能在这里 await stream.writeSSE：pi 的订阅回调被串行
+           * await 且没有超时，客户端不读流时会因背压永不 resolve，卡住整个 harness
+           * （CLAUDE.md 坑 15）。真正的写出交给 queue.pump()。
+           */
+          onNotice: (notice) => {
+            queue.push({ event: "compaction", data: JSON.stringify(toCompactionFrame(notice)) });
+          },
+        });
       } catch (error) {
         logger.error({ err: error, sessionId }, "agent run failed");
         queue.push({
@@ -179,4 +220,31 @@ export const chat = new Hono<AppEnv>()
 
     await getRegistry().abort(sessionId, c.get("currentUser").id).catch(toHttpException);
     return c.json({ ok: true });
+  })
+
+  /**
+   * 手动压缩（前端 `/compact` 命令）。
+   *
+   * 不走 SSE：压缩是一次请求一个结果，为它铺一整套 sse-queue + pump 只是徒增
+   * 复杂度。正在生成回答时返回 409（pi 的 compact() 要求 idle）。
+   */
+  .post("/compact", async (c) => {
+    const body: unknown = await c.req.json().catch(() => {
+      throw new HTTPException(400, { message: "请求体必须是 JSON" });
+    });
+    const sessionId = requireSessionId(body);
+
+    const outcome = await getRegistry().compact(sessionId, c.get("currentUser").id).catch(toHttpException);
+    if (outcome.kind === "failed") {
+      // 原始 error 只进日志：provider SDK 的报错可能带限流阈值、区域信息
+      logger.warn({ err: outcome.error, sessionId }, "手动压缩失败");
+    }
+    return c.json({ outcome: projectOutcome(outcome) });
+  })
+
+  /** 当前上下文占用（前端 `/context` 命令）。只读，所以用 GET + query。 */
+  .get("/context", async (c) => {
+    const sessionId = requireSessionId({ sessionId: c.req.query("sessionId") });
+    const usage = await getRegistry().inspect(sessionId, c.get("currentUser").id).catch(toHttpException);
+    return c.json(usage);
   });

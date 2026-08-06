@@ -632,3 +632,283 @@ describe("模型选择", () => {
     expect(state.seenHarnessOptions?.modelId).toBeUndefined();
   });
 });
+
+describe("自动压缩", () => {
+  /**
+   * 换一套小窗口 faux，并把会话树填到超阈值。
+   *
+   * 窗口取 48000（阈值 38400）而不是 40000：40000 会让 fixture 落在「内容 40000 =
+   * 窗口 40000」这个不真实的区间——压缩失败或被守卫挡住之后模型照样「成功」应答，
+   * 但 usage.input（含 system prompt 等固定开销）已经超过窗口，被 pi-ai 的静默溢出
+   * 检测判成真实溢出，于是这一轮会继续走 (d) 兜底、最后以 `event: error` 收尾。
+   * 那样下面那条用例名义上在验「pre-prompt 压缩失败的帧」，实际验的是一条四段
+   * 混合路径，用 find() 任取一个 failed 帧还照样通过。48000 之后是
+   * 「阈值 38400 < 内容 40000 < 窗口 48000」，压缩该触发照常触发，失败也不会连带
+   * 被判成溢出。harness-registry.test.ts 的 compactionFactory 已经因为同样的原因
+   * 改过一次，这里当时漏改。
+   */
+  async function seedLongSession(sessionId: string) {
+    faux = fauxProvider({
+      tokensPerSecond: 10_000,
+      models: [{ id: "faux-compaction", contextWindow: 48_000, maxTokens: 8192 }],
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    state.harnessOptions = { models, model: faux.getModel() };
+
+    // 直接写会话树，不跑 agent loop：压缩只读这颗树，跑 20 轮模型调用纯属浪费
+    if (!state.db) throw new Error("test db 尚未初始化");
+    const db = state.db;
+    const sessionRepo = (await import("@petrel/database")).createSessionRepository(db);
+    const user = await registerUser("long@x.io");
+    await sessionRepo.upsert({ id: sessionId, userId: user.id, title: "长会话" });
+    const { createPgSession } = await import("@petrel/agent");
+    const session = createPgSession(db as never, sessionId, new Date());
+    const chunk = "一".repeat(4000);
+    for (let i = 0; i < 20; i++) {
+      await session.appendMessage({
+        role: "user",
+        content: [{ type: "text", text: chunk }],
+        timestamp: Date.now(),
+      } as never);
+      await session.appendMessage(fauxAssistantMessage([fauxText(chunk)]));
+    }
+    return { cookie: user.cookie, session };
+  }
+
+  it("压缩后模型侧变短、用户侧 transcript 一条不少", async () => {
+    const sessionId = "33333333-3333-3333-3333-333333333333";
+    const { cookie: longCookie, session } = await seedLongSession(sessionId);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("回答")]),
+    ]);
+    const before = (await entryRepo.listAll(sessionId)).filter((e) => e.type === "message").length;
+
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: longCookie },
+      body: JSON.stringify({ message: "再问一句", sessionId }),
+    });
+    const text = await response.text(); // 读完流，等 harness 跑完
+
+    // 模型侧：compaction 条目已生效，上溯在它那里停住
+    const contextEntries = await session.buildContextEntries();
+    expect(contextEntries.some((entry) => entry.type === "compaction")).toBe(true);
+
+    // compacted 帧的形状也要锁：CompactionOutcome 上还挂着 pureBefore / contextWindow
+    // 这两个只给内部逻辑用的字段，toCompactionFrame 漏投影就会整份漏出去，
+    // 而键集合之外的任何断言都发现不了
+    const compactedFrame = parseSse(text).find(
+      (frame) =>
+        frame.event === "compaction" &&
+        (frame.data as { outcome?: { kind: string } }).outcome?.kind === "compacted",
+    );
+    const compacted = (compactedFrame as { data: { outcome: Record<string, unknown> } }).data.outcome;
+    expect(Object.keys(compacted)).toEqual(["kind", "tokensBefore", "tokensAfter"]);
+
+    // 用户侧：GET /:id/messages 用 listAll 投影，压缩不影响它。
+    // 这一条不许改成 buildContext()——那样压缩后用户刷新会看到历史凭空消失
+    const history = await app.request(`/api/sessions/${sessionId}/messages`, {
+      headers: { Cookie: longCookie },
+    });
+    const body = (await history.json()) as { messages: unknown[] };
+    expect(body.messages.length).toBeGreaterThanOrEqual(before);
+  });
+
+  it("SSE 里有 event: compaction，且 failed 的 outcome 只透出 kind，不泄露 error 的其余字段", async () => {
+    const sessionId = "44444444-4444-4444-4444-444444444444";
+    const { cookie: longCookie } = await seedLongSession(sessionId);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "秘密的内部报错" }),
+      fauxAssistantMessage([fauxText("回答")]),
+    ]);
+
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: longCookie },
+      body: JSON.stringify({ message: "再问一句", sessionId }),
+    });
+    const text = await response.text();
+
+    const frames = parseSse(text);
+    const compactionFrames = frames.filter((frame) => frame.event === "compaction");
+    // 断言完整序列而不是 find()：这一轮的正确形状恰好是「一个 start + 一个 failed」，
+    // 用 find() 的话「压缩失败 → 撞窗口 → 兜底压缩又失败」这种多出一个 failed 帧的
+    // 路径也照样通过，验的就不是这条用例声称的场景了
+    expect(compactionFrames.map((frame) => (frame.data as { phase: string }).phase)).toEqual([
+      "start",
+      "end",
+    ]);
+    const failedFrame = compactionFrames[1];
+    // 压缩失败不阻断本轮：阈值 80% 之外还有余量，本轮该照常回答完，不该以 error 收尾
+    expect(text).not.toContain("event: error");
+    expect(text).toContain("回答");
+
+    /**
+     * (a) 锁住投影后的形状，而不是字符串匹配：Error 的 message/stack 是不可枚举属性，
+     * JSON.stringify 本来就带不出来，`expect(text).not.toContain("秘密的内部报错")`
+     * 在这个数据形状下恒真——不管 toCompactionFrame 有没有做投影都会通过，测不出投影
+     * 有没有做事。而 pi 的 AgentHarnessError 用 `this.code = code` / `this.name = ...`
+     * 赋值，两个都是自有可枚举属性，不投影就会带着 `{"code":"compaction",
+     * "name":"AgentHarnessError"}` 混进 outcome.error 漏进响应体，
+     * 所以断言键集合才是真的在验证投影生效。
+     */
+    const outcome = (failedFrame as { data: { outcome: Record<string, unknown> } }).data.outcome;
+    expect(Object.keys(outcome)).toEqual(["kind"]);
+
+    // (b) 跳过：更真实的泄露场景是 provider 错误带 status/response 这类可枚举属性，
+    // 但这条 failed 只可能来自 harness.compact() 内部抛出的 AgentHarnessError（pi 库层），
+    // faux 只能控制被摘要的那条 assistant 消息内容，控制不了 harness.compact() 抛错时
+    // 携带什么额外字段——要做到这一步得去 mock maybeCompact，而这正是不该做的事。
+  });
+
+  /**
+   * blocked 帧的路由级覆盖。registry 层与前端层各自都有用例，中间这一段（HarnessNotice
+   * → SSE 帧）此前零覆盖：`toCompactionFrame` 对 blocked 是原样透传，将来
+   * HarnessNotice 的 blocked 分支加字段就会静默漏出去。
+   *
+   * 触发方式不用测试专用的后门：第一轮让摘要请求失败会给这个实例设上 60s 冷却
+   * （harness 按 sessionId 常驻，第二轮拿到的是同一个实例），第二轮的压缩就会被
+   * cooldown 守卫挡住，而阈值确实还超着 → 发 blocked。
+   */
+  it("守卫挡住时 SSE 发 blocked 帧，且只带 phase 与 reason", async () => {
+    const sessionId = "55555555-5555-5555-5555-555555555555";
+    const { cookie: longCookie } = await seedLongSession(sessionId);
+    faux.setResponses([
+      // 第一轮：摘要失败 → 设 60s 冷却
+      fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "rate limited" }),
+      fauxAssistantMessage([fauxText("第一轮回答")]),
+      // 第二轮：压缩被冷却挡住，只发生这一次回答
+      fauxAssistantMessage([fauxText("第二轮回答")]),
+    ]);
+    const send = () =>
+      app.request("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: longCookie },
+        body: JSON.stringify({ message: "再问一句", sessionId }),
+      });
+
+    await (await send()).text();
+    const text = await (await send()).text();
+
+    const frames = parseSse(text).filter((frame) => frame.event === "compaction");
+    expect(frames).toHaveLength(1);
+    // 没有 start：守卫在 onPhase 回调之前就 return 了，被挡住的压缩压根没开始
+    expect(frames[0]?.data).toEqual({ phase: "blocked", reason: "cooldown" });
+  });
+
+  it("低于阈值的普通请求没有任何 compaction 帧", async () => {
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const text = await response.text();
+
+    expect(text).not.toContain("event: compaction");
+  });
+
+  /** 前端 `/compact` 与 `/context` 两条斜杠命令的服务端契约 */
+  describe("手动压缩命令", () => {
+    function postCompact(sessionId: string, withCookie: string) {
+      return app.request("/api/chat/compact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: withCookie },
+        body: JSON.stringify({ sessionId }),
+      });
+    }
+
+    it("POST /api/chat/compact 压缩成功，outcome 只透出三个字段", async () => {
+      const sessionId = "66666666-6666-6666-6666-666666666666";
+      const { cookie: longCookie, session } = await seedLongSession(sessionId);
+      // 只需要摘要那一次调用：手动压缩不 prompt
+      faux.setResponses([fauxAssistantMessage([fauxText("## Goal\n摘要")])]);
+
+      const response = await postCompact(sessionId, longCookie);
+      expect(response.status).toBe(200);
+
+      // 与 SSE 帧共用 projectOutcome，同样只能断言键集合：pureBefore / contextWindow
+      // 漏投影时任何数值断言都发现不了
+      const body = (await response.json()) as { outcome: Record<string, unknown> };
+      expect(Object.keys(body.outcome)).toEqual(["kind", "tokensBefore", "tokensAfter"]);
+      expect(body.outcome.kind).toBe("compacted");
+
+      const contextEntries = await session.buildContextEntries();
+      expect(contextEntries.some((entry) => entry.type === "compaction")).toBe(true);
+    });
+
+    it("摘要失败时 outcome 只剩 kind，不泄露 error", async () => {
+      const sessionId = "77777777-7777-7777-7777-777777777777";
+      const { cookie: longCookie } = await seedLongSession(sessionId);
+      faux.setResponses([
+        fauxAssistantMessage([fauxText("")], { stopReason: "error", errorMessage: "秘密的内部报错" }),
+      ]);
+
+      const response = await postCompact(sessionId, longCookie);
+
+      // 压缩失败不是请求失败：用户要看到「压不动」这个结果，而不是一个 5xx
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { outcome: Record<string, unknown> };
+      expect(Object.keys(body.outcome)).toEqual(["kind"]);
+      expect(body.outcome.kind).toBe("failed");
+    });
+
+    it("正在生成回答时返回 409", async () => {
+      useFaux(CHUNKED);
+      faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+
+      const response = await postChat({ message: "讲个长故事", sessionId: SESSION_ID });
+      // 与 abort 用例同理：连接要持续读干，否则背压会卡住 harness
+      const { firstByte, done } = drain(response);
+      await firstByte;
+
+      const conflict = await postCompact(SESSION_ID, cookie);
+      expect(conflict.status).toBe(409);
+
+      await done;
+    });
+
+    it("压别人的会话返回 403", async () => {
+      const otherCookie = await registerAndLogin("other-compact@example.com");
+      const response = await postCompact(SESSION_ID, otherCookie);
+
+      expect(response.status).toBe(403);
+    });
+
+    it("GET /api/chat/context 报告当前占用与阈值", async () => {
+      const sessionId = "88888888-8888-8888-8888-888888888888";
+      const { cookie: longCookie } = await seedLongSession(sessionId);
+
+      const response = await app.request(`/api/chat/context?sessionId=${sessionId}`, {
+        headers: { Cookie: longCookie },
+      });
+      expect(response.status).toBe(200);
+
+      // 阈值 = min(48000 × 0.8, 120000)，两个数都由 fixture 与 env 默认值定死
+      const usage = (await response.json()) as Record<string, number>;
+      expect(usage).toEqual({
+        tokens: expect.any(Number),
+        threshold: 38_400,
+        contextWindow: 48_000,
+      });
+      // fixture 本来就是为「超阈值」造的，这一条同时守住 tokens 不是 0
+      expect(usage.tokens).toBeGreaterThan(usage.threshold as number);
+    });
+
+    it("看别人的会话占用返回 403", async () => {
+      const otherCookie = await registerAndLogin("other-context@example.com");
+      const response = await app.request(`/api/chat/context?sessionId=${SESSION_ID}`, {
+        headers: { Cookie: otherCookie },
+      });
+
+      expect(response.status).toBe(403);
+    });
+
+    it("sessionId 不是 UUID 时两个端点都返回 400", async () => {
+      const compact = await postCompact("not-a-uuid", cookie);
+      const context = await app.request("/api/chat/context?sessionId=not-a-uuid", {
+        headers: { Cookie: cookie },
+      });
+
+      expect(compact.status).toBe(400);
+      expect(context.status).toBe(400);
+    });
+  });
+});

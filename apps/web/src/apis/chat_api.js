@@ -101,3 +101,36 @@ export async function abortChat(sessionId) {
     throw new Error(`停止失败（HTTP ${response.status}）`)
   }
 }
+
+/** 读出后端的错误文案；没有就用兜底文案。403 / 409 都带着用户该看的说明 */
+async function readError(response, fallback) {
+  if (response.status === 401) {
+    throw handleUnauthorized()
+  }
+  const body = await response.json().catch(() => null)
+  return new Error(body?.error?.message || `${fallback}（HTTP ${response.status}）`)
+}
+
+/**
+ * 手动压缩上下文（`/compact` 命令）。
+ *
+ * 不是 SSE：压缩只有一个结果。返回投影后的 CompactionOutcome，
+ * 形状与 SSE compaction 帧里的 outcome 完全一致。
+ */
+export async function compactChat(sessionId) {
+  const response = await fetch('/api/chat/compact', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId })
+  })
+  if (!response.ok) throw await readError(response, '压缩失败')
+  const body = await response.json()
+  return body.outcome
+}
+
+/** 当前上下文占用（`/context` 命令）→ { tokens, threshold, contextWindow } */
+export async function fetchContextUsage(sessionId) {
+  const response = await fetch(`/api/chat/context?sessionId=${encodeURIComponent(sessionId)}`)
+  if (!response.ok) throw await readError(response, '读取上下文占用失败')
+  return response.json()
+}

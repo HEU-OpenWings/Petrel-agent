@@ -436,10 +436,6 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
   剩下的是 SSE 的 `persisted` 事件与前端断线重连——两者要一起做，单独加事件没有消费方。
   **地基已就位**：`SessionStorage.getEntries({ afterEntrySeq, limit })` 的游标就是为增量推送
   准备的，而且现在「连接断开 agent 继续跑完」已经成立，重连只需要补齐 `afterEntrySeq` 之后的条目
-- **上下文管理（下一轮）**：`harness.compact()` 只能手动调且硬编码 `DEFAULT_COMPACTION_SETTINGS`、
-  要求 `phase === "idle"`，所以自动触发要自己写（在 `prompt()` 之前判断），自定义阈值只能通过
-  `session_before_compact` hook 接管摘要生成。用量数据来自 `estimateContextTokens` 与
-  `getSessionStats()`
 - **记忆系统（后续）**：pi 没有跨会话记忆。`custom` / `custom_message` 条目类型可以把记忆写进
   会话树，`before_agent_start` 与 `context` hook 可在每轮注入；archival 检索走 pgvector
   （compose 里已是 `pgvector/pgvector:pg17`）。业界共识是「工作记忆是上下文预算问题、
@@ -450,6 +446,47 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
 - **HEU-8 / HEU-14 人工审批**：pi 无 LangGraph 的图级 `interrupt`，只能在工具边界暂停，
   改用 `beforeToolCall` preflight 挂起 + `POST /api/chat/:id/approve` 恢复。
   动工前先审计 v0.4 的 HITL 触发点是否都在工具边界
+
+### 子项目 B：上下文自动压缩（已实施）
+
+设计：[2026-08-05-auto-compaction-design.md](superpowers/specs/2026-08-05-auto-compaction-design.md) ·
+计划：[2026-08-05-auto-compaction.md](superpowers/plans/2026-08-05-auto-compaction.md)
+
+时机是 (a) pre-prompt 判阈值 + (d) 撞窗口后被动兜底。阈值 =
+`min(模型 contextWindow × COMPACTION_THRESHOLD_RATIO, COMPACTION_ABSOLUTE_CAP)`，
+默认 `0.8 / 120000`，即 1M 窗口的默认模型 12 万、64k（65536）的备选模型 52.4k。
+
+与设计文档的实施差异（**代码为准，spec 未回改**）：
+
+- **压缩标记不进 `messages`**。spec §9.2 写的是「往 `messages` 里插一条标记」，实际用
+  独立的 `compactions` 数组（`{ id, atIndex, tokensBefore, tokensAfter }`）+ 渲染时按
+  `atIndex` 插入。照 spec 字面做会污染 transcript 形状，破坏「`messages` 只能是 pi 的
+  `AgentMessage`」这条约束。
+- **`CompactionOutcome` 没有 `pureAfter`**。spec §9.1 的类型草图里有，实现里
+  `tokensAfter` 本身就是纯字符估算（压缩后**只能**纯估算，理由见该字段注释），
+  再留一个同值字段没有意义。ineffective 守卫用 `pureBefore` 与它比。
+- **`COMPACTION_ENABLED=false` 时 (d) 兜底也不压**。计划里的条件是
+  `!enabled && !force`（force 穿透总开关），实际改成总开关优先：关掉之后不再有
+  摘要模型调用、也不再往会话树写 compaction 条目，撞窗口时只提示「自动压缩已关闭」。
+
+遗留待办（来自设计文档 §12）：
+
+- [ ] **摘要正文可展开**——spec §9.2 承诺前端 `apply()` 处理 `session_compact`、
+  分隔线可展开看摘要，Task 12 未实现（现在只显示前后 token 数）。要做的话前端要
+  多认一种 AgentEvent。
+
+- [ ] **固定开销估算**——阈值估算不含 system prompt 与工具 schema（它们不在
+  `buildContext().messages` 里）。当前 1 个工具误差可忽略，**必须在子项目 C
+  （tool/skill 管理）落地时一起补**，否则工具一多就系统性漏判。
+- [ ] **压缩可中断**——pi 的 `compact()` 内部 signal 永不 abort，现在点「停止」
+  只能保证压完不再跑新一轮。要能真中断得接管 `session_before_compact` hook。
+- [ ] **(d) 的确定性降级**——摘要模型限流时压缩帮不上忙。可用
+  `Session.appendCompaction()` 写一条机械拼出的摘要（不需要接管 hook），
+  但要连并发保护一起接。
+- [ ] **mid-turn 压缩**——`harness.compact()` 要求 `phase === "idle"`，
+  单轮内 tool result 顶爆窗口时只能落到 (d)。
+- [ ] **`keepRecentTokens` 可配**——现在沿用 pi 硬编码的 20000。
+  升级触发条件：埋点显示 64k 模型上连续两次压缩各回收不足 10%。
 
 ### M3 知识库
 MinerU 客户端与解析兜底（HEU-15）· jobs 队列（HEU-16）· markdown 结构感知分块（HEU-17）·
@@ -469,6 +506,11 @@ Dashboard SQL 聚合（HEU-28）· 评测 runner（HEU-29）· 数据迁移（HE
   `errorMessage`（`stopReason: "error"`）。任何消费方都必须处理这种「成功流式但内容为空」的情况
 - `text_start` / `toolcall_delta` 等是 pi-ai 层的 `assistantMessageEvent` 子类型，嵌在
   `message_update` 里，不是顶层 `AgentEvent`
+- **订阅回调被串行 `await`、且没有超时**，所以回调里绝不能做网络 I/O（`writeSSE` 遇上
+  不读流的客户端会因背压永不 resolve，卡住整个 harness）。见 CLAUDE.md 硬约束 5
+- **压缩相关的四条**（`compact()` 要求 idle + 硬编码 settings、`phase` 私有、
+  compaction 期 `followUp()` 不抛却静默丢消息、`getSessionStats()` 不能当阈值信号）
+  见 CLAUDE.md 硬约束 7/8 与「踩过的坑」17/18
 
 ### 凭据解析
 模型 API key 由 pi-ai 的 auth 机制从 `SILICONFLOW_API_KEY` 解析，这是「`@petrel/config` 是唯一
@@ -507,10 +549,21 @@ Dashboard SQL 聚合（HEU-28）· 评测 runner（HEU-29）· 数据迁移（HE
 
 1. **pi 生态成熟度**：包名近期迁移过，`pi-server` 标注 experimental。→ 锁死精确版本、
    只依赖 `pi-ai` 与 `pi-agent-core`、把 pi 的接线收在 `agent` 一层内。
-   **新增一条具体风险**：本轮依赖了四个从 dist 源码核出来、官方文档没写或写错的行为
-   （`appendEntry` 推进 leaf 指针、`Usage` 的字段名、`emitAny` 串行 await 回调、
-   `compact()` 硬编码 settings + `phase` 私有）。**升级 pi 版本时必须重新核对这四条**，
-   它们出错的方式都是静默的（上下文为空、统计全零、harness 卡死）。
+   **新增一条具体风险**：本轮依赖了一批从 dist 源码核出来、官方文档没写或写错的行为。
+   **升级 pi 版本时必须重新核对下面每一条**，它们出错的方式都是静默的（上下文为空、
+   统计全零、harness 卡死、消息消失、白花模型调用）：
+   1. `appendEntry` 推进 leaf 指针
+   2. `Usage` 的字段名
+   3. `emitAny` / `emitOwn` 串行 await 订阅回调，且无超时
+   4. `compact()` 硬编码 `DEFAULT_COMPACTION_SETTINGS`、`phase` 是私有字段无 getter
+   5. compaction 期间 `prompt()` 抛 `busy` 而 `followUp()` **不抛**（消息静默丢失）
+   6. `keepRecentTokens` 硬编码 20000，且小会话时 `prepareCompaction` 不返回
+      `undefined`——照样发一次摘要请求、写一条 compaction 条目
+   7. `getSessionStats()` 是全会话累计，压缩后继续涨，**不能当上下文阈值信号**
+   8. `estimateContextTokens()` 跳过 `stopReason === "error"` 的 assistant，
+      于是压缩后它采信的是 retainedTail 里那条压缩前的旧 usage
+   9. `isNothingToCompact()` 靠 `error.message === "Nothing to compact"` 精确匹配
+      （pi 的 code `"compaction"` 同时覆盖真正的摘要失败，分不开）
 2. **HITL 语义降级**：LangGraph 的 `interrupt` 是图级中断，pi 只能在工具边界暂停。
    → HEU-8 先审计触发点，存在无法映射的场景就升级为阻塞项。
 3. **pgvector 的规模上限**：百万级 chunk 以上不如 Milvus。→ 当前单机场景足够，

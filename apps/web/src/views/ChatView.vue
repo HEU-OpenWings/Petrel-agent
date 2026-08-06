@@ -7,14 +7,38 @@
           <p class="hint">试试「现在几点」，会触发一次工具调用。</p>
         </div>
 
-        <MessageItem
-          v-for="(message, index) in messages"
-          :key="index"
-          :message="message"
-          :tool-calls="toolCalls"
-          :editor-id="index"
-          :streaming="running && index === messages.length - 1 && message.role === 'assistant'"
+        <template v-for="(message, index) in messages" :key="index">
+          <!-- 压缩发生在新一轮的 prompt 之前，所以分隔线插在那一刻的消息下标之前 -->
+          <CompactionDivider
+            v-for="mark in compactions.filter((item) => item.atIndex === index)"
+            :key="mark.id"
+            :tokens-before="mark.tokensBefore"
+            :tokens-after="mark.tokensAfter"
+          />
+          <MessageItem
+            :message="message"
+            :tool-calls="toolCalls"
+            :editor-id="index"
+            :streaming="running && index === messages.length - 1 && message.role === 'assistant'"
+          />
+        </template>
+
+        <!-- atIndex 等于当前长度的标记还没有对应消息（压缩刚结束、回答还没开始） -->
+        <CompactionDivider
+          v-for="mark in compactions.filter((item) => item.atIndex >= messages.length)"
+          :key="mark.id"
+          :tokens-before="mark.tokensBefore"
+          :tokens-after="mark.tokensAfter"
         />
+
+        <div v-if="compacting" class="compacting" role="status">正在压缩上下文…</div>
+
+        <!-- 压缩被守卫挡住但阈值确实超了。与 error 分开渲染：它不是本轮的失败，
+             也不该被下一轮的 agent_start 或真错误盖掉 -->
+        <div v-if="warning" class="warning" role="status">{{ warning }}</div>
+
+        <!-- /compact 与 /context 的回执。中性陈述，不与 warning 抢配色 -->
+        <div v-if="notice" class="notice" role="status">{{ notice }}</div>
 
         <div v-if="error" class="error">{{ error }}</div>
       </div>
@@ -65,8 +89,10 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Slash } from 'lucide-vue-next'
 import CommandPalette from '@/components/chat/CommandPalette.vue'
+import CompactionDivider from '@/components/chat/CompactionDivider.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
+import { fetchContextUsage } from '@/apis/chat_api'
 import { fetchMessages } from '@/apis/session_api'
 import { useAgentStream } from '@/composables/useAgentStream'
 import { useCommandPalette } from '@/composables/useCommandPalette'
@@ -75,8 +101,22 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-const { messages, toolCalls, running, error, send, stop, disconnect, reset, loadHistory } =
-  useAgentStream()
+const {
+  messages,
+  toolCalls,
+  running,
+  error,
+  warning,
+  notice,
+  compacting,
+  compactions,
+  compactNow,
+  send,
+  stop,
+  disconnect,
+  reset,
+  loadHistory
+} = useAgentStream()
 
 const layout = useLayoutStore()
 const preferences = usePreferencesStore()
@@ -150,8 +190,40 @@ function newChat() {
   sessionStore.startNew()
 }
 
+/** 12345 → 12.3k。命令回执是粗略量度，精确到个位没有意义 */
+function formatTokens(value) {
+  return value < 1000 ? `${Math.round(value)}` : `${(value / 1000).toFixed(1)}k`
+}
+
+// 手动压缩。running 的拦截后端也做（409），这里先挡一次是为了给出理由：
+// compactNow() 在生成中只是静默返回，用户会以为命令没生效
+function runCompact() {
+  const sessionId = sessionStore.currentId
+  if (!sessionId) return
+  if (running.value) {
+    notice.value = '正在生成回答，先停止本轮再压缩'
+    return
+  }
+  void compactNow(sessionId)
+}
+
+async function runContext() {
+  const sessionId = sessionStore.currentId
+  if (!sessionId) return
+  try {
+    const usage = await fetchContextUsage(sessionId)
+    notice.value =
+      `上下文约 ${formatTokens(usage.tokens)} token，` +
+      `压缩阈值 ${formatTokens(usage.threshold)}，模型窗口 ${formatTokens(usage.contextWindow)}`
+  } catch (err) {
+    notice.value = err.message
+  }
+}
+
 const palette = useCommandPalette([
   { name: 'new', description: '新对话', run: newChat },
+  { name: 'compact', description: '压缩上下文', run: runCompact },
+  { name: 'context', description: '查看上下文占用', run: runContext },
   { name: 'workspace', description: '开合右栏', run: () => layout.toggleRight() },
   { name: 'sidebar', description: '开合左栏', run: () => layout.toggleLeft() }
 ])
@@ -310,6 +382,34 @@ watch(
   color: var(--color-error-700);
   font-size: 13px;
   word-break: break-word;
+}
+
+// 与 .error 同一套配色变量，深色模式下这些 token 会被 base.dark.css 覆盖；
+// 写死的 rgba(0,0,0,…) 在暗色底上近乎不可读
+.warning {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-warning-50);
+  color: var(--color-warning-700);
+  font-size: 13px;
+  word-break: break-word;
+}
+
+// 命令回执：比 warning 弱一档，与 .compacting 同为居中的次要信息
+.notice {
+  margin: 12px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  word-break: break-word;
+}
+
+.compacting {
+  margin: 12px 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-align: center;
 }
 
 .composer-wrap {

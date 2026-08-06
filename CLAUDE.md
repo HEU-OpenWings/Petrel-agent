@@ -76,9 +76,20 @@ TypeScript ESM monorepo（Node 24 + pnpm workspace），agent 内核用
 `POST /api/chat`，请求体 `{ message, sessionId, systemPrompt? }`，响应 SSE：
 
 ```
-event: agent   data: <pi 的 AgentEvent JSON，原样透传>
-event: error   data: { message }
+event: agent      data: <pi 的 AgentEvent JSON，原样透传>
+event: error      data: { message }
+event: compaction data: { phase: "start" }
+                      | { phase: "end", outcome: <投影后的 CompactionOutcome> }
+                      | { phase: "blocked", reason }
 ```
+
+`compaction` 帧是自动压缩的可见信号（pi 只在压缩**结束**时发 `session_compact`，
+「开始 / 失败 / 被守卫挡住」它不给）。`outcome` 必须**投影**再发，不能原样透传：
+`failed` 只留 `kind`（原始 error 可能带限流阈值、区域信息甚至 key 片段），
+`compacted` 只留 `kind` / `tokensBefore` / `tokensAfter`（`pureBefore`、`contextWindow`
+是内部字段）。投影在 `routes/chat.ts` 的 `toCompactionFrame`，形状由 `chat.test.ts`
+按键集合锁住。`blocked` 表示「压缩被抗抖动守卫挡住、但上下文确实超阈值」，
+前端必须显示告警且**不能存进 `error`**——它紧跟着就是 `agent_start`，会被一并清掉。
 
 前端 `apis/chat_api.js` 用 `fetch` + `ReadableStream` 读流（需要 POST，不能用 `EventSource`），
 `composables/useAgentStream.js` 把 AgentEvent 归约为 `messages`（直接沿用 pi 的 `AgentMessage`，
@@ -87,6 +98,14 @@ event: error   data: { message }
 `sessionId` 由**前端生成**（`crypto.randomUUID()`）、后端 upsert，所以 SSE 不需要回传新会话 id。
 会话 CRUD 在 `/api/sessions`：`GET /` 列表 · `GET /:id/messages` 历史 · `PATCH /:id` 重命名 ·
 `DELETE /:id` 删除。
+
+前端的斜杠命令（`views/ChatView.vue` 里注册，机制在 `composables/useCommandPalette.js`）中，
+`/compact` 与 `/context` 走两条非 SSE 的端点：`POST /api/chat/compact` 手动压缩
+（`force: true`，绕过阈值与抗抖动守卫，但 `COMPACTION_ENABLED=false` 依然优先，
+返回 `{ outcome }`，与 SSE 帧共用 `projectOutcome` 这一份投影；生成中返回 **409**，
+因为 pi 的 `compact()` 要求 idle）与 `GET /api/chat/context?sessionId=` 报告
+`{ tokens, threshold, contextWindow }`。手动压缩与自动压缩共用 `Entry.compaction`
+这条互斥 promise——两者撞在一起后者必抛 busy。
 
 **harness 按 `sessionId` 常驻**（`services/harness-registry.ts`，进程内 Map + idle TTL 5 分钟 +
 容量上限 200，到顶且无空闲可淘汰则 503）。由此确立三条语义：
@@ -148,7 +167,7 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
    （`agent-harness.js`）。所以**订阅回调里绝不能做网络 I/O**——`await stream.writeSSE(...)`
    在客户端不读流时会因背压永不 resolve，直接卡住整个 harness。`routes/chat.ts` 因此把回调
    改成同步入队（`http/sse-queue.ts`），真正的写出交给独立的 pump 循环，队列溢出只断开
-   那一个连接。这条是本轮最贵的教训，见「踩过的坑」第 14 条。
+   那一个连接。这条是本轮最贵的教训，见「踩过的坑」第 15 条。
 6. **`AgentHarness` 没有 `setSystemPrompt()`**（只有 `setModel` / `setTools` / `setResources` /
    `setThinkingLevel` / `setStreamOptions`）。常驻实例要在每个新 run 使用最新提示，正确挂点是
    `before_agent_start` hook 的 `BeforeAgentStartResult.systemPrompt`，不是重建实例；
@@ -157,6 +176,15 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
    `phase === "idle"`**。文档里说的「超阈值自动触发」与 `settings.json` 都是 pi CLI 层的实现，
    harness 里没有。另外 **`phase` 是私有字段没有 getter**，要判断是否在跑只能自己订阅
    `agent_start` / `settled` 维护标记（`harness-registry.ts` 就是这么做的）。
+8. **`phase === "compaction"` 时 `prompt()` 抛 `busy`，而 `followUp()` 不抛**——
+   它只往队列 push，此时没有 run 会消费，`waitForIdle()` await 的 `runPromise`
+   只在 `prompt()` / `skill()` / `promptFromTemplate()` 里创建，而 run 收尾时
+   （`finishRunPromise`）会把它置回 `undefined`——压缩期间 `await` 的其实是 `undefined`，
+   立即 resolve。
+   于是 `send()` 立刻返回、SSE 关流、**用户这条消息永久消失且没有任何报错**。
+   所以压缩的互斥必须由 `harness-registry` 自己做（`Entry.compaction` 这条 promise），
+   不能指望 harness。另外 `compact()` 内部的 signal 是 `new AbortController().signal`，
+   **pi 的压缩不可取消**，`abort()` 只能保证「压完不再发起新一轮」。
 
 模型 API key 由 pi-ai 的 auth 机制从 `DEEPSEEK_API_KEY` / `SILICONFLOW_API_KEY` 解析，这是
 「`@petrel/config` 是唯一读 env 的位置」的**唯一例外**。
@@ -215,6 +243,25 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 16. **在主仓库根跑测试时 `vitest` 会把 `.claude/worktrees/` 里的副本一起跑掉**，报一批与当前
     代码无关的失败。加 `--exclude '**/.claude/**'`。在 worktree 里面跑不受影响
     （那里没有嵌套的 `.claude/worktrees/`）。
+17. **`getSessionStats()` 不能当上下文阈值信号**：它是**全会话累计**（逐条 assistant /
+    compaction / branch_summary 的 usage 相加），压缩后继续涨、永不回落。用它做阈值
+    等于「聊够久就无条件压缩」。当前上下文有多大只能问
+    `estimateContextTokens(await session.buildContext())`，而且那个数**不含 system prompt
+    与 tool schema**（它们不在 `buildContext().messages` 里）。
+18. **pi 硬编码 `keepRecentTokens: 20000`，所以低于约 2 万 token 的会话压不动**，
+    而且后果比「压了但没切掉」更糟：`prepareCompaction` 此时不返回 `undefined`，
+    于是 `compact()` 照样发一次摘要请求、拿回一段基于空对话的废摘要、再写入一条
+    compaction 条目——白花一次模型调用。生产上走不到（阈值远高于 20k），
+    但写压缩测试时必须造 8 万字符以上的会话才能看到真实效果。
+19. **`estimateContextTokens()` 在压缩后会采信一个过期的 usage**：它取「最后一条
+    **非 error** assistant 的真实 usage + 其后消息的字符估算」，而压缩后 retainedTail
+    里留着的正是压缩前那条 assistant——它的 usage 反映的是压缩前的完整上下文。
+    所以「压缩后有多大」只能纯字符估算（`CompactionOutcome.tokensAfter` 就是），
+    而阈值判定要先比一次时间戳（`estimateForDecision`）：提供 usage 的那条消息若早于
+    最近一条 compaction 条目，整个 usage 分量作废。这个坑本轮踩了两次——第二次是
+    `tokensAfter` 拿去判「压完还超不超窗口」，恒真，导致 (d) 兜底的两条用户文案互换。
+    **测试里 `fauxAssistantMessage` 的 usage 全 0，退回纯估算，所以断言 usage-based
+    数值的用例必须自己塞一条带真实 usage 的消息**，否则恒真。
 
 ## 重构现状
 

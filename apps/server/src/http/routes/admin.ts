@@ -52,7 +52,7 @@ export const admin = new Hono<AppEnv>()
     // 用户已经禁用成功了：清内存实例是收尾，不是这次请求成功与否的一部分。
     // 每个 evict 单独 catch，不用 Promise.all 直接包——否则一个失败就让整批
     // 判定为 reject，其余原本已经并发跑完的 evict 也被连累报错。
-    // evict() 内部先摘除 Map 条目再 abort，抛错也不代表实例还留在 registry 里。
+    // evict() 先置 retired 再摘除 Map 条目，抛错也不代表实例还会继续跑。
     if (disabled) {
       const owned = await createSessionRepository(getDb()).listByUser(id);
       await Promise.all(
