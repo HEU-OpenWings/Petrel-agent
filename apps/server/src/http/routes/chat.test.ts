@@ -1,6 +1,10 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { type CreateHarnessOptions, DEFAULT_SYSTEM_PROMPT } from "@petrel/agent";
-import { createEntryRepository } from "@petrel/database";
+import {
+  createEntryRepository,
+  createQuotaLimitsRepository,
+  createTokenUsageRepository,
+} from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService } from "../../services/session.ts";
@@ -20,6 +24,8 @@ const state = vi.hoisted(() => ({
   harnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
   /** 记录路由实际传给 createHarness 的选项，用来断言 modelId 有没有透传 */
   seenHarnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
+  /** HEU-40 配额测试开关：默认沿用真实 env（enforcement=false，不拦截） */
+  quotaEnforcement: false,
 }));
 
 /**
@@ -47,6 +53,23 @@ vi.mock("@petrel/database", async (importOriginal) => {
       const repo = actual.createSessionRepository(...args);
       if (!state.sessionRepoBroken) return repo;
       return { ...repo, upsert: () => Promise.reject(new Error("database unavailable")) };
+    },
+  };
+});
+
+/**
+ * HEU-40：mock @petrel/config 透传真实 env，只让 quotaEnforcement 可切换。
+ * 配额测试用例开它测拦截；其余用例默认 false 不拦截。
+ */
+vi.mock("@petrel/config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@petrel/config")>();
+  return {
+    ...actual,
+    env: {
+      ...actual.env,
+      get quotaEnforcement() {
+        return state.quotaEnforcement;
+      },
     },
   };
 });
@@ -123,6 +146,7 @@ beforeEach(async () => {
   state.dbBroken = false;
   state.sessionRepoBroken = false;
   state.harnessOptions = undefined;
+  state.quotaEnforcement = false;
   useFaux();
   await reset();
   __resetRegistry();
@@ -441,21 +465,39 @@ describe("POST /api/chat 会话持久化", () => {
   /**
    * 上面那条覆盖的是「身份都验不出来」，这条才是 registry.acquire 的降级分支：
    * 用户已经登录（鉴权的用户查询正常），但会话仓储查不动。
-   * 这时对话必须照常进行，只是这一轮不落库——能用但记不住，好过直接不能用。
+   *
+   * HEU-40 的 fail-closed：降级到内存会话（persistence="memory"）时 usage 不落库。
+   * 该行为**受 QUOTA_ENFORCEMENT 开关控制**（review 🟡#7）：
+   * - enforcement 开启：503 不调用模型（不能让用户通过触发降级绕过配额计量）；
+   * - enforcement 关闭：放行，恢复配额引入前的「能聊不落库」——开关才是真正的 kill switch。
+   * 两条用例共同覆盖 flag on/off × dependency failed 矩阵。
    */
-  it("已登录但会话仓储查库失败时照常流式输出，只是这一轮不落库", async () => {
+  it("enforcement 开启时，会话仓储查库失败 → fail-closed 503，不调用模型", async () => {
+    state.quotaEnforcement = true;
     state.sessionRepoBroken = true;
-    faux.setResponses([fauxAssistantMessage([fauxText("降级也能答")])]);
+    faux.setResponses([fauxAssistantMessage([fauxText("降级也该被挡")])]);
 
     const response = await postChat({ message: "你好", sessionId: SESSION_ID });
     const body = await readAll(response);
 
-    // upsert 抛错 → 降级成内存会话，SSE 照常输出
-    expect(response.status).toBe(200);
-    expect(body).toContain("降级也能答");
-    expect(body).not.toContain("event: error");
-    // 但这一轮什么都没落库
+    // upsert 抛错 → 降级成内存会话 → chat 检测 persistence=memory → 503，模型未启动
+    expect(response.status).toBe(503);
+    expect(body).not.toContain("降级也该被挡");
+    // 没有调用模型，也没有落库
     expect(await storedRoles()).toEqual([]);
+  });
+
+  it("enforcement 关闭时，会话仓储查库失败 → 放行（kill switch 可回滚旧行为）", async () => {
+    state.quotaEnforcement = false;
+    state.sessionRepoBroken = true;
+    faux.setResponses([fauxAssistantMessage([fauxText("降级也照常回答")])]);
+
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const body = await readAll(response);
+
+    // enforcement=false 是真正的 kill switch：降级也放行，恢复配额引入前的可用性
+    expect(response.status).toBe(200);
+    expect(body).toContain("降级也照常回答");
   });
 
   /**
@@ -663,7 +705,7 @@ describe("自动压缩", () => {
     const user = await registerUser("long@x.io");
     await sessionRepo.upsert({ id: sessionId, userId: user.id, title: "长会话" });
     const { createPgSession } = await import("@petrel/agent");
-    const session = createPgSession(db as never, sessionId, new Date());
+    const session = createPgSession(db as never, sessionId, new Date(), user.id);
     const chunk = "一".repeat(4000);
     for (let i = 0; i < 20; i++) {
       await session.appendMessage({
@@ -910,5 +952,88 @@ describe("自动压缩", () => {
       expect(compact.status).toBe(400);
       expect(context.status).toBe(400);
     });
+  });
+});
+
+describe("POST /api/chat HEU-40 配额拦截", () => {
+  /** 给当前登录用户插一条超额用量事实，模拟「本窗口已用满」 */
+  async function fillQuota(tokens: number) {
+    const user = await (await import("@petrel/database"))
+      .createUserRepository(state.db!)
+      .findByEmail("a@x.io");
+    if (!user) throw new Error("测试用户未找到");
+    const usageRepo = createTokenUsageRepository(state.db!);
+    await usageRepo.insertFact({
+      entryId: crypto.randomUUID(),
+      userId: user.id,
+      sessionId: SESSION_ID,
+      sourceType: "message",
+      inputTokens: 0,
+      outputTokens: tokens,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: tokens,
+      costTotal: "1.00",
+    });
+  }
+
+  it("enforcement 关闭时即使超额也放行（只计量不拦截）", async () => {
+    state.quotaEnforcement = false;
+    await fillQuota(10_000_000);
+    faux.setResponses([fauxAssistantMessage([fauxText("正常回答")])]);
+
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const body = await readAll(response);
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("正常回答");
+  });
+
+  it("enforcement 开启且超额时返回 429，且不调用模型", async () => {
+    state.quotaEnforcement = true;
+    await fillQuota(10_000_000); // 远超默认 1_000_000
+    faux.setResponses([fauxAssistantMessage([fauxText("不该出现")])]);
+
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    // 429 是前置拒绝，body 不是 SSE——直接读 json 断言，不要先 readAll（会耗尽 body）
+    expect(response.status).toBe(429);
+    const payload = (await response.json()) as { error: { message: string } };
+    expect(payload.error.message).toContain("配额");
+    // 没有调用模型，session_entries 不该有 assistant 条目（acquire 可能建了空 session 行，但无消息）
+    expect(await storedRoles()).toEqual([]);
+  });
+
+  it("429 拒绝后释放了 registry handle：同会话下一个请求正常进流", async () => {
+    // 如果配额拒绝路径忘了 handle.release()，refCount 会泄漏，registry 可能拒绝后续请求
+    state.quotaEnforcement = true;
+    await fillQuota(10_000_000);
+    faux.setResponses([fauxAssistantMessage([fauxText("不该出现")])]);
+    const blocked = await postChat({ message: "你好", sessionId: SESSION_ID });
+    await readAll(blocked);
+    expect(blocked.status).toBe(429);
+
+    // 关掉 enforcement 让下一个请求能通过配额检查；若 handle 没 release，这里会卡/503
+    state.quotaEnforcement = false;
+    faux.setResponses([fauxAssistantMessage([fauxText("恢复后回答")])]);
+    const ok = await postChat({ message: "再问", sessionId: SESSION_ID });
+    const body = await readAll(ok);
+    expect(ok.status).toBe(200);
+    expect(body).toContain("恢复后回答");
+  });
+
+  it("配额覆盖为 0 时普通用户被拦（429）；admin 豁免由 quota.test.ts 覆盖", async () => {
+    state.quotaEnforcement = true;
+    // 当前测试用户 a@x.io 不是 admin（ADMIN_EMAILS 未配），无法在 e2e 里测 admin 豁免。
+    // 这里给该用户设额度覆盖为 0，验证普通用户被拦；admin 豁免的单元覆盖在 quota.test.ts。
+    const user = await (await import("@petrel/database"))
+      .createUserRepository(state.db!)
+      .findByEmail("a@x.io");
+    if (!user) throw new Error("测试用户未找到");
+    await createQuotaLimitsRepository(state.db!).upsertLimit(user.id, 0);
+
+    faux.setResponses([fauxAssistantMessage([fauxText("不该出现")])]);
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    await readAll(response);
+    expect(response.status).toBe(429);
   });
 });

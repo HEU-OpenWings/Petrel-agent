@@ -1,0 +1,127 @@
+import { env } from "@petrel/config";
+import {
+  createQuotaLimitsRepository,
+  createTokenUsageRepository,
+  type Database,
+  getDb,
+  type PublicUser,
+} from "@petrel/database";
+import { logger } from "@petrel/logger";
+
+/**
+ * HEU-40 配额错误。route 层翻译成 HTTP：
+ * - "exceeded" → 429（配额用尽）
+ * - "unavailable" → 503（配额查询失败，fail-closed 不调用模型）
+ *
+ * 与 services/auth.ts 的 AuthError 同模式：service 只表达「哪一种失败」。
+ */
+export class QuotaError extends Error {
+  constructor(
+    message: string,
+    readonly kind: "exceeded" | "unavailable",
+    /** 429 时距下次可重试的秒数；算不出则 undefined（省略 Retry-After，不返回伪值） */
+    readonly retryAfterSeconds?: number,
+  ) {
+    super(message);
+    this.name = "QuotaError";
+  }
+}
+
+/**
+ * 滚动窗口的长度（毫秒）。每次现算而非模块级常量：env.quotaWindowHours 在测试里
+ * 通过 getter 动态返回（见 quota.test.ts 的 mock），模块加载时求值会固化成当时的值，
+ * 测试改 windowHours 不会生效——这正是 review 🔴#1「默认值遮蔽」的一个变体。
+ * `since` 与 `secondsUntilUnderLimit` 的过期计算必须用同一个数，否则 Retry-After 会偏。
+ */
+function windowMs(): number {
+  return env.quotaWindowHours * 60 * 60 * 1000;
+}
+
+/**
+ * 配额拦截是否开启。供 chat 路由的 fail-closed 降级判断复用——memory 降级的 503 也
+ * 要受这个开关控制，enforcement=false 时降级放行，kill switch 才能完整回滚旧行为。
+ * 每次现读 env（同 windowMs 的理由：模块级常量会固化）。
+ */
+export function isEnforcementEnabled(): boolean {
+  return env.quotaEnforcement;
+}
+
+/**
+ * 滚动窗口的起点（now - windowMs）。返回 Date 给 repository 的 gte(recorded_at)。
+ */
+export function windowStart(now: number = Date.now()): Date {
+  return new Date(now - windowMs());
+}
+
+export function createQuotaService(db: Database) {
+  const usageRepo = createTokenUsageRepository(db);
+  const limitsRepo = createQuotaLimitsRepository(db);
+
+  /**
+   * 解析某用户的有效 token 上限：用户覆盖 ?? 系统默认（env）。
+   */
+  async function effectiveLimit(userId: string): Promise<number> {
+    const override = await limitsRepo.getLimit(userId);
+    // override 为 undefined（无行或 null）→ 跟随系统默认
+    return override ?? env.quotaTokenLimit;
+  }
+
+  return {
+    /**
+     * 配额检查。allowed 时不抛；超限抛 QuotaError(exceeded)；查询失败抛 QuotaError(unavailable)。
+     *
+     * - enforcement 关闭（部署计量阶段）：直接 allowed，只落库不拦截。
+     * - admin 用户：豁免拦截，直接 allowed（用量仍由 appendEntry 双写落库）。
+     * - 普通用户：SUM 窗口用量，>= limit 则 exceeded。
+     *
+     * admin 豁免的是「拒绝」不是「计量」——appendEntry 的双写在 storage 层，与本函数无关。
+     * 任何查询失败都转成 QuotaError(unavailable)，由 chat.ts 翻译成 503（fail-closed）：
+     * 不能让 DB 故障把配额绕过去。
+     */
+    async check(user: PublicUser): Promise<void> {
+      if (!env.quotaEnforcement) return;
+      if (user.role === "admin") return;
+
+      const limit = await guardQuery(() => effectiveLimit(user.id));
+      if (limit <= 0) {
+        // 用户被显式禁止调用模型（token_limit=0）
+        throw new QuotaError("当前账号不可调用模型，请联系管理员", "exceeded");
+      }
+
+      const since = windowStart();
+      const used = await guardQuery(() => usageRepo.sumWindowUsage(user.id, since));
+
+      if (used >= limit) {
+        // 算 Retry-After：累计过期计算。算不出则省略 header（不返回伪值）。
+        // used 已由上面的 sumWindowUsage 算出，直接传入，避免 secondsUntilUnderLimit 再算一次。
+        const retryAfter = await guardQuery(() =>
+          usageRepo.secondsUntilUnderLimit(user.id, since, limit, windowMs(), used),
+        );
+        throw new QuotaError(
+          `已达到最近 ${env.quotaWindowHours} 小时的 token 配额，请稍后重试`,
+          "exceeded",
+          retryAfter,
+        );
+      }
+    },
+  };
+}
+
+/** 把任何查询异常翻译成 QuotaError(unavailable)，让 chat.ts 只需处理一种错误类型。 */
+async function guardQuery<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    // 保留原始错误用于日志：QuotaError 自己不带 cause 字段，这里记下再抛
+    logger.error({ err }, "quota query failed");
+    throw new QuotaError("配额服务暂不可用，请稍后重试", "unavailable");
+  }
+}
+
+/** 全应用共用一个实例（与 getAuthService / getRegistry 同模式）。 */
+let instance: ReturnType<typeof createQuotaService> | undefined;
+
+export function getQuotaService(): ReturnType<typeof createQuotaService> {
+  instance ??= createQuotaService(getDb());
+  return instance;
+}
