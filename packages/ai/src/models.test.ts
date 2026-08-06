@@ -92,20 +92,28 @@ describe("listConfiguredModels", () => {
     vi.unstubAllEnvs();
   });
 
-  // 没配任何 API key 时，所有 provider 的 envApiKeyAuth 都 resolve 成 undefined，
-  // 前端选择器应当是空的——而不是把一堆「选了就报错」的模型列出来
+  // 没配任何 API key 时，所有 provider 的 getAvailable 都因 auth 不完整被过滤，
+  // 前端选择器应当是空的——而不是把一堆「选了就报错」的模型列出来。
+  //
+  // 注意：部分 provider 还认额外的 env 变体（如 Anthropic 还认 ANTHROPIC_AUTH_TOKEN /
+  // ANTHROPIC_OAUTH_TOKEN）。开发机上设了这些（用代理网关的人常见）会让这条红，且失败信息
+  // 不指向根因。这里把已知的变体也一并清掉。根本解法是改注入式测试（独立 createModels 实例），
+  // 但那需要把 listConfiguredModels 改成接受 models 参数，超出本 PR 范围，留作 follow-up。
   it("未配置任何 API key 时返回空数组", async () => {
-    vi.stubEnv("DEEPSEEK_API_KEY", "");
-    vi.stubEnv("SILICONFLOW_API_KEY", "");
-    vi.stubEnv("OPENAI_API_KEY", "");
-    vi.stubEnv("ANTHROPIC_API_KEY", "");
-    vi.stubEnv("GEMINI_API_KEY", "");
-    vi.stubEnv("MOONSHOT_API_KEY", "");
-    vi.stubEnv("MINIMAX_API_KEY", "");
-    vi.stubEnv("ZAI_API_KEY", "");
-    vi.stubEnv("QWEN_TOKEN_PLAN_API_KEY", "");
-    vi.stubEnv("OLLAMA_API_KEY", "");
-    vi.stubEnv("VLLM_API_KEY", "");
+    const empty = "";
+    vi.stubEnv("DEEPSEEK_API_KEY", empty);
+    vi.stubEnv("SILICONFLOW_API_KEY", empty);
+    vi.stubEnv("OPENAI_API_KEY", empty);
+    vi.stubEnv("ANTHROPIC_API_KEY", empty);
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", empty);
+    vi.stubEnv("ANTHROPIC_OAUTH_TOKEN", empty);
+    vi.stubEnv("GEMINI_API_KEY", empty);
+    vi.stubEnv("MOONSHOT_API_KEY", empty);
+    vi.stubEnv("MINIMAX_API_KEY", empty);
+    vi.stubEnv("ZAI_API_KEY", empty);
+    vi.stubEnv("QWEN_TOKEN_PLAN_API_KEY", empty);
+    vi.stubEnv("OLLAMA_API_KEY", empty);
+    vi.stubEnv("VLLM_API_KEY", empty);
 
     expect(await listConfiguredModels()).toEqual([]);
   });

@@ -254,23 +254,25 @@ export function findModel(id: string): Model<Api> | undefined {
  * 超出 HEU-9 范围。
  */
 export async function listConfiguredModels(): Promise<ModelSummary[]> {
+  // 用 pi-ai 的 getAvailable()：它并行解析所有 provider 的 auth、尊重 provider.filterModels
+  // 钩子（按实际凭据收窄目录，如 github-copilot），比手写串行 for-await 11 个 provider 更快、
+  // 更不易漏。getAvailable 只返回 auth 配置完整的 provider 的 Model[]（不含 providerName，
+  // 这里从 models.getProvider 反查补上）。
+  const available = await models.getAvailable();
   const summaries: ModelSummary[] = [];
-  for (const provider of models.getProviders()) {
-    const auth = await models.getAuth(provider.id);
-    if (!auth) continue;
-    for (const model of provider.getModels()) {
-      // 重名去重：只暴露 findModel 会解析到的那一条，保证选择器与运行时解析一致
-      const resolved = findModel(model.id);
-      if (resolved && resolved.provider !== provider.id) continue;
-      summaries.push({
-        id: model.id,
-        name: model.name,
-        provider: provider.id,
-        providerName: provider.name,
-        // 与 listModels() 同口径：聚合平台代售同名模型时，只有默认 provider 那条算默认
-        isDefault: provider.id === DEFAULT_PROVIDER_ID && model.id === DEFAULT_MODEL_ID,
-      });
-    }
+  for (const model of available) {
+    // 重名去重：只暴露 findModel 会解析到的那一条，保证选择器与运行时解析一致
+    const resolved = findModel(model.id);
+    if (resolved && resolved.provider !== model.provider) continue;
+    const provider = models.getProvider(model.provider);
+    summaries.push({
+      id: model.id,
+      name: model.name,
+      provider: model.provider,
+      providerName: provider?.name ?? model.provider,
+      // 与 listModels() 同口径：聚合平台代售同名模型时，只有默认 provider 那条算默认
+      isDefault: model.provider === DEFAULT_PROVIDER_ID && model.id === DEFAULT_MODEL_ID,
+    });
   }
   return summaries;
 }

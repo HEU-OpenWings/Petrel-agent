@@ -1,5 +1,5 @@
 import { createTestDb, type TestDb } from "@petrel/database/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
 
 /** state 用 vi.hoisted：vi.mock 会被提升到 import 之上，工厂里不能引用普通顶层变量 */
@@ -16,18 +16,24 @@ let close: () => Promise<void>;
 
 // 建库慢，整个文件复用一个实例，用例之间靠清表隔离
 beforeAll(async () => {
-  // GET /preferences 的模型清单来自 listConfiguredModels()——只列「已配置」的 provider。
-  // 测试环境不配真实 key，这里 stub 一个让 DeepSeek 被判为已配置，模型清单才非空
-  // （firstModelId 与「带回可用模型清单」两条断言依赖它）。pi 的 envApiKeyAuth 实时读
-  // process.env，所以 vi.stubEnv 在请求时生效。
-  vi.stubEnv("DEEPSEEK_API_KEY", "test-stub");
   const testDb = await createTestDb();
   state.db = testDb.db;
   reset = testDb.reset;
   close = testDb.close;
 });
 
-beforeEach(() => reset());
+// GET /preferences 的模型清单来自 listConfiguredModels()——只列「已配置」的 provider。
+// 测试环境不配真实 key，每个用例前 stub 一个让 DeepSeek 被判为已配置，模型清单才非空
+// （firstModelId 与「带回可用模型清单」两条断言依赖它）。pi 的 envApiKeyAuth 实时读
+// process.env。用例后清理，避免污染同进程其他测试文件（与 models.test.ts 同口径）。
+beforeEach(() => {
+  vi.stubEnv("DEEPSEEK_API_KEY", "test-stub");
+  return reset();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
@@ -156,6 +162,19 @@ describe("PUT /api/account/preferences", () => {
     const cookie = await registerUser("a@x.io");
 
     const response = await putPreferences({ defaultModel: "gpt-does-not-exist" }, cookie);
+
+    expect(response.status).toBe(400);
+  });
+
+  // review 🟡#4：GET 用 configured 过滤，PUT 也必须同口径，否则能存一个选择器里看不到、
+  // 必然运行时失败的 model id。gpt-4 已注册（openai provider）但测试环境没配 OPENAI_API_KEY，
+  // 属于「已注册但未配置」——旧代码用 listModels（全部）会接受它，新代码按 configured 拒绝。
+  // 这条钉住读写两侧白名单一致。stubEnv 清掉 OPENAI_API_KEY 确保它确实未配置。
+  it("已注册但未配置 key 的模型也返回 400（PUT 与 GET 白名单同口径）", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "");
+    const cookie = await registerUser("a@x.io");
+
+    const response = await putPreferences({ defaultModel: "gpt-4" }, cookie);
 
     expect(response.status).toBe(400);
   });
