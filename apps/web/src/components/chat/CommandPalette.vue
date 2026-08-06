@@ -19,10 +19,10 @@
 defineProps({
   /** 已过滤好的命令列表，过滤逻辑在 useCommandPalette 里 */
   commands: { type: Array, default: () => [] },
-  activeIndex: { type: Number, default: 0 }
-})
+  activeIndex: { type: Number, default: 0 },
+});
 
-const emit = defineEmits(['pick', 'hover'])
+const emit = defineEmits(["pick", "hover"]);
 </script>
 
 <style lang="less" scoped>

@@ -13,10 +13,10 @@
 </template>
 
 <script setup>
-import { useThemeStore } from '@/stores/theme'
-import { Sun as SunIcon, Moon as MoonIcon } from 'lucide-vue-next'
+import { Moon as MoonIcon, Sun as SunIcon } from "lucide-vue-next";
+import { useThemeStore } from "@/stores/theme";
 
-const themeStore = useThemeStore()
+const themeStore = useThemeStore();
 </script>
 
 <style scoped>

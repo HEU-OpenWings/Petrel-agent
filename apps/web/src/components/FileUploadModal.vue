@@ -78,7 +78,7 @@
       <div class="upload" v-if="uploadMode === 'file'">
         <a-upload-dragger
           class="upload-dragger"
-          v-model:fileList="fileList"
+          v-model:file-list="fileList"
           name="file"
           :multiple="true"
           :disabled="chunkLoading"
@@ -144,52 +144,44 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
-import { message, Upload, Tooltip, Modal } from 'ant-design-vue';
-import { useUserStore } from '@/stores/user';
-import { useDatabaseStore } from '@/stores/database';
-import { ocrApi } from '@/apis/system_api';
-import { fileApi, documentApi } from '@/apis/knowledge_api';
-import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue';
 import {
+  CheckCircleOutlined,
+  DeleteOutlined,
+  DownloadOutlined,
   FileOutlined,
+  InfoCircleOutlined,
   LinkOutlined,
   SettingOutlined,
-  CheckCircleOutlined,
-  InfoCircleOutlined,
-  DownloadOutlined,
-  DeleteOutlined,
-} from '@ant-design/icons-vue';
-import { h } from 'vue';
+} from "@ant-design/icons-vue";
+import { Modal, message, Tooltip, Upload } from "ant-design-vue";
+import { computed, h, onMounted, ref, watch } from "vue";
+import { documentApi, fileApi } from "@/apis/knowledge_api";
+import { ocrApi } from "@/apis/system_api";
+import ChunkParamsConfig from "@/components/ChunkParamsConfig.vue";
+import { useDatabaseStore } from "@/stores/database";
+import { useUserStore } from "@/stores/user";
 
 const props = defineProps({
   visible: {
     type: Boolean,
-    default: false
+    default: false,
   },
 });
 
-const emit = defineEmits(['update:visible', 'success']);
+const emit = defineEmits(["update:visible", "success"]);
 
 const store = useDatabaseStore();
 
-const DEFAULT_SUPPORTED_TYPES = [
-  '.txt',
-  '.pdf',
-  '.jpg',
-  '.jpeg',
-  '.md',
-  '.docx',
-];
+const DEFAULT_SUPPORTED_TYPES = [".txt", ".pdf", ".jpg", ".jpeg", ".md", ".docx"];
 
 const normalizeExtensions = (extensions) => {
   if (!Array.isArray(extensions)) {
     return [];
   }
   const normalized = extensions
-    .map((ext) => (typeof ext === 'string' ? ext.trim().toLowerCase() : ''))
+    .map((ext) => (typeof ext === "string" ? ext.trim().toLowerCase() : ""))
     .filter((ext) => ext.length > 0)
-    .map((ext) => (ext.startsWith('.') ? ext : `.${ext}`));
+    .map((ext) => (ext.startsWith(".") ? ext : `.${ext}`));
 
   return Array.from(new Set(normalized)).sort();
 };
@@ -207,20 +199,20 @@ const applySupportedFileTypes = (extensions) => {
 
 const acceptedFileTypes = computed(() => {
   if (!supportedFileTypes.value.length) {
-    return '';
+    return "";
   }
   const exts = new Set(supportedFileTypes.value);
-  exts.add('.zip');
-  return Array.from(exts).join(',');
+  exts.add(".zip");
+  return Array.from(exts).join(",");
 });
 
 const uploadHint = computed(() => {
   if (!supportedFileTypes.value.length) {
-    return '加载中...';
+    return "加载中...";
   }
   const exts = new Set(supportedFileTypes.value);
-  exts.add('.zip');
-  return Array.from(exts).join(', ');
+  exts.add(".zip");
+  return Array.from(exts).join(", ");
 });
 
 const isSupportedExtension = (fileName) => {
@@ -230,12 +222,12 @@ const isSupportedExtension = (fileName) => {
   if (!supportedFileTypes.value.length) {
     return true;
   }
-  const lastDotIndex = fileName.lastIndexOf('.');
+  const lastDotIndex = fileName.lastIndexOf(".");
   if (lastDotIndex === -1) {
     return false;
   }
   const ext = fileName.slice(lastDotIndex).toLowerCase();
-  return supportedFileTypes.value.includes(ext) || ext === '.zip';
+  return supportedFileTypes.value.includes(ext) || ext === ".zip";
 };
 
 const loadSupportedFileTypes = async () => {
@@ -243,8 +235,8 @@ const loadSupportedFileTypes = async () => {
     const data = await fileApi.getSupportedFileTypes();
     applySupportedFileTypes(data?.file_types);
   } catch (error) {
-    console.error('获取支持的文件类型失败:', error);
-    message.warning('获取支持的文件类型失败，已使用默认配置');
+    console.error("获取支持的文件类型失败:", error);
+    message.warning("获取支持的文件类型失败，已使用默认配置");
     applySupportedFileTypes(DEFAULT_SUPPORTED_TYPES);
   }
 };
@@ -255,7 +247,7 @@ onMounted(() => {
 
 const visible = computed({
   get: () => props.visible,
-  set: (value) => emit('update:visible', value)
+  set: (value) => emit("update:visible", value),
 });
 
 const databaseId = computed(() => store.databaseId);
@@ -263,25 +255,30 @@ const kbType = computed(() => store.database.kb_type);
 const chunkLoading = computed(() => store.state.chunkLoading);
 
 // 上传模式
-const uploadMode = ref('file');
-const previousOcrSelection = ref('disable');
+const uploadMode = ref("file");
+const previousOcrSelection = ref("disable");
 
 const uploadModeOptions = computed(() => [
   {
-    value: 'file',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FileOutlined, { class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '上传文件'),
+    value: "file",
+    label: h("div", { class: "segmented-option" }, [
+      h(FileOutlined, { class: "option-icon" }),
+      h("span", { class: "option-text" }, "上传文件"),
     ]),
   },
   {
-    value: 'url',
-    label: h(Tooltip, { title: 'URL 文档上传与解析功能已禁用，出于安全考虑，当前版本仅支持文件上传' }, {
-      default: () => h('div', { class: 'segmented-option' }, [
-        h(LinkOutlined, { class: 'option-icon' }),
-        h('span', { class: 'option-text' }, '输入网址'),
-      ])
-    }),
+    value: "url",
+    label: h(
+      Tooltip,
+      { title: "URL 文档上传与解析功能已禁用，出于安全考虑，当前版本仅支持文件上传" },
+      {
+        default: () =>
+          h("div", { class: "segmented-option" }, [
+            h(LinkOutlined, { class: "option-icon" }),
+            h("span", { class: "option-text" }, "输入网址"),
+          ]),
+      },
+    ),
   },
 ]);
 
@@ -291,15 +288,14 @@ const fileList = ref([]);
 // 同名文件列表（用于显示提示）
 const sameNameFiles = ref([]);
 
-
 // URL相关功能已移除
 
 // OCR服务健康状态
 const ocrHealthStatus = ref({
-  onnx_rapid_ocr: { status: 'unknown', message: '' },
-  mineru_ocr: { status: 'unknown', message: '' },
-  mineru_official: { status: 'unknown', message: '' },
-  paddlex_ocr: { status: 'unknown', message: '' }
+  onnx_rapid_ocr: { status: "unknown", message: "" },
+  mineru_ocr: { status: "unknown", message: "" },
+  mineru_official: { status: "unknown", message: "" },
+  paddlex_ocr: { status: "unknown", message: "" },
 });
 
 // OCR健康检查状态
@@ -309,9 +305,9 @@ const ocrHealthChecking = ref(false);
 const chunkParams = ref({
   chunk_size: 1000,
   chunk_overlap: 200,
-  enable_ocr: 'disable',
+  enable_ocr: "disable",
   use_qa_split: false,
-  qa_separator: '\n\n\n',
+  qa_separator: "\n\n\n",
 });
 
 // 分块参数配置弹窗
@@ -322,23 +318,23 @@ const tempChunkParams = ref({
   chunk_size: 1000,
   chunk_overlap: 200,
   use_qa_split: false,
-  qa_separator: '\n\n\n',
+  qa_separator: "\n\n\n",
 });
 
 // 计算属性：是否支持QA分割
 const isQaSplitSupported = computed(() => {
   const type = kbType.value?.toLowerCase();
-  return type === 'chroma' || type === 'milvus';
+  return type === "chroma" || type === "milvus";
 });
 
 const isGraphBased = computed(() => {
   const type = kbType.value?.toLowerCase();
-  return type === 'lightrag';
+  return type === "lightrag";
 });
 
 // 计算属性：是否启用了OCR
 const isOcrEnabled = computed(() => {
-  return chunkParams.value.enable_ocr !== 'disable';
+  return chunkParams.value.enable_ocr !== "disable";
 });
 
 // 上传模式切换相关逻辑已移除
@@ -349,12 +345,12 @@ const hasPdfOrImageFiles = computed(() => {
     return false;
   }
 
-  const pdfExtensions = ['.pdf'];
-  const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'];
+  const pdfExtensions = [".pdf"];
+  const imageExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".gif", ".webp"];
   const ocrExtensions = [...pdfExtensions, ...imageExtensions];
 
-  return fileList.value.some(file => {
-    if (file.status !== 'done') {
+  return fileList.value.some((file) => {
+    if (file.status !== "done") {
       return false;
     }
 
@@ -363,7 +359,7 @@ const hasPdfOrImageFiles = computed(() => {
       return false;
     }
 
-    const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
+    const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
     return ocrExtensions.includes(ext);
   });
 });
@@ -374,8 +370,8 @@ const hasZipFiles = computed(() => {
     return false;
   }
 
-  return fileList.value.some(file => {
-    if (file.status !== 'done') {
+  return fileList.value.some((file) => {
+    if (file.status !== "done") {
       return false;
     }
 
@@ -384,55 +380,63 @@ const hasZipFiles = computed(() => {
       return false;
     }
 
-    const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
-    return ext === '.zip';
+    const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
+    return ext === ".zip";
   });
 });
 
 // 计算属性：OCR选项
 const enableOcrOptions = computed(() => [
   {
-    value: 'disable',
-    label: '不启用',
-    title: '不启用'
+    value: "disable",
+    label: "不启用",
+    title: "不启用",
   },
   {
-    value: 'onnx_rapid_ocr',
+    value: "onnx_rapid_ocr",
     label: getRapidOcrLabel(),
-    title: 'ONNX with RapidOCR',
-    disabled: ocrHealthStatus.value?.onnx_rapid_ocr?.status === 'unavailable' || ocrHealthStatus.value?.onnx_rapid_ocr?.status === 'error'
+    title: "ONNX with RapidOCR",
+    disabled:
+      ocrHealthStatus.value?.onnx_rapid_ocr?.status === "unavailable" ||
+      ocrHealthStatus.value?.onnx_rapid_ocr?.status === "error",
   },
   {
-    value: 'mineru_ocr',
+    value: "mineru_ocr",
     label: getMinerULabel(),
-    title: 'MinerU OCR',
-    disabled: ocrHealthStatus.value?.mineru_ocr?.status === 'unavailable' || ocrHealthStatus.value?.mineru_ocr?.status === 'error'
+    title: "MinerU OCR",
+    disabled:
+      ocrHealthStatus.value?.mineru_ocr?.status === "unavailable" ||
+      ocrHealthStatus.value?.mineru_ocr?.status === "error",
   },
   {
-    value: 'mineru_official',
+    value: "mineru_official",
     label: getMinerUOfficialLabel(),
-    title: 'MinerU Official API',
-    disabled: ocrHealthStatus.value?.mineru_official?.status === 'unavailable' || ocrHealthStatus.value?.mineru_official?.status === 'error'
+    title: "MinerU Official API",
+    disabled:
+      ocrHealthStatus.value?.mineru_official?.status === "unavailable" ||
+      ocrHealthStatus.value?.mineru_official?.status === "error",
   },
   {
-    value: 'paddlex_ocr',
+    value: "paddlex_ocr",
     label: getPaddleXLabel(),
-    title: 'PaddleX OCR',
-    disabled: ocrHealthStatus.value?.paddlex_ocr?.status === 'unavailable' || ocrHealthStatus.value?.paddlex_ocr?.status === 'error'
+    title: "PaddleX OCR",
+    disabled:
+      ocrHealthStatus.value?.paddlex_ocr?.status === "unavailable" ||
+      ocrHealthStatus.value?.paddlex_ocr?.status === "error",
   },
 ]);
 
 // 获取当前选中OCR服务的状态
 const selectedOcrStatus = computed(() => {
   switch (chunkParams.value.enable_ocr) {
-    case 'onnx_rapid_ocr':
-      return ocrHealthStatus.value?.onnx_rapid_ocr?.status || 'unknown';
-    case 'mineru_ocr':
-      return ocrHealthStatus.value?.mineru_ocr?.status || 'unknown';
-    case 'mineru_official':
-      return ocrHealthStatus.value?.mineru_official?.status || 'unknown';
-    case 'paddlex_ocr':
-      return ocrHealthStatus.value?.paddlex_ocr?.status || 'unknown';
+    case "onnx_rapid_ocr":
+      return ocrHealthStatus.value?.onnx_rapid_ocr?.status || "unknown";
+    case "mineru_ocr":
+      return ocrHealthStatus.value?.mineru_ocr?.status || "unknown";
+    case "mineru_official":
+      return ocrHealthStatus.value?.mineru_official?.status || "unknown";
+    case "paddlex_ocr":
+      return ocrHealthStatus.value?.paddlex_ocr?.status || "unknown";
     default:
       return null;
   }
@@ -441,78 +445,78 @@ const selectedOcrStatus = computed(() => {
 // 获取当前选中OCR服务的状态消息
 const selectedOcrMessage = computed(() => {
   switch (chunkParams.value.enable_ocr) {
-    case 'onnx_rapid_ocr':
-      return ocrHealthStatus.value?.onnx_rapid_ocr?.message || '';
-    case 'mineru_ocr':
-      return ocrHealthStatus.value?.mineru_ocr?.message || '';
-    case 'mineru_official':
-      return ocrHealthStatus.value?.mineru_official?.message || '';
-    case 'paddlex_ocr':
-      return ocrHealthStatus.value?.paddlex_ocr?.message || '';
+    case "onnx_rapid_ocr":
+      return ocrHealthStatus.value?.onnx_rapid_ocr?.message || "";
+    case "mineru_ocr":
+      return ocrHealthStatus.value?.mineru_ocr?.message || "";
+    case "mineru_official":
+      return ocrHealthStatus.value?.mineru_official?.message || "";
+    case "paddlex_ocr":
+      return ocrHealthStatus.value?.paddlex_ocr?.message || "";
     default:
-      return '';
+      return "";
   }
 });
 
 // OCR选项标签生成函数
 const getRapidOcrLabel = () => {
-  const status = ocrHealthStatus.value?.onnx_rapid_ocr?.status || 'unknown';
+  const status = ocrHealthStatus.value?.onnx_rapid_ocr?.status || "unknown";
   const statusIcons = {
-    'healthy': '✅',
-    'unavailable': '❌',
-    'error': '⚠️',
-    'unknown': '❓'
+    healthy: "✅",
+    unavailable: "❌",
+    error: "⚠️",
+    unknown: "❓",
   };
-  return `${statusIcons[status] || '❓'} RapidOCR (ONNX)`;
+  return `${statusIcons[status] || "❓"} RapidOCR (ONNX)`;
 };
 
 const getMinerULabel = () => {
-  const status = ocrHealthStatus.value?.mineru_ocr?.status || 'unknown';
+  const status = ocrHealthStatus.value?.mineru_ocr?.status || "unknown";
   const statusIcons = {
-    'healthy': '✅',
-    'unavailable': '❌',
-    'unhealthy': '⚠️',
-    'timeout': '⏰',
-    'error': '⚠️',
-    'unknown': '❓'
+    healthy: "✅",
+    unavailable: "❌",
+    unhealthy: "⚠️",
+    timeout: "⏰",
+    error: "⚠️",
+    unknown: "❓",
   };
-  return `${statusIcons[status] || '❓'} MinerU OCR`;
+  return `${statusIcons[status] || "❓"} MinerU OCR`;
 };
 
 const getMinerUOfficialLabel = () => {
-  const status = ocrHealthStatus.value?.mineru_official?.status || 'unknown';
+  const status = ocrHealthStatus.value?.mineru_official?.status || "unknown";
   const statusIcons = {
-    'healthy': '✅',
-    'unavailable': '❌',
-    'unhealthy': '⚠️',
-    'timeout': '⏰',
-    'error': '⚠️',
-    'unknown': '❓'
+    healthy: "✅",
+    unavailable: "❌",
+    unhealthy: "⚠️",
+    timeout: "⏰",
+    error: "⚠️",
+    unknown: "❓",
   };
-  return `${statusIcons[status] || '❓'} MinerU Official API`;
+  return `${statusIcons[status] || "❓"} MinerU Official API`;
 };
 
 const getPaddleXLabel = () => {
-  const status = ocrHealthStatus.value?.paddlex_ocr?.status || 'unknown';
+  const status = ocrHealthStatus.value?.paddlex_ocr?.status || "unknown";
   const statusIcons = {
-    'healthy': '✅',
-    'unavailable': '❌',
-    'unhealthy': '⚠️',
-    'timeout': '⏰',
-    'error': '⚠️',
-    'unknown': '❓'
+    healthy: "✅",
+    unavailable: "❌",
+    unhealthy: "⚠️",
+    timeout: "⏰",
+    error: "⚠️",
+    unknown: "❓",
   };
-  return `${statusIcons[status] || '❓'} PaddleX OCR`;
+  return `${statusIcons[status] || "❓"} PaddleX OCR`;
 };
 
 // 验证OCR服务可用性
 const validateOcrService = () => {
-  if (chunkParams.value.enable_ocr === 'disable') {
+  if (chunkParams.value.enable_ocr === "disable") {
     return true;
   }
 
   const status = selectedOcrStatus.value;
-  if (status === 'unavailable' || status === 'error') {
+  if (status === "unavailable" || status === "error") {
     const ocrMessage = selectedOcrMessage.value;
     message.error(`OCR服务不可用: ${ocrMessage}`);
     return false;
@@ -522,27 +526,27 @@ const validateOcrService = () => {
 };
 
 const handleCancel = () => {
-  emit('update:visible', false);
+  emit("update:visible", false);
 };
 
 const beforeUpload = (file) => {
   if (!isSupportedExtension(file?.name)) {
-    message.error(`不支持的文件类型：${file?.name || '未知文件'}`);
+    message.error(`不支持的文件类型：${file?.name || "未知文件"}`);
     return Upload.LIST_IGNORE;
   }
   return true;
 };
 
 const formatFileSize = (bytes) => {
-  if (bytes === 0 || !bytes) return '0 B';
+  if (bytes === 0 || !bytes) return "0 B";
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+  return `${parseFloat((bytes / k ** i).toFixed(1))} ${sizes[i]}`;
 };
 
 const formatFileTime = (timestamp) => {
-  if (!timestamp) return '';
+  if (!timestamp) return "";
   try {
     const date = new Date(timestamp);
     return date.toLocaleString();
@@ -561,18 +565,18 @@ const downloadSameNameFile = async (file) => {
     // 获取当前数据库ID
     const currentDbId = databaseId.value;
     if (!currentDbId) {
-      message.error('知识库ID不存在');
+      message.error("知识库ID不存在");
       return;
     }
 
-    message.loading('正在下载文件...', 0);
+    message.loading("正在下载文件...", 0);
     const response = await documentApi.downloadDocument(currentDbId, file.file_id);
     message.destroy();
 
     // 创建下载链接
-    const blob = await response.blob();  // 从 Response 对象中提取 Blob 数据
+    const blob = await response.blob(); // 从 Response 对象中提取 Blob 数据
     const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
     link.download = file.filename;
     document.body.appendChild(link);
@@ -583,52 +587,52 @@ const downloadSameNameFile = async (file) => {
     message.success(`文件 ${file.filename} 下载成功`);
   } catch (error) {
     message.destroy();
-    console.error('下载文件失败:', error);
-    message.error(`下载文件失败: ${error.message || '未知错误'}`);
+    console.error("下载文件失败:", error);
+    message.error(`下载文件失败: ${error.message || "未知错误"}`);
   }
 };
 
 const deleteSameNameFile = (file) => {
   Modal.confirm({
-    title: '确认删除文件',
+    title: "确认删除文件",
     content: `确定要删除文件 "${file.filename}" 吗？此操作不可恢复。`,
-    okText: '删除',
-    okType: 'danger',
-    cancelText: '取消',
+    okText: "删除",
+    okType: "danger",
+    cancelText: "取消",
     onOk: async () => {
       try {
         // 获取当前数据库ID
         const currentDbId = databaseId.value;
         if (!currentDbId) {
-          message.error('知识库ID不存在');
+          message.error("知识库ID不存在");
           return;
         }
 
-        message.loading('正在删除文件...', 0);
+        message.loading("正在删除文件...", 0);
         await documentApi.deleteDocument(currentDbId, file.file_id);
         message.destroy();
 
         // 从同名文件列表中移除
-        sameNameFiles.value = sameNameFiles.value.filter(f => f.file_id !== file.file_id);
+        sameNameFiles.value = sameNameFiles.value.filter((f) => f.file_id !== file.file_id);
 
         message.success(`文件 ${file.filename} 删除成功`);
       } catch (error) {
         message.destroy();
-        console.error('删除文件失败:', error);
-        message.error(`删除文件失败: ${error.message || '未知错误'}`);
+        console.error("删除文件失败:", error);
+        message.error(`删除文件失败: ${error.message || "未知错误"}`);
       }
-    }
+    },
   });
 };
 
 const handleFileUpload = (info) => {
-  if (info?.file?.status === 'error') {
+  if (info?.file?.status === "error") {
     const errorMessage = info.file?.response?.detail || `文件上传失败：${info.file.name}`;
     message.error(errorMessage);
   }
 
   // 检查是否有同名文件提示
-  if (info?.file?.status === 'done' && info.file.response) {
+  if (info?.file?.status === "done" && info.file.response) {
     const response = info.file.response;
     if (response.has_same_name && response.same_name_files && response.same_name_files.length > 0) {
       // 显示同名文件提示
@@ -664,7 +668,7 @@ const handleChunkConfigSubmit = () => {
     chunkParams.value.use_qa_split = false;
   }
   chunkConfigModalVisible.value = false;
-  message.success('分块参数配置已更新');
+  message.success("分块参数配置已更新");
 };
 
 const checkOcrHealth = async () => {
@@ -675,8 +679,8 @@ const checkOcrHealth = async () => {
     const healthData = await ocrApi.getHealth();
     ocrHealthStatus.value = healthData.services;
   } catch (error) {
-    console.error('OCR健康检查失败:', error);
-    message.error('OCR服务健康检查失败');
+    console.error("OCR健康检查失败:", error);
+    message.error("OCR服务健康检查失败");
   } finally {
     ocrHealthChecking.value = false;
   }
@@ -689,7 +693,7 @@ const getAuthHeaders = () => {
 
 const chunkData = async () => {
   if (!databaseId.value) {
-    message.error('请先选择知识库');
+    message.error("请先选择知识库");
     return;
   }
 
@@ -699,25 +703,28 @@ const chunkData = async () => {
   }
 
   let success = false;
-  if (uploadMode.value === 'file') {
-    const files = fileList.value.filter(file => file.status === 'done').map(file => file.response?.file_path);
+  if (uploadMode.value === "file") {
+    const files = fileList.value
+      .filter((file) => file.status === "done")
+      .map((file) => file.response?.file_path);
     // 过滤掉 undefined 或 null 的文件路径
-    const validFiles = files.filter(file => file);
+    const validFiles = files.filter((file) => file);
     if (validFiles.length === 0) {
-      message.error('请先上传文件');
+      message.error("请先上传文件");
       return;
     }
 
     // 验证图片文件是否启用OCR
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'];
-    const hasImageFiles = validFiles.some(filePath => {
-      const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
+    const imageExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"];
+    const hasImageFiles = validFiles.some((filePath) => {
+      const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
       return imageExtensions.includes(ext);
     });
 
-    if (hasImageFiles && chunkParams.value.enable_ocr === 'disable') {
+    if (hasImageFiles && chunkParams.value.enable_ocr === "disable") {
       message.error({
-        content: '检测到图片文件,必须启用 OCR 才能提取文本内容。请在上方选择 OCR 方式 (RapidOCR/MinerU/MinerU Official/PaddleX) 或移除图片文件。',
+        content:
+          "检测到图片文件,必须启用 OCR 才能提取文本内容。请在上方选择 OCR 方式 (RapidOCR/MinerU/MinerU Official/PaddleX) 或移除图片文件。",
         duration: 5,
       });
       return;
@@ -725,23 +732,22 @@ const chunkData = async () => {
 
     try {
       store.state.chunkLoading = true;
-      success = await store.addFiles({ items: validFiles, contentType: 'file', params: chunkParams.value });
+      success = await store.addFiles({ items: validFiles, contentType: "file", params: chunkParams.value });
     } catch (error) {
-      console.error('文件上传失败:', error);
-      message.error('文件上传失败: ' + (error.message || '未知错误'));
+      console.error("文件上传失败:", error);
+      message.error(`文件上传失败: ${error.message || "未知错误"}`);
     } finally {
       store.state.chunkLoading = false;
     }
   }
 
   if (success) {
-    emit('update:visible', false);
-    emit('success');
+    emit("update:visible", false);
+    emit("success");
     fileList.value = [];
-    sameNameFiles.value = [];  // 清空同名文件列表
+    sameNameFiles.value = []; // 清空同名文件列表
   }
 };
-
 </script>
 
 <style lang="less" scoped>

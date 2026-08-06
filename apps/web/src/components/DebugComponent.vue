@@ -98,46 +98,44 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onActivated, onUnmounted, nextTick, reactive, computed, h, toRaw } from 'vue';
-import { useConfigStore } from '@/stores/config';
-import { useUserStore } from '@/stores/user';
-import { useDatabaseStore } from '@/stores/database';
-import { useAgentStore } from '@/stores/agent';
-import { useInfoStore } from '@/stores/info';
-import { useThrottleFn } from '@vueuse/core';
-import { message } from 'ant-design-vue';
 import {
-  FullscreenOutlined,
-  FullscreenExitOutlined,
-  ReloadOutlined,
+  BugOutlined,
+  CheckCircleOutlined,
   ClearOutlined,
+  DatabaseOutlined,
+  FullscreenExitOutlined,
+  FullscreenOutlined,
+  PlusCircleOutlined,
+  ReloadOutlined,
+  RobotOutlined,
   SettingOutlined,
   SyncOutlined,
-  CheckCircleOutlined,
-  PlusCircleOutlined,
   UserOutlined,
-  DatabaseOutlined,
-  RobotOutlined,
-  BugOutlined
-} from '@ant-design/icons-vue';
-import dayjs from '@/utils/time';
-import { configApi } from '@/apis/system_api';
-import { checkAdminPermission } from '@/stores/user';
+} from "@ant-design/icons-vue";
+import { useThrottleFn } from "@vueuse/core";
+import { message } from "ant-design-vue";
+import { computed, h, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, toRaw } from "vue";
+import { configApi } from "@/apis/system_api";
+import { useAgentStore } from "@/stores/agent";
+import { useConfigStore } from "@/stores/config";
+import { useDatabaseStore } from "@/stores/database";
+import { useInfoStore } from "@/stores/info";
+import { checkAdminPermission, useUserStore } from "@/stores/user";
+import dayjs from "@/utils/time";
 
-const configStore = useConfigStore()
+const configStore = useConfigStore();
 const userStore = useUserStore();
 const databaseStore = useDatabaseStore();
 const agentStore = useAgentStore();
 const infoStore = useInfoStore();
 const config = configStore.config;
 
-
 // 定义日志级别
 const logLevels = [
-  { value: 'INFO', label: 'INFO' },
-  { value: 'ERROR', label: 'ERROR' },
-  { value: 'DEBUG', label: 'DEBUG' },
-  { value: 'WARNING', label: 'WARNING' }
+  { value: "INFO", label: "INFO" },
+  { value: "ERROR", label: "ERROR" },
+  { value: "DEBUG", label: "DEBUG" },
+  { value: "WARNING", label: "WARNING" },
 ];
 
 const logViewer = ref(null);
@@ -146,27 +144,29 @@ const logViewer = ref(null);
 const state = reactive({
   fetching: false,
   autoRefresh: false,
-  searchText: '',
-  selectedLevels: logLevels.map(l => l.value),
+  searchText: "",
+  selectedLevels: logLevels.map((l) => l.value),
   rawLogs: [],
   isFullscreen: false,
 });
 
-const error = ref('');
+const error = ref("");
 const logContainer = ref(null);
 let autoRefreshInterval = null;
 
 // 解析日志行
 const parseLogLine = (line) => {
   // 支持两种时间戳格式：带毫秒和不带毫秒
-  const match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d{3})?)\s*-\s*(\w+)\s*-\s*([^-]+?)\s*-\s*(.+)$/);
+  const match = line.match(
+    /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d{3})?)\s*-\s*(\w+)\s*-\s*([^-]+?)\s*-\s*(.+)$/,
+  );
   if (match) {
     return {
       timestamp: match[1],
       level: match[2],
       module: match[3].trim(),
       message: match[4].trim(),
-      raw: line
+      raw: line,
     };
   }
   return null;
@@ -176,17 +176,17 @@ const parseLogLine = (line) => {
 const formatTimestamp = (timestamp) => {
   try {
     // 处理带毫秒的格式：将 "2025-03-10 08:26:37,269" 转换为 "2025-03-10 08:26:37.269"
-    let normalizedTimestamp = timestamp.replace(',', '.');
+    let normalizedTimestamp = timestamp.replace(",", ".");
 
     // 如果没有毫秒，添加 .000
     if (!/\.\d{3}$/.test(normalizedTimestamp)) {
-      normalizedTimestamp += '.000';
+      normalizedTimestamp += ".000";
     }
 
     const date = dayjs(normalizedTimestamp);
-    return date.isValid() ? date.format('HH:mm:ss.SSS') : timestamp;
+    return date.isValid() ? date.format("HH:mm:ss.SSS") : timestamp;
   } catch (err) {
-    console.error('时间戳格式化错误:', err);
+    console.error("时间戳格式化错误:", err);
     return timestamp;
   }
 };
@@ -195,8 +195,8 @@ const formatTimestamp = (timestamp) => {
 const processedLogs = computed(() => {
   return state.rawLogs
     .map(parseLogLine)
-    .filter(log => log !== null)
-    .filter(log => {
+    .filter((log) => log !== null)
+    .filter((log) => {
       if (!state.searchText) return true;
       return log.raw.toLowerCase().includes(state.searchText.toLowerCase());
     });
@@ -208,11 +208,11 @@ const fetchLogs = async () => {
 
   state.fetching = true;
   try {
-    error.value = '';
+    error.value = "";
     // 将选中的日志级别转换为逗号分隔的字符串传递给后端
-    const levelsParam = state.selectedLevels.join(',');
+    const levelsParam = state.selectedLevels.join(",");
     const logData = await configApi.getLogs(levelsParam);
-    state.rawLogs = logData.log.split('\n').filter(line => line.trim());
+    state.rawLogs = logData.log.split("\n").filter((line) => line.trim());
 
     await nextTick();
     const scrollToBottom = useThrottleFn(() => {
@@ -302,16 +302,14 @@ const toggleFullscreen = async () => {
       }
     }
   } catch (err) {
-    console.error('全屏切换失败:', err);
+    console.error("全屏切换失败:", err);
   }
 };
 
 // 监听全屏变化
 const handleFullscreenChange = () => {
   state.isFullscreen = Boolean(
-    document.fullscreenElement ||
-    document.webkitFullscreenElement ||
-    document.msFullscreenElement
+    document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement,
   );
 };
 
@@ -319,9 +317,9 @@ onMounted(() => {
   if (checkAdminPermission()) {
     fetchLogs();
   }
-  document.addEventListener('fullscreenchange', handleFullscreenChange);
-  document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-  document.addEventListener('msfullscreenchange', handleFullscreenChange);
+  document.addEventListener("fullscreenchange", handleFullscreenChange);
+  document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+  document.addEventListener("msfullscreenchange", handleFullscreenChange);
 });
 
 onActivated(() => {
@@ -339,24 +337,24 @@ onUnmounted(() => {
     clearInterval(autoRefreshInterval);
     autoRefreshInterval = null;
   }
-  document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-  document.removeEventListener('msfullscreenchange', handleFullscreenChange);
+  document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+  document.removeEventListener("msfullscreenchange", handleFullscreenChange);
 });
 
 // 打印系统配置
 const printSystemConfig = () => {
   if (!checkAdminPermission()) return;
-  console.log('=== 系统配置 ===');
+  console.log("=== 系统配置 ===");
   console.log(config);
 };
 
 // 打印用户信息
 const printUserInfo = () => {
   if (!checkAdminPermission()) return;
-  console.log('=== 用户信息 ===');
+  console.log("=== 用户信息 ===");
   const userInfo = {
-    token: userStore.token ? '*** (已隐藏)' : null,
+    token: userStore.token ? "*** (已隐藏)" : null,
     userId: userStore.userId,
     username: userStore.username,
     userIdLogin: userStore.userIdLogin,
@@ -365,7 +363,7 @@ const printUserInfo = () => {
     userRole: userStore.userRole,
     isLoggedIn: userStore.isLoggedIn,
     isAdmin: userStore.isAdmin,
-    isSuperAdmin: userStore.isSuperAdmin
+    isSuperAdmin: userStore.isSuperAdmin,
   };
   console.log(JSON.stringify(userInfo, null, 2));
 };
@@ -375,32 +373,31 @@ const printDatabaseInfo = async () => {
   if (!checkAdminPermission()) return;
 
   try {
-    console.log('=== 知识库信息 ===');
-    console.log('基本信息:', {
+    console.log("=== 知识库信息 ===");
+    console.log("基本信息:", {
       databaseId: databaseStore.databaseId,
       databaseName: databaseStore.database.name,
       databaseDesc: databaseStore.database.description,
-      fileCount: Object.keys(databaseStore.database.files || {}).length
+      fileCount: Object.keys(databaseStore.database.files || {}).length,
     });
 
-    console.log('状态信息:', {
+    console.log("状态信息:", {
       databaseLoading: databaseStore.state.databaseLoading,
       refrashing: databaseStore.state.refrashing,
       searchLoading: databaseStore.state.searchLoading,
       lock: databaseStore.state.lock,
       autoRefresh: databaseStore.state.autoRefresh,
-      queryParamsLoading: databaseStore.state.queryParamsLoading
+      queryParamsLoading: databaseStore.state.queryParamsLoading,
     });
 
-    console.log('查询参数:', {
+    console.log("查询参数:", {
       queryParams: databaseStore.queryParams,
       meta: databaseStore.meta,
-      selectedFileCount: databaseStore.selectedRowKeys.length
+      selectedFileCount: databaseStore.selectedRowKeys.length,
     });
-
   } catch (error) {
-    console.error('获取知识库信息失败:', error);
-    message.error('获取知识库信息失败: ' + error.message);
+    console.error("获取知识库信息失败:", error);
+    message.error(`获取知识库信息失败: ${error.message}`);
   }
 };
 
@@ -415,10 +412,10 @@ const printAgentConfig = async () => {
   if (!checkAdminPermission()) return;
 
   try {
-    console.log('=== 智能体配置信息 ===');
+    console.log("=== 智能体配置信息 ===");
 
     // Store状态信息
-    console.log('Store 状态:', {
+    console.log("Store 状态:", {
       isInitialized: agentStore.isInitialized,
       selectedAgentId: agentStore.selectedAgentId,
       defaultAgentId: agentStore.defaultAgentId,
@@ -426,52 +423,51 @@ const printAgentConfig = async () => {
       loadingStates: {
         isLoadingAgents: agentStore.isLoadingAgents,
         isLoadingConfig: agentStore.isLoadingConfig,
-        isLoadingTools: agentStore.isLoadingTools
+        isLoadingTools: agentStore.isLoadingTools,
       },
       error: agentStore.error,
-      hasConfigChanges: agentStore.hasConfigChanges
+      hasConfigChanges: agentStore.hasConfigChanges,
     });
 
     // 智能体列表信息
-    console.log('智能体列表:', {
+    console.log("智能体列表:", {
       count: agentStore.agentsList.length,
-      agents: toRaw(agentStore.agentsList)
+      agents: toRaw(agentStore.agentsList),
     });
 
     // 当前选中智能体信息
     if (agentStore.selectedAgent) {
-      console.log('当前选中智能体:', {
+      console.log("当前选中智能体:", {
         agent: toRaw(agentStore.selectedAgent),
         isDefault: agentStore.isDefaultAgent,
-        configurableItemsCount: Object.keys(agentStore.configurableItems).length
+        configurableItemsCount: Object.keys(agentStore.configurableItems).length,
       });
 
       // 当前智能体配置（仅管理员可见）
       if (userStore.isAdmin) {
-        console.log('当前智能体配置:', {
+        console.log("当前智能体配置:", {
           current: toRaw(agentStore.agentConfig),
           original: toRaw(agentStore.originalAgentConfig),
-          hasChanges: agentStore.hasConfigChanges
+          hasChanges: agentStore.hasConfigChanges,
         });
       } else {
-        console.log('智能体配置: 需要管理员权限查看详细配置');
+        console.log("智能体配置: 需要管理员权限查看详细配置");
       }
     }
 
     // 工具信息
-    console.log('可用工具:', {
+    console.log("可用工具:", {
       count: agentStore.availableTools.length,
-      tools: toRaw(agentStore.availableTools)
+      tools: toRaw(agentStore.availableTools),
     });
 
     // 配置项信息（管理员可见）
     if (userStore.isAdmin && agentStore.selectedAgent) {
-      console.log('可配置项:', toRaw(agentStore.configurableItems));
+      console.log("可配置项:", toRaw(agentStore.configurableItems));
     }
-
   } catch (error) {
-    console.error('获取智能体配置失败:', error);
-    message.error('获取智能体配置失败: ' + error.message);
+    console.error("获取智能体配置失败:", error);
+    message.error(`获取智能体配置失败: ${error.message}`);
   }
 };
 </script>

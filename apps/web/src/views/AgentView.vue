@@ -7,7 +7,7 @@
         title="选择智能体"
         :width="800"
         :footer="null"
-        :maskClosable="true"
+        :mask-closable="true"
         class="agent-modal"
       >
         <div class="agent-modal-content">
@@ -58,7 +58,7 @@
 
       <!-- 配置侧边栏 -->
       <AgentConfigSidebar
-        :isOpen="chatUIStore.isConfigSidebarOpen"
+        :is-open="chatUIStore.isConfigSidebarOpen"
         @close="() => chatUIStore.isConfigSidebarOpen = false"
       />
 
@@ -99,31 +99,30 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
 import {
-  StarOutlined,
-  StarFilled,
+  EyeOutlined,
   MessageOutlined,
   ShareAltOutlined,
-  EyeOutlined,
-} from '@ant-design/icons-vue';
-import { message } from 'ant-design-vue';
-import { Settings2, Ellipsis } from 'lucide-vue-next';
-import AgentChatComponent from '@/components/AgentChatComponent.vue';
-import AgentConfigSidebar from '@/components/AgentConfigSidebar.vue';
-import FeedbackModalComponent from '@/components/dashboard/FeedbackModalComponent.vue';
-import { useUserStore } from '@/stores/user';
-import { useAgentStore } from '@/stores/agent';
-import { useChatUIStore } from '@/stores/chatUI';
-import { ChatExporter } from '@/utils/chatExporter';
-import { handleChatError } from '@/utils/errorHandler';
-import { onClickOutside } from '@vueuse/core';
-
-import { storeToRefs } from 'pinia';
+  StarFilled,
+  StarOutlined,
+} from "@ant-design/icons-vue";
+import { onClickOutside } from "@vueuse/core";
+import { message } from "ant-design-vue";
+import { Ellipsis, Settings2 } from "lucide-vue-next";
+import { storeToRefs } from "pinia";
+import { ref, watch } from "vue";
+import AgentChatComponent from "@/components/AgentChatComponent.vue";
+import AgentConfigSidebar from "@/components/AgentConfigSidebar.vue";
+import FeedbackModalComponent from "@/components/dashboard/FeedbackModalComponent.vue";
+import { useAgentStore } from "@/stores/agent";
+import { useChatUIStore } from "@/stores/chatUI";
+import { useUserStore } from "@/stores/user";
+import { ChatExporter } from "@/utils/chatExporter";
+import { handleChatError } from "@/utils/errorHandler";
 
 // 组件引用
-const feedbackModal = ref(null)
-const chatComponentRef = ref(null)
+const feedbackModal = ref(null);
+const chatComponentRef = ref(null);
 
 // Stores
 const userStore = useUserStore();
@@ -131,11 +130,7 @@ const agentStore = useAgentStore();
 const chatUIStore = useChatUIStore();
 
 // 从 agentStore 中获取响应式状态
-const {
-  agents,
-  selectedAgentId,
-  defaultAgentId,
-} = storeToRefs(agentStore);
+const { agents, selectedAgentId, defaultAgentId } = storeToRefs(agentStore);
 
 // 设置为默认智能体
 const setAsDefaultAgent = async (agentId) => {
@@ -143,16 +138,12 @@ const setAsDefaultAgent = async (agentId) => {
 
   try {
     await agentStore.setDefaultAgent(agentId);
-    message.success('已将当前智能体设为默认');
+    message.success("已将当前智能体设为默认");
   } catch (error) {
-    console.error('设置默认智能体错误:', error);
-    message.error(error.message || '设置默认智能体时发生错误');
+    console.error("设置默认智能体错误:", error);
+    message.error(error.message || "设置默认智能体时发生错误");
   }
 };
-
-
-
-
 
 // 这些方法现在由agentStore处理，无需在组件中定义
 
@@ -160,11 +151,10 @@ const loadAgentConfig = async () => {
   try {
     await agentStore.loadAgentConfig();
   } catch (error) {
-    console.error('加载配置出错:', error);
-    message.error('加载配置失败');
+    console.error("加载配置出错:", error);
+    message.error("加载配置失败");
   }
 };
-
 
 // 选择智能体（使用store方法）
 const selectAgent = (agentId) => {
@@ -184,10 +174,9 @@ const selectAgentFromModal = (agentId) => {
   chatUIStore.agentModalOpen = false;
 };
 
-
 const toggleConf = () => {
-  chatUIStore.isConfigSidebarOpen = !chatUIStore.isConfigSidebarOpen
-}
+  chatUIStore.isConfigSidebarOpen = !chatUIStore.isConfigSidebarOpen;
+};
 
 // 更多菜单相关
 const moreMenuRef = ref(null);
@@ -210,11 +199,15 @@ const closeMoreMenu = () => {
 };
 
 // 使用 VueUse 的 onClickOutside
-onClickOutside(moreMenuRef, () => {
-  if (chatUIStore.moreMenuOpen) {
-    closeMoreMenu();
-  }
-}, { ignore: [moreButtonRef] });
+onClickOutside(
+  moreMenuRef,
+  () => {
+    if (chatUIStore.moreMenuOpen) {
+      closeMoreMenu();
+    }
+  },
+  { ignore: [moreButtonRef] },
+);
 
 const handleShareChat = async () => {
   closeMoreMenu();
@@ -223,10 +216,10 @@ const handleShareChat = async () => {
     // 从聊天组件获取导出数据
     const exportData = chatComponentRef.value?.getExportPayload?.();
 
-    console.log('[AgentView] Export data:', exportData);
+    console.log("[AgentView] Export data:", exportData);
 
     if (!exportData) {
-      message.warning('当前没有可导出的对话内容');
+      message.warning("当前没有可导出的对话内容");
       return;
     }
 
@@ -235,23 +228,23 @@ const handleShareChat = async () => {
     const hasOngoingMessages = exportData.onGoingMessages && exportData.onGoingMessages.length > 0;
 
     if (!hasMessages && !hasOngoingMessages) {
-      console.warn('[AgentView] Export data has no messages:', {
+      console.warn("[AgentView] Export data has no messages:", {
         messages: exportData.messages,
-        onGoingMessages: exportData.onGoingMessages
+        onGoingMessages: exportData.onGoingMessages,
       });
-      message.warning('当前对话暂无内容可导出，请先进行对话');
+      message.warning("当前对话暂无内容可导出，请先进行对话");
       return;
     }
 
     const result = await ChatExporter.exportToHTML(exportData);
     message.success(`对话已导出为HTML文件: ${result.filename}`);
   } catch (error) {
-    console.error('[AgentView] Export error:', error);
-    if (error?.message?.includes('没有可导出的对话内容')) {
-      message.warning('当前对话暂无内容可导出，请先进行对话');
+    console.error("[AgentView] Export error:", error);
+    if (error?.message?.includes("没有可导出的对话内容")) {
+      message.warning("当前对话暂无内容可导出，请先进行对话");
       return;
     }
-    handleChatError(error, 'export');
+    handleChatError(error, "export");
   }
 };
 
@@ -263,7 +256,7 @@ const handleFeedback = () => {
 const handlePreview = () => {
   closeMoreMenu();
   if (selectedAgentId.value) {
-    window.open(`/agent/${selectedAgentId.value}`, '_blank');
+    window.open(`/agent/${selectedAgentId.value}`, "_blank");
   }
 };
 </script>

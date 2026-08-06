@@ -3,7 +3,7 @@
   v-model:open="visible"
   title="上传评估基准"
   width="600px"
-  :confirmLoading="uploading"
+  :confirm-loading="uploading"
   @ok="handleUpload"
   @cancel="handleCancel"
 >
@@ -34,7 +34,7 @@
       :extra="extraText"
     >
       <a-upload-dragger
-        v-model:fileList="fileList"
+        v-model:file-list="fileList"
         name="file"
         :multiple="false"
         accept=".jsonl"
@@ -56,23 +56,23 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, h } from 'vue';
-import { message } from 'ant-design-vue';
-import { FileTextOutlined } from '@ant-design/icons-vue';
-import { evaluationApi } from '@/apis/knowledge_api';
+import { FileTextOutlined } from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { computed, h, reactive, ref, watch } from "vue";
+import { evaluationApi } from "@/apis/knowledge_api";
 
 const props = defineProps({
   visible: {
     type: Boolean,
-    default: false
+    default: false,
   },
   databaseId: {
     type: String,
-    required: true
-  }
+    required: true,
+  },
 });
 
-const emit = defineEmits(['update:visible', 'success']);
+const emit = defineEmits(["update:visible", "success"]);
 
 // 响应式数据
 const formRef = ref();
@@ -80,44 +80,42 @@ const fileList = ref([]);
 const uploading = ref(false);
 
 const formState = reactive({
-  name: '',
-  description: '',
-  file: null
+  name: "",
+  description: "",
+  file: null,
 });
 
 // 表单验证规则
 const rules = {
   name: [
-    { required: true, message: '请输入基准名称', trigger: 'blur' },
-    { min: 2, max: 100, message: '基准名称长度应在2-100个字符之间', trigger: 'blur' }
+    { required: true, message: "请输入基准名称", trigger: "blur" },
+    { min: 2, max: 100, message: "基准名称长度应在2-100个字符之间", trigger: "blur" },
   ],
-  file: [
-    { required: true, message: '请选择基准文件', trigger: 'change' }
-  ]
+  file: [{ required: true, message: "请选择基准文件", trigger: "change" }],
 };
 
 // 双向绑定visible
 const visible = computed({
   get: () => props.visible,
-  set: (val) => emit('update:visible', val)
+  set: (val) => emit("update:visible", val),
 });
 
 // 说明文本。原本尾部挂着一个指向上游 Yuxi-Know 文档的「使用说明」外链，
 // Petrel 还没有对应文档，先只留文案
-const extraText = computed(() => h('span', {}, '仅支持 JSONL 格式的评估基准文件'));
+const extraText = computed(() => h("span", {}, "仅支持 JSONL 格式的评估基准文件"));
 
 // 文件上传前验证
 const beforeUpload = async (file) => {
   // 检查文件类型
-  if (!file.name.endsWith('.jsonl')) {
-    message.error('仅支持 JSONL 格式文件');
+  if (!file.name.endsWith(".jsonl")) {
+    message.error("仅支持 JSONL 格式文件");
     return false;
   }
 
   // 检查文件大小（限制为100MB）
   const isLt100M = file.size / 1024 / 1024 < 100;
   if (!isLt100M) {
-    message.error('文件大小不能超过 100MB');
+    message.error("文件大小不能超过 100MB");
     return false;
   }
 
@@ -126,15 +124,15 @@ const beforeUpload = async (file) => {
     const content = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(e.target.result);
-      reader.onerror = () => reject(new Error('文件读取失败'));
+      reader.onerror = () => reject(new Error("文件读取失败"));
       reader.readAsText(file);
     });
 
-    const lines = content.trim().split('\n');
+    const lines = content.trim().split("\n");
 
     // 验证至少有一行
     if (lines.length === 0) {
-      message.error('文件不能为空');
+      message.error("文件不能为空");
       return false;
     }
 
@@ -151,9 +149,9 @@ const beforeUpload = async (file) => {
     return true;
   } catch (error) {
     if (error instanceof SyntaxError) {
-      message.error('文件格式错误，请检查JSONL格式');
+      message.error("文件格式错误，请检查JSONL格式");
     } else {
-      message.error('文件验证失败: ' + error.message);
+      message.error(`文件验证失败: ${error.message}`);
     }
     return false;
   }
@@ -171,31 +169,27 @@ const handleUpload = async () => {
     await formRef.value.validate();
 
     if (!formState.file) {
-      message.error('请选择基准文件');
+      message.error("请选择基准文件");
       return;
     }
 
     uploading.value = true;
 
-    const response = await evaluationApi.uploadBenchmark(
-      props.databaseId,
-      formState.file,
-      {
-        name: formState.name,
-        description: formState.description
-      }
-    );
+    const response = await evaluationApi.uploadBenchmark(props.databaseId, formState.file, {
+      name: formState.name,
+      description: formState.description,
+    });
 
-    if (response.message === 'success') {
-      message.success('上传成功');
+    if (response.message === "success") {
+      message.success("上传成功");
       handleCancel();
-      emit('success');
+      emit("success");
     } else {
-      message.error(response.message || '上传失败');
+      message.error(response.message || "上传失败");
     }
   } catch (error) {
-    console.error('上传失败:', error);
-    message.error('上传失败');
+    console.error("上传失败:", error);
+    message.error("上传失败");
   } finally {
     uploading.value = false;
   }

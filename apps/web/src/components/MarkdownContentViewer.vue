@@ -21,9 +21,9 @@
       <!-- 左侧：Markdown内容 -->
       <div class="content-panel">
         <MdPreview
-          :modelValue="mergedContent"
+          :model-value="mergedContent"
           :theme="theme"
-          previewTheme="github"
+          preview-theme="github"
           class="markdown-content"
         />
       </div>
@@ -92,17 +92,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { MdPreview } from 'md-editor-v3';
-import 'md-editor-v3/lib/preview.css';
-import { mergeChunks, getChunkPreview } from '@/utils/chunkUtils';
-import { useThemeStore } from '@/stores/theme';
+import { MdPreview } from "md-editor-v3";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import "md-editor-v3/lib/preview.css";
+import { useThemeStore } from "@/stores/theme";
+import { getChunkPreview, mergeChunks } from "@/utils/chunkUtils";
 
 const props = defineProps({
   chunks: {
     type: Array,
-    default: () => []
-  }
+    default: () => [],
+  },
 });
 
 // 使用主题store
@@ -111,13 +111,13 @@ const themeStore = useThemeStore();
 // 响应式引用
 const showTooltip = ref(false);
 const currentChunk = ref(null);
-const tooltipStyle = ref({ top: '0px', left: '0px' });
+const tooltipStyle = ref({ top: "0px", left: "0px" });
 const activeChunkIndex = ref(null);
 const highlightedChunkIndex = ref(null);
 const chunkPanelVisible = ref(true);
 
 // 主题设置 - 根据系统主题动态切换
-const theme = computed(() => themeStore.isDark ? 'dark' : 'light');
+const theme = computed(() => (themeStore.isDark ? "dark" : "light"));
 
 // 合并chunks
 const mergeResult = computed(() => mergeChunks(props.chunks));
@@ -126,7 +126,7 @@ const mappedChunks = computed(() => mergeResult.value.chunks);
 
 // 格式化文本长度
 function formatTextLength(length) {
-  if (!length && length !== 0) return '0 字符';
+  if (!length && length !== 0) return "0 字符";
 
   if (length < 1000) {
     return `${length} 字符`;
@@ -163,18 +163,18 @@ function handleMouseMove(event) {
   if (!currentChunk.value) return;
 
   tooltipStyle.value = {
-    top: event.clientY + 10 + 'px',
-    left: event.clientX + 10 + 'px'
+    top: `${event.clientY + 10}px`,
+    left: `${event.clientX + 10}px`,
   };
 }
 
 // 生命周期
 onMounted(() => {
-  document.addEventListener('mousemove', handleMouseMove);
+  document.addEventListener("mousemove", handleMouseMove);
 });
 
 onUnmounted(() => {
-  document.removeEventListener('mousemove', handleMouseMove);
+  document.removeEventListener("mousemove", handleMouseMove);
 });
 </script>
 

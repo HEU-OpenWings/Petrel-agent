@@ -121,115 +121,118 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
-import { LikeOutlined, DislikeOutlined, ClockCircleOutlined } from '@ant-design/icons-vue'
-import { dashboardApi } from '@/apis/dashboard_api'
-import { formatFullDateTime } from '@/utils/time'
+import { ClockCircleOutlined, DislikeOutlined, LikeOutlined } from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { ref, watch } from "vue";
+import { dashboardApi } from "@/apis/dashboard_api";
+import { formatFullDateTime } from "@/utils/time";
 
 // 常量配置
 const CONFIG = {
-  MESSAGE_MAX_LINES: 8,          // 消息最大显示行数
-  CONVERSATION_MAX_LINES: 2,     // 对话标题最大显示行数
-  CONVERSATION_MAX_CHARS: 60,    // 对话标题字符数阈值
-  AVG_CHARS_PER_LINE: 30         // 每行平均字符数（中英文混合）
-}
+  MESSAGE_MAX_LINES: 8, // 消息最大显示行数
+  CONVERSATION_MAX_LINES: 2, // 对话标题最大显示行数
+  CONVERSATION_MAX_CHARS: 60, // 对话标题字符数阈值
+  AVG_CHARS_PER_LINE: 30, // 每行平均字符数（中英文混合）
+};
 
 // Props
 const props = defineProps({
   agentId: {
     type: String,
-    default: null
-  }
-})
+    default: null,
+  },
+});
 
 // 模态框状态
-const modalVisible = ref(false)
+const modalVisible = ref(false);
 
 // 反馈相关数据
-const feedbacks = ref([])
-const loadingFeedbacks = ref(false)
-const feedbackFilter = ref('all')
+const feedbacks = ref([]);
+const loadingFeedbacks = ref(false);
+const feedbackFilter = ref("all");
 const feedbackOptions = [
-  { label: '全部', value: 'all' },
-  { label: '点赞', value: 'like' },
-  { label: '点踩', value: 'dislike' }
-]
+  { label: "全部", value: "all" },
+  { label: "点赞", value: "like" },
+  { label: "点踩", value: "dislike" },
+];
 
 // 展开状态映射（使用 Map 避免直接修改对象）
-const expandedStates = ref(new Map())
+const expandedStates = ref(new Map());
 
 // 显示模态框
 const show = () => {
-  modalVisible.value = true
-  loadFeedbacks()
-}
+  modalVisible.value = true;
+  loadFeedbacks();
+};
 
 // 暴露方法给父组件
-defineExpose({ show })
+defineExpose({ show });
 
 // 计算文本行数的辅助函数（估算）
 const estimateLines = (text) => {
-  if (!text) return 0
-  return Math.ceil(text.length / CONFIG.AVG_CHARS_PER_LINE)
-}
+  if (!text) return 0;
+  return Math.ceil(text.length / CONFIG.AVG_CHARS_PER_LINE);
+};
 
 // 判断是否显示展开按钮
 const shouldShowExpandButton = (content) => {
-  return estimateLines(content) > CONFIG.MESSAGE_MAX_LINES
-}
+  return estimateLines(content) > CONFIG.MESSAGE_MAX_LINES;
+};
 
 // 判断对话标题是否需要展开按钮
 const shouldShowConversationExpandButton = (title) => {
-  if (!title) return false
-  return title.length > CONFIG.CONVERSATION_MAX_CHARS
-}
+  if (!title) return false;
+  return title.length > CONFIG.CONVERSATION_MAX_CHARS;
+};
 
 // 切换展开/收起状态
 const toggleExpand = (feedbackId) => {
-  const key = `${feedbackId}-message`
-  const currentState = expandedStates.value.get(key) ?? false
-  expandedStates.value.set(key, !currentState)
-}
+  const key = `${feedbackId}-message`;
+  const currentState = expandedStates.value.get(key) ?? false;
+  expandedStates.value.set(key, !currentState);
+};
 
 // 切换对话标题展开/收起状态
 const toggleConversationExpand = (feedbackId) => {
-  const key = `${feedbackId}-conversation`
-  const currentState = expandedStates.value.get(key) ?? false
-  expandedStates.value.set(key, !currentState)
-}
+  const key = `${feedbackId}-conversation`;
+  const currentState = expandedStates.value.get(key) ?? false;
+  expandedStates.value.set(key, !currentState);
+};
 
 // 加载反馈列表
 const loadFeedbacks = async () => {
-  loadingFeedbacks.value = true
+  loadingFeedbacks.value = true;
   try {
     const params = {
-      rating: feedbackFilter.value === 'all' ? undefined : feedbackFilter.value,
+      rating: feedbackFilter.value === "all" ? undefined : feedbackFilter.value,
       agent_id: props.agentId || undefined,
-    }
+    };
 
-    const response = await dashboardApi.getFeedbacks(params)
-    feedbacks.value = response
+    const response = await dashboardApi.getFeedbacks(params);
+    feedbacks.value = response;
     // 重置展开状态
-    expandedStates.value.clear()
+    expandedStates.value.clear();
   } catch (error) {
-    console.error('加载反馈列表失败:', error)
-    message.error('加载反馈列表失败，请稍后重试')
-    feedbacks.value = []
+    console.error("加载反馈列表失败:", error);
+    message.error("加载反馈列表失败，请稍后重试");
+    feedbacks.value = [];
   } finally {
-    loadingFeedbacks.value = false
+    loadingFeedbacks.value = false;
   }
-}
+};
 
 // 格式化完整日期
-const formatFullDate = (dateString) => formatFullDateTime(dateString)
+const formatFullDate = (dateString) => formatFullDateTime(dateString);
 
 // 监听 agentId 变化，重新加载数据
-watch(() => props.agentId, () => {
-  if (modalVisible.value) {
-    loadFeedbacks()
-  }
-})
+watch(
+  () => props.agentId,
+  () => {
+    if (modalVisible.value) {
+      loadFeedbacks();
+    }
+  },
+);
 </script>
 
 <style scoped lang="less">

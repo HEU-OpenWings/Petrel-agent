@@ -1,4 +1,4 @@
-import { message } from 'ant-design-vue';
+import { message } from "ant-design-vue";
 
 /**
  * 统一错误处理工具类
@@ -10,13 +10,8 @@ export class ErrorHandler {
    * @param {string} context - 错误上下文
    * @param {Object} options - 配置选项
    */
-  static handleError(error, context = '操作', options = {}) {
-    const {
-      showMessage = true,
-      logToConsole = true,
-      customMessage = null,
-      severity = 'error'
-    } = options;
+  static handleError(error, context = "操作", options = {}) {
+    const { showMessage = true, logToConsole = true, customMessage = null, severity = "error" } = options;
 
     // 控制台日志
     if (logToConsole) {
@@ -25,16 +20,15 @@ export class ErrorHandler {
 
     // 用户提示
     if (showMessage) {
-      const displayMessage = customMessage || this.getErrorMessage(error, context);
-      
+      const displayMessage = customMessage || ErrorHandler.getErrorMessage(error, context);
+
       switch (severity) {
-        case 'warning':
+        case "warning":
           message.warning(displayMessage);
           break;
-        case 'info':
+        case "info":
           message.info(displayMessage);
           break;
-        case 'error':
         default:
           message.error(displayMessage);
           break;
@@ -62,22 +56,22 @@ export class ErrorHandler {
    * @param {Error} error - 错误对象
    * @param {string} context - 错误上下文
    */
-  static handleNetworkError(error, context = '网络请求') {
+  static handleNetworkError(error, context = "网络请求") {
     let customMessage = null;
-    
-    if (error?.code === 'NETWORK_ERROR') {
-      customMessage = '网络连接失败，请检查网络设置';
+
+    if (error?.code === "NETWORK_ERROR") {
+      customMessage = "网络连接失败，请检查网络设置";
     } else if (error?.status === 401) {
-      customMessage = '认证失败，请重新登录';
+      customMessage = "认证失败，请重新登录";
     } else if (error?.status === 403) {
-      customMessage = '权限不足，无法执行此操作';
+      customMessage = "权限不足，无法执行此操作";
     } else if (error?.status === 404) {
-      customMessage = '请求的资源不存在';
+      customMessage = "请求的资源不存在";
     } else if (error?.status >= 500) {
-      customMessage = '服务器错误，请稍后重试';
+      customMessage = "服务器错误，请稍后重试";
     }
 
-    return this.handleError(error, context, { customMessage });
+    return ErrorHandler.handleError(error, context, { customMessage });
   }
 
   /**
@@ -87,17 +81,17 @@ export class ErrorHandler {
    */
   static handleChatError(error, operation) {
     const contextMap = {
-      'send': '发送消息',
-      'create': '创建对话',
-      'delete': '删除对话',
-      'rename': '重命名对话',
-      'load': '加载对话',
-      'export': '导出对话',
-      'stream': '流式处理'
+      send: "发送消息",
+      create: "创建对话",
+      delete: "删除对话",
+      rename: "重命名对话",
+      load: "加载对话",
+      export: "导出对话",
+      stream: "流式处理",
     };
 
     const context = contextMap[operation] || operation;
-    return this.handleError(error, context);
+    return ErrorHandler.handleError(error, context);
   }
 
   /**
@@ -105,11 +99,10 @@ export class ErrorHandler {
    * @param {string} message - 验证错误消息
    */
   static handleValidationError(message) {
-    return this.handleError(
-      new Error(message), 
-      '输入验证', 
-      { severity: 'warning', customMessage: message }
-    );
+    return ErrorHandler.handleError(new Error(message), "输入验证", {
+      severity: "warning",
+      customMessage: message,
+    });
   }
 
   /**
@@ -122,7 +115,7 @@ export class ErrorHandler {
     try {
       return await asyncFn();
     } catch (error) {
-      this.handleError(error, context, options);
+      ErrorHandler.handleError(error, context, options);
       throw error;
     }
   }
@@ -133,7 +126,7 @@ export class ErrorHandler {
    * @param {Object} options - 配置选项
    */
   static createHandler(context, options = {}) {
-    return (error) => this.handleError(error, context, options);
+    return (error) => ErrorHandler.handleError(error, context, options);
   }
 }
 

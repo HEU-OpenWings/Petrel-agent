@@ -86,20 +86,20 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Slash } from 'lucide-vue-next'
-import CommandPalette from '@/components/chat/CommandPalette.vue'
-import CompactionDivider from '@/components/chat/CompactionDivider.vue'
-import MessageItem from '@/components/chat/MessageItem.vue'
-import MessageInputComponent from '@/components/MessageInputComponent.vue'
-import { fetchContextUsage } from '@/apis/chat_api'
-import { fetchMessages } from '@/apis/session_api'
-import { useAgentStream } from '@/composables/useAgentStream'
-import { useCommandPalette } from '@/composables/useCommandPalette'
-import { useLayoutStore } from '@/stores/layout'
-import { usePreferencesStore } from '@/stores/preferences'
-import { useSessionStore } from '@/stores/session'
-import { useWorkspaceStore } from '@/stores/workspace'
+import { Slash } from "lucide-vue-next";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { fetchContextUsage } from "@/apis/chat_api";
+import { fetchMessages } from "@/apis/session_api";
+import CommandPalette from "@/components/chat/CommandPalette.vue";
+import CompactionDivider from "@/components/chat/CompactionDivider.vue";
+import MessageItem from "@/components/chat/MessageItem.vue";
+import MessageInputComponent from "@/components/MessageInputComponent.vue";
+import { useAgentStream } from "@/composables/useAgentStream";
+import { useCommandPalette } from "@/composables/useCommandPalette";
+import { useLayoutStore } from "@/stores/layout";
+import { usePreferencesStore } from "@/stores/preferences";
+import { useSessionStore } from "@/stores/session";
+import { useWorkspaceStore } from "@/stores/workspace";
 
 const {
   messages,
@@ -115,21 +115,21 @@ const {
   stop,
   disconnect,
   reset,
-  loadHistory
-} = useAgentStream()
+  loadHistory,
+} = useAgentStream();
 
-const layout = useLayoutStore()
-const preferences = usePreferencesStore()
-const sessionStore = useSessionStore()
-const workspace = useWorkspaceStore()
+const layout = useLayoutStore();
+const preferences = usePreferencesStore();
+const sessionStore = useSessionStore();
+const workspace = useWorkspaceStore();
 
 // 模型名以偏好为准：没选时 store 会取后端标了 isDefault 的那个，
 // 不再是写死的字符串（写死的那份已经和 packages/ai 的默认模型对不上了）
-const modelLabel = computed(() => preferences.modelName || '默认模型')
+const modelLabel = computed(() => preferences.modelName || "默认模型");
 
 // AppShell 用 key 强制重挂载来实现「新对话」，卸载时只需要断开本地接收——
 // harness 是常驻的，旧对话的生成会继续跑完并落库，不是真的要停止它
-onUnmounted(disconnect)
+onUnmounted(disconnect);
 
 // 进对话页时没有当前会话就开一个新的；已经有了（从左栏点进来、或从别的页面切回来）就拉历史。
 // startNew() 也会改 currentId，从而触发下面的 watch 去拉一个后端还不存在的会话——
@@ -138,10 +138,10 @@ onUnmounted(disconnect)
 onMounted(() => {
   // 幂等，SettingsModal 打开时也会调一次。拉不到不阻断对话：
   // model / systemPrompt 保持 null，后端回落到系统默认值
-  void preferences.ensureLoaded()
-  if (!sessionStore.currentId) sessionStore.startNew()
-  else void loadSession(sessionStore.currentId)
-})
+  void preferences.ensureLoaded();
+  if (!sessionStore.currentId) sessionStore.startNew();
+  else void loadSession(sessionStore.currentId);
+});
 
 /**
  * submit() 的自增计数。守的是这个场景：历史 GET 慢，用户没等它回来就发了消息，
@@ -150,195 +150,195 @@ onMounted(() => {
  * 分不出「别的会话的旧流」和「本会话的新流」，只有 send 的次数能。
  * 别因为看不出它在防什么就删掉。
  */
-let sendSeq = 0
+let sendSeq = 0;
 
 async function loadSession(id) {
-  const seenSend = sendSeq
-  let history = []
+  const seenSend = sendSeq;
+  let history = [];
   try {
-    const data = await fetchMessages(id)
-    history = data.messages ?? []
+    const data = await fetchMessages(id);
+    history = data.messages ?? [];
   } catch {
     // 历史拉不到就当空会话继续，不阻塞用户提问
   }
   // 加载期间用户发了新消息，界面已经属于新一轮对话，这份历史作废
-  if (sendSeq !== seenSend) return
+  if (sendSeq !== seenSend) return;
   // 连着点两个会话时响应可能乱序到达，晚到的旧响应会把当前会话的内容盖掉
-  if (sessionStore.currentId !== id) return
-  loadHistory(history)
+  if (sessionStore.currentId !== id) return;
+  loadHistory(history);
 }
 
 watch(
   () => sessionStore.currentId,
   (id) => {
-    if (id) void loadSession(id)
-  }
-)
+    if (id) void loadSession(id);
+  },
+);
 
-const draft = ref('')
-const scrollArea = ref(null)
-const input = ref(null)
+const draft = ref("");
+const scrollArea = ref(null);
+const input = ref(null);
 
 function newChat() {
   // 必须先断开再 reset：reset() 不会碰 running/controller，
   // 旧流后续到达的事件会继续写回刚清空的 messages，且 running 会卡在 true 挡住新消息。
   // 只断本地接收，不调用 stop()：开新对话不等于要打断上一个会话正在生成的回答
-  disconnect()
-  reset()
-  workspace.clear()
-  draft.value = ''
-  sessionStore.startNew()
+  disconnect();
+  reset();
+  workspace.clear();
+  draft.value = "";
+  sessionStore.startNew();
 }
 
 /** 12345 → 12.3k。命令回执是粗略量度，精确到个位没有意义 */
 function formatTokens(value) {
-  return value < 1000 ? `${Math.round(value)}` : `${(value / 1000).toFixed(1)}k`
+  return value < 1000 ? `${Math.round(value)}` : `${(value / 1000).toFixed(1)}k`;
 }
 
 // 手动压缩。running 的拦截后端也做（409），这里先挡一次是为了给出理由：
 // compactNow() 在生成中只是静默返回，用户会以为命令没生效
 function runCompact() {
-  const sessionId = sessionStore.currentId
-  if (!sessionId) return
+  const sessionId = sessionStore.currentId;
+  if (!sessionId) return;
   if (running.value) {
-    notice.value = '正在生成回答，先停止本轮再压缩'
-    return
+    notice.value = "正在生成回答，先停止本轮再压缩";
+    return;
   }
-  void compactNow(sessionId)
+  void compactNow(sessionId);
 }
 
 async function runContext() {
-  const sessionId = sessionStore.currentId
-  if (!sessionId) return
+  const sessionId = sessionStore.currentId;
+  if (!sessionId) return;
   try {
-    const usage = await fetchContextUsage(sessionId)
+    const usage = await fetchContextUsage(sessionId);
     notice.value =
       `上下文约 ${formatTokens(usage.tokens)} token，` +
-      `压缩阈值 ${formatTokens(usage.threshold)}，模型窗口 ${formatTokens(usage.contextWindow)}`
+      `压缩阈值 ${formatTokens(usage.threshold)}，模型窗口 ${formatTokens(usage.contextWindow)}`;
   } catch (err) {
-    notice.value = err.message
+    notice.value = err.message;
   }
 }
 
 const palette = useCommandPalette([
-  { name: 'new', description: '新对话', run: newChat },
-  { name: 'compact', description: '压缩上下文', run: runCompact },
-  { name: 'context', description: '查看上下文占用', run: runContext },
-  { name: 'workspace', description: '开合右栏', run: () => layout.toggleRight() },
-  { name: 'sidebar', description: '开合左栏', run: () => layout.toggleLeft() }
-])
+  { name: "new", description: "新对话", run: newChat },
+  { name: "compact", description: "压缩上下文", run: runCompact },
+  { name: "context", description: "查看上下文占用", run: runContext },
+  { name: "workspace", description: "开合右栏", run: () => layout.toggleRight() },
+  { name: "sidebar", description: "开合左栏", run: () => layout.toggleLeft() },
+]);
 
 /** 只在整段输入以 / 开头时唤起面板，避免正文里的斜杠误触发 */
 function onDraftChange(value) {
-  draft.value = value
-  if (value.startsWith('/')) {
-    palette.openWith(value.slice(1))
+  draft.value = value;
+  if (value.startsWith("/")) {
+    palette.openWith(value.slice(1));
   } else if (palette.open.value) {
-    palette.close()
+    palette.close();
   }
 }
 
 // 输入框在加载中会把发送按钮换成停止图标，两种点击都走这里
 function onSendOrStop() {
   if (running.value) {
-    stop()
-    return
+    stop();
+    return;
   }
-  submit()
+  submit();
 }
 
 // 面板开着时要能点它关闭；只有「面板没开且已有草稿」才禁用，
 // 否则点一下会把用户没发出去的内容冲掉
-const canUseCommands = computed(() => palette.open.value || !draft.value.trim())
+const canUseCommands = computed(() => palette.open.value || !draft.value.trim());
 
 function toggleCommands() {
   if (palette.open.value) {
-    palette.close()
-    return
+    palette.close();
+    return;
   }
   // 走到这里说明面板没开，canUseCommands 此时等价于「草稿是否为空」，
   // 非空则拒绝打开面板，避免覆盖草稿
-  if (!canUseCommands.value) return
-  draft.value = '/'
-  palette.openWith('')
-  input.value?.focus()
+  if (!canUseCommands.value) return;
+  draft.value = "/";
+  palette.openWith("");
+  input.value?.focus();
 }
 
 function onPickCommand(index) {
-  palette.pick(index)
-  draft.value = ''
+  palette.pick(index);
+  draft.value = "";
 }
 
 function onKeydown(event) {
   if (palette.open.value) {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      palette.moveDown()
-      return
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      palette.moveDown();
+      return;
     }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      palette.moveUp()
-      return
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      palette.moveUp();
+      return;
     }
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      palette.close()
-      return
+    if (event.key === "Escape") {
+      event.preventDefault();
+      palette.close();
+      return;
     }
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      palette.pick()
-      draft.value = ''
-      return
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      palette.pick();
+      draft.value = "";
+      return;
     }
   }
 
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault()
-    submit()
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    submit();
   }
 }
 
 async function submit() {
-  if (running.value) return
+  if (running.value) return;
 
   // 首次进入页面时偏好仍可能在加载。先等它结束再读取下面两个字段，避免首条消息
   // 用系统默认值、后续消息却突然切到用户保存的模型与 prompt。
   // ensureLoaded() 会吞掉加载错误；失败时字段保持 null，仍可按原契约回退系统默认。
-  await preferences.ensureLoaded()
+  await preferences.ensureLoaded();
 
   // 等待期间可能重复触发 submit；第一个调用开始发送后，其余调用在这里退出。
-  const text = draft.value.trim()
-  if (!text || running.value) return
+  const text = draft.value.trim();
+  if (!text || running.value) return;
 
   // onMounted 保证了 currentId 非空，?? 只是不让 null 漏进请求体（后端会 400）
-  const sessionId = sessionStore.currentId ?? sessionStore.startNew()
+  const sessionId = sessionStore.currentId ?? sessionStore.startNew();
 
-  draft.value = ''
+  draft.value = "";
   // 必须在 send 之前自增：在飞的 loadSession 靠它判断「我拉的历史已经过期了」
-  sendSeq += 1
+  sendSeq += 1;
   await send(text, {
     sessionId,
     // ?? undefined：store 里「跟随系统默认」是 null，而请求体里不该出现
     // model: null——后端的类型校验只认字符串或不传
     model: preferences.defaultModel ?? undefined,
-    systemPrompt: preferences.systemPrompt ?? undefined
-  })
+    systemPrompt: preferences.systemPrompt ?? undefined,
+  });
 
   // 首条消息会让后端 upsert 出这个会话，刷新列表才能把它显示出来；
   // 后续消息只改 updatedAt，同样要刷新，否则左栏的时间倒序是旧的
-  await sessionStore.refresh()
+  await sessionStore.refresh();
 }
 
 watch(
   () => [messages.value.length, messages.value.at(-1)],
   async () => {
-    await nextTick()
-    const el = scrollArea.value
-    if (el) el.scrollTop = el.scrollHeight
-  }
-)
+    await nextTick();
+    const el = scrollArea.value;
+    if (el) el.scrollTop = el.scrollHeight;
+  },
+);
 </script>
 
 <style lang="less" scoped>

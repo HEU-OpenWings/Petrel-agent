@@ -4,7 +4,7 @@
     :title="null"
     placement="bottomRight"
     trigger="click"
-    :overlayStyle="{ width: '400px', zIndex: 999 }"
+    :overlay-style="{ width: '400px', zIndex: 999 }"
   >
     <template #content>
       <div class="popover-content">
@@ -104,38 +104,38 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue';
-import { Download } from 'lucide-vue-next';
-import { 
-  CheckCircleOutlined, 
-  SyncOutlined, 
-  ClockCircleOutlined, 
+import {
+  CheckCircleOutlined,
+  ClockCircleOutlined,
   CloseCircleOutlined,
-  QuestionCircleOutlined
-} from '@ant-design/icons-vue'
+  QuestionCircleOutlined,
+  SyncOutlined,
+} from "@ant-design/icons-vue";
+import { Download } from "lucide-vue-next";
+import { computed, ref, watch } from "vue";
 
 const props = defineProps({
   visible: {
     type: Boolean,
-    default: false
+    default: false,
   },
   agentState: {
     type: Object,
-    default: () => ({})
-  }
+    default: () => ({}),
+  },
 });
 
-const emit = defineEmits(['update:visible', 'refresh']);
+const emit = defineEmits(["update:visible", "refresh"]);
 
-const activeTab = ref('todos');
+const activeTab = ref("todos");
 const modalVisible = ref(false);
 const currentFile = ref(null);
-const currentFilePath = ref('');
+const currentFilePath = ref("");
 
 // 计算属性
 const visible = computed({
   get: () => props.visible,
-  set: (value) => emit('update:visible', value)
+  set: (value) => emit("update:visible", value),
 });
 
 const todos = computed(() => {
@@ -163,12 +163,12 @@ const normalizedFiles = computed(() => {
   if (!Array.isArray(files.value)) return [];
 
   const result = [];
-  files.value.forEach(item => {
-    if (typeof item === 'object' && item !== null) {
+  files.value.forEach((item) => {
+    if (typeof item === "object" && item !== null) {
       Object.entries(item).forEach(([filePath, fileData]) => {
         result.push({
           path: filePath,
-          ...fileData
+          ...fileData,
         });
       });
     }
@@ -182,34 +182,38 @@ const fileCount = computed(() => {
 });
 
 // 监听 agentState 变化，自动选择有内容的标签
-watch(() => props.agentState, (newState) => {
-  if (newState) {
-    if (hasFiles.value && !hasTodos.value) {
-      activeTab.value = 'files';
-    } else {
-      activeTab.value = 'todos';
+watch(
+  () => props.agentState,
+  (newState) => {
+    if (newState) {
+      if (hasFiles.value && !hasTodos.value) {
+        activeTab.value = "files";
+      } else {
+        activeTab.value = "todos";
+      }
     }
-  }
-}, { immediate: true });
+  },
+  { immediate: true },
+);
 
 // 方法
 const getFileName = (fileItem) => {
   if (fileItem.path) {
-    return fileItem.path.split('/').pop() || fileItem.path;
+    return fileItem.path.split("/").pop() || fileItem.path;
   }
-  return '未知文件';
+  return "未知文件";
 };
 
 const formatDate = (dateString) => {
-  if (!dateString) return '';
+  if (!dateString) return "";
   try {
     const date = new Date(dateString);
-    return date.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
+    return date.toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   } catch (error) {
     return dateString;
@@ -218,7 +222,7 @@ const formatDate = (dateString) => {
 
 const formatContent = (contentArray) => {
   if (!Array.isArray(contentArray)) return String(contentArray);
-  return contentArray.join('\n');
+  return contentArray.join("\n");
 };
 
 const showFileContent = (filePath, fileData) => {
@@ -230,15 +234,15 @@ const showFileContent = (filePath, fileData) => {
 const closeModal = () => {
   modalVisible.value = false;
   currentFile.value = null;
-  currentFilePath.value = '';
+  currentFilePath.value = "";
 };
 
 const downloadFile = (fileItem) => {
   try {
     const content = formatContent(fileItem.content);
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
 
     link.href = url;
     link.download = getFileName(fileItem);
@@ -247,12 +251,12 @@ const downloadFile = (fileItem) => {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   } catch (error) {
-    console.error('下载文件失败:', error);
+    console.error("下载文件失败:", error);
   }
 };
 
 const emitRefresh = () => {
-  emit('refresh');
+  emit("refresh");
 };
 </script>
 

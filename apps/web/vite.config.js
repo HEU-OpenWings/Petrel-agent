@@ -1,30 +1,30 @@
-import { fileURLToPath, URL } from 'node:url'
-import { defineConfig, loadEnv } from 'vite'
-import vue from '@vitejs/plugin-vue'
+import { fileURLToPath, URL } from "node:url";
+import vue from "@vitejs/plugin-vue";
+import { defineConfig, loadEnv } from "vite";
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
+  const env = loadEnv(mode, process.cwd(), "");
   return {
     plugins: [vue()],
     resolve: {
       alias: {
-        '@': fileURLToPath(new URL('./src', import.meta.url))
-      }
+        "@": fileURLToPath(new URL("./src", import.meta.url)),
+      },
     },
     server: {
       proxy: {
-        '^/api': {
+        "^/api": {
           // 与 api 同属一个 compose 网络，直接用服务名
-          target: env.VITE_API_URL || 'http://api:5050',
+          target: env.VITE_API_URL || "http://api:5050",
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, '/api')
-        }
+          rewrite: (path) => path.replace(/^\/api/, "/api"),
+        },
       },
       watch: {
         usePolling: true,
-        ignored: ['**/node_modules/**', '**/dist/**'],
+        ignored: ["**/node_modules/**", "**/dist/**"],
       },
-      host: '0.0.0.0',
-    }
-  }
-})
+      host: "0.0.0.0",
+    },
+  };
+});

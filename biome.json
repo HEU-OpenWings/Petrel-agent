@@ -1,7 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules", "!apps/web", "!packages/database/drizzle", "!.claude"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!packages/database/drizzle",
+      "!.claude",
+      "!**/*.svg",
+      "!apps/web/src/utils/templates/*.html"
+    ]
   },
   "formatter": {
     "indentStyle": "space",
@@ -20,5 +28,57 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["apps/web/**/*.vue"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useConst": "off",
+            "useImportType": "off"
+          },
+          "correctness": {
+            "noUnusedVariables": "off",
+            "noUnusedImports": "off",
+            "noVueDuplicateKeys": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/**/*.css"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDescendingSpecificity": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/**"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "useLiteralKeys": "off",
+            "noStaticOnlyClass": "off"
+          },
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    }
+  ]
 }

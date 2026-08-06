@@ -29,124 +29,132 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, nextTick, onMounted, onUpdated } from 'vue'
-import { DeploymentUnitOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import GraphCanvas from '../GraphCanvas.vue'
+import { DeploymentUnitOutlined, ReloadOutlined } from "@ant-design/icons-vue";
+import { computed, nextTick, onMounted, onUpdated, ref, watch } from "vue";
+import GraphCanvas from "../GraphCanvas.vue";
 
 const props = defineProps({
   data: {
     type: [Array, Object],
-    required: true
-  }
-})
+    required: true,
+  },
+});
 
-const activeKeys = ref(['entities'])
-const graphContainer = ref(null)
-const graphContainerRef = ref(null)
-const isVisible = ref(false)
-const isRefreshing = ref(false)
+const activeKeys = ref(["entities"]);
+const graphContainer = ref(null);
+const graphContainerRef = ref(null);
+const isVisible = ref(false);
+const isRefreshing = ref(false);
 
 // 计算属性：解析图谱数据
 const graphData = computed(() => {
-  const nodes = new Map()
-  const edges = []
-  let edgeId = 0
+  const nodes = new Map();
+  const edges = [];
+  let edgeId = 0;
 
   // 处理新格式数据：只关注 triples 字段
-  if (props.data && typeof props.data === 'object' && 'triples' in props.data) {
-    const { triples = [] } = props.data
+  if (props.data && typeof props.data === "object" && "triples" in props.data) {
+    const { triples = [] } = props.data;
 
     // 处理 triples 数据
-    triples.forEach(triple => {
+    triples.forEach((triple) => {
       if (Array.isArray(triple) && triple.length >= 3) {
-        const [source, relation, target] = triple
+        const [source, relation, target] = triple;
 
         // 添加源节点
-        if (source && typeof source === 'string') {
+        if (source && typeof source === "string") {
           if (!nodes.has(source)) {
             nodes.set(source, {
               id: source,
-              name: source
-            })
+              name: source,
+            });
           }
         }
 
         // 添加目标节点
-        if (target && typeof target === 'string') {
+        if (target && typeof target === "string") {
           if (!nodes.has(target)) {
             nodes.set(target, {
               id: target,
-              name: target
-            })
+              name: target,
+            });
           }
         }
 
         // 添加边
-        if (source && target && relation &&
-            typeof source === 'string' &&
-            typeof target === 'string' &&
-            typeof relation === 'string') {
+        if (
+          source &&
+          target &&
+          relation &&
+          typeof source === "string" &&
+          typeof target === "string" &&
+          typeof relation === "string"
+        ) {
           edges.push({
             source_id: source,
             target_id: target,
             type: relation,
-            id: `edge_${edgeId++}`
-          })
+            id: `edge_${edgeId++}`,
+          });
         }
       }
-    })
+    });
   }
 
   return {
     nodes: Array.from(nodes.values()),
-    edges: edges
-  }
-})
+    edges: edges,
+  };
+});
 
 // 唯一实体列表
 const uniqueEntities = computed(() => {
-  return graphData.value.nodes
-})
+  return graphData.value.nodes;
+});
 
 // 所有关系列表
 const allRelations = computed(() => {
-  return graphData.value.edges.map(edge => {
-    const sourceNode = graphData.value.nodes.find(n => n.id === edge.source_id)
-    const targetNode = graphData.value.nodes.find(n => n.id === edge.target_id)
+  return graphData.value.edges.map((edge) => {
+    const sourceNode = graphData.value.nodes.find((n) => n.id === edge.source_id);
+    const targetNode = graphData.value.nodes.find((n) => n.id === edge.target_id);
     return {
       source: sourceNode?.name || edge.source_id,
       target: targetNode?.name || edge.target_id,
-      type: edge.type
-    }
-  })
-})
+      type: edge.type,
+    };
+  });
+});
 
 // 统计信息
-const totalNodes = computed(() => graphData.value.nodes.length)
-const totalRelations = computed(() => graphData.value.edges.length)
+const totalNodes = computed(() => graphData.value.nodes.length);
+const totalRelations = computed(() => graphData.value.edges.length);
 
 // 检查容器是否可见
 const checkVisibility = () => {
   if (graphContainerRef.value) {
     const rect = graphContainerRef.value.getBoundingClientRect();
     isVisible.value = rect.width > 0 && rect.height > 0;
-    console.log('GraphContainer visibility:', isVisible.value, 'dimensions:', rect.width, 'x', rect.height);
+    console.log("GraphContainer visibility:", isVisible.value, "dimensions:", rect.width, "x", rect.height);
   }
 };
 
 // 当数据变化时强制刷新图表
-watch(() => props.data, async (newData, oldData) => {
-  // 确保数据确实发生了变化
-  if (newData !== oldData) {
-    await nextTick();
-    if (graphContainer.value && typeof graphContainer.value.refreshGraph === 'function') {
-      // 增加延迟确保容器完全展开
-      setTimeout(() => {
-        graphContainer.value.refreshGraph();
-      }, 300);
+watch(
+  () => props.data,
+  async (newData, oldData) => {
+    // 确保数据确实发生了变化
+    if (newData !== oldData) {
+      await nextTick();
+      if (graphContainer.value && typeof graphContainer.value.refreshGraph === "function") {
+        // 增加延迟确保容器完全展开
+        setTimeout(() => {
+          graphContainer.value.refreshGraph();
+        }, 300);
+      }
     }
-  }
-}, { deep: true });
+  },
+  { deep: true },
+);
 
 // 组件挂载后确保图表正确初始化
 onMounted(() => {
@@ -156,7 +164,7 @@ onMounted(() => {
   // 如果已经有数据，确保图表初始化
   if (graphData.value.nodes.length > 0 || graphData.value.edges.length > 0) {
     nextTick(() => {
-      if (graphContainer.value && typeof graphContainer.value.refreshGraph === 'function') {
+      if (graphContainer.value && typeof graphContainer.value.refreshGraph === "function") {
         // 增加延迟确保容器完全展开
         setTimeout(() => {
           graphContainer.value.refreshGraph();
@@ -168,8 +176,8 @@ onMounted(() => {
   // 添加一个间隔检查器，定期检查容器是否可见
   const visibilityChecker = setInterval(() => {
     checkVisibility();
-    if (isVisible.value && graphContainer.value && typeof graphContainer.value.refreshGraph === 'function') {
-      console.log('GraphContainer is now visible, rendering graph');
+    if (isVisible.value && graphContainer.value && typeof graphContainer.value.refreshGraph === "function") {
+      console.log("GraphContainer is now visible, rendering graph");
       graphContainer.value.refreshGraph();
       clearInterval(visibilityChecker);
     }
@@ -189,7 +197,7 @@ onUpdated(() => {
   // 如果已经有数据，确保图表初始化
   if (graphData.value.nodes.length > 0 || graphData.value.edges.length > 0) {
     nextTick(() => {
-      if (graphContainer.value && typeof graphContainer.value.refreshGraph === 'function') {
+      if (graphContainer.value && typeof graphContainer.value.refreshGraph === "function") {
         // 增加延迟确保容器完全展开
         setTimeout(() => {
           graphContainer.value.refreshGraph();
@@ -201,9 +209,9 @@ onUpdated(() => {
 
 // 添加供父组件调用的刷新方法
 const refreshGraph = () => {
-  console.log('KnowledgeGraphResult: refreshGraph called');
+  console.log("KnowledgeGraphResult: refreshGraph called");
   isRefreshing.value = true;
-  if (graphContainer.value && typeof graphContainer.value.refreshGraph === 'function') {
+  if (graphContainer.value && typeof graphContainer.value.refreshGraph === "function") {
     // 增加延迟确保容器完全展开
     setTimeout(() => {
       graphContainer.value.refreshGraph();
@@ -216,10 +224,9 @@ const refreshGraph = () => {
   }
 };
 
-
 // 向父组件暴露方法
 defineExpose({
-  refreshGraph
+  refreshGraph,
 });
 </script>
 
@@ -293,8 +300,8 @@ defineExpose({
     border: 1px solid var(--gray-200);
 
     :deep(.ant-collapse-header) {
-      background: var(--gray-50) !important;
-      border-radius: 4px !important;
+      background: var(--gray-50);
+      border-radius: 4px;
       margin-bottom: 2px;
       font-size: 13px;
     }

@@ -25,60 +25,60 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { message } from 'ant-design-vue'
-import { databaseApi } from '@/apis/knowledge_api'
-import { Sparkles } from 'lucide-vue-next'
+import { message } from "ant-design-vue";
+import { Sparkles } from "lucide-vue-next";
+import { ref } from "vue";
+import { databaseApi } from "@/apis/knowledge_api";
 
 const props = defineProps({
   modelValue: {
     type: String,
-    default: ''
+    default: "",
   },
   name: {
     type: String,
-    default: ''
+    default: "",
   },
   placeholder: {
     type: String,
-    default: ''
+    default: "",
   },
   rows: {
     type: Number,
-    default: 4
+    default: 4,
   },
   autoSize: {
     type: [Boolean, Object],
-    default: false
-  }
-})
+    default: false,
+  },
+});
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(["update:modelValue"]);
 
-const loading = ref(false)
+const loading = ref(false);
 
 const generateDescription = async () => {
   if (!props.name?.trim()) {
-    message.warning('请先输入知识库名称')
-    return
+    message.warning("请先输入知识库名称");
+    return;
   }
 
-  loading.value = true
+  loading.value = true;
   try {
-    const result = await databaseApi.generateDescription(props.name, props.modelValue)
-    if (result.status === 'success' && result.description) {
-      emit('update:modelValue', result.description)
-      message.success('描述生成成功')
+    const result = await databaseApi.generateDescription(props.name, props.modelValue);
+    if (result.status === "success" && result.description) {
+      emit("update:modelValue", result.description);
+      message.success("描述生成成功");
     } else {
-      message.error(result.message || '生成失败')
+      message.error(result.message || "生成失败");
     }
   } catch (error) {
-    console.error('生成描述失败:', error)
-    message.error(error.message || '生成描述失败')
+    console.error("生成描述失败:", error);
+    message.error(error.message || "生成描述失败");
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-}
+};
 </script>
 
 <style lang="less" scoped>

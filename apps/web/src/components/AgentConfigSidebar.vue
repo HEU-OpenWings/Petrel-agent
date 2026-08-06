@@ -56,7 +56,7 @@
                 <div v-if="value.template_metadata.kind === 'llm'" class="model-selector">
                   <ModelSelectorComponent
                     @select-model="handleModelChange"
-                    :model_spec="agentConfig[key] || ''"
+                    :model-spec="agentConfig[key] || ''"
                   />
                 </div>
 
@@ -231,7 +231,7 @@
       title="选择工具"
       :width="800"
       :footer="null"
-      :maskClosable="false"
+      :mask-closable="false"
       class="tools-modal"
     >
       <div class="tools-modal-content">
@@ -284,50 +284,42 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue';
 import {
-  SettingOutlined,
-  CloseOutlined,
   CheckCircleOutlined,
+  CloseOutlined,
   PlusCircleOutlined,
-  SearchOutlined
-} from '@ant-design/icons-vue';
-import { message } from 'ant-design-vue';
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue';
-import { useAgentStore } from '@/stores/agent';
-import { storeToRefs } from 'pinia';
+  SearchOutlined,
+  SettingOutlined,
+} from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { storeToRefs } from "pinia";
+import { computed, nextTick, ref, watch } from "vue";
+import ModelSelectorComponent from "@/components/ModelSelectorComponent.vue";
+import { useAgentStore } from "@/stores/agent";
 
 // Props
 const props = defineProps({
   isOpen: {
     type: Boolean,
-    default: false
-  }
+    default: false,
+  },
 });
 
 // Emits
-const emit = defineEmits([
-  'close'
-]);
+const emit = defineEmits(["close"]);
 
 // Store 管理
 const agentStore = useAgentStore();
-const {
-  availableTools,
-  selectedAgent,
-  selectedAgentId,
-  agentConfig,
-  configurableItems
-} = storeToRefs(agentStore);
+const { availableTools, selectedAgent, selectedAgentId, agentConfig, configurableItems } =
+  storeToRefs(agentStore);
 
 // console.log(availableTools.value)
 
 // 本地状态
 const toolsModalOpen = ref(false);
 const selectedTools = ref([]);
-const toolsSearchText = ref('');
+const toolsSearchText = ref("");
 const systemPromptEditMode = ref(false);
-
 
 const isEmptyConfig = computed(() => {
   return !selectedAgentId.value || Object.keys(configurableItems.value).length === 0;
@@ -339,15 +331,15 @@ const filteredTools = computed(() => {
     return toolsList;
   }
   const searchLower = toolsSearchText.value.toLowerCase();
-  return toolsList.filter(tool =>
-    tool.name.toLowerCase().includes(searchLower) ||
-    tool.description.toLowerCase().includes(searchLower)
+  return toolsList.filter(
+    (tool) =>
+      tool.name.toLowerCase().includes(searchLower) || tool.description.toLowerCase().includes(searchLower),
   );
 });
 
 // 方法
 const closeSidebar = () => {
-  emit('close');
+  emit("close");
 };
 
 const getConfigLabel = (key, value) => {
@@ -359,14 +351,14 @@ const getConfigLabel = (key, value) => {
   return key;
 };
 
-const getPlaceholder = (key, value) => {
+const getPlaceholder = (_key, value) => {
   return `（默认: ${value.default}）`;
 };
 
 const handleModelChange = (spec) => {
-  if (typeof spec !== 'string' || !spec) return;
+  if (typeof spec !== "string" || !spec) return;
   agentStore.updateAgentConfig({
-    model: spec
+    model: spec,
   });
 };
 
@@ -400,25 +392,25 @@ const toggleOption = (key, option) => {
   }
 
   agentStore.updateAgentConfig({
-    [key]: currentOptions
+    [key]: currentOptions,
   });
 };
 
 const clearSelection = (key) => {
   agentStore.updateAgentConfig({
-    [key]: []
+    [key]: [],
   });
 };
 
 // 工具相关方法
 const getToolNameById = (toolId) => {
   const toolsList = availableTools.value ? Object.values(availableTools.value) : [];
-  const tool = toolsList.find(t => t.id === toolId);
+  const tool = toolsList.find((t) => t.id === toolId);
   return tool ? tool.name : toolId;
 };
 
 const openToolsModal = async () => {
-  console.log("availableTools.value", availableTools.value)
+  console.log("availableTools.value", availableTools.value);
   try {
     // 强制刷新智能体详情以获取最新工具列表
     if (selectedAgentId.value) {
@@ -427,8 +419,8 @@ const openToolsModal = async () => {
     selectedTools.value = [...(agentConfig.value?.tools || [])];
     toolsModalOpen.value = true;
   } catch (error) {
-    console.error('打开工具选择弹窗失败:', error);
-    message.error('打开工具选择弹窗失败');
+    console.error("打开工具选择弹窗失败:", error);
+    message.error("打开工具选择弹窗失败");
   }
 };
 
@@ -447,22 +439,22 @@ const removeSelectedTool = (toolId) => {
   if (index > -1) {
     currentTools.splice(index, 1);
     agentStore.updateAgentConfig({
-      tools: currentTools
+      tools: currentTools,
     });
   }
 };
 
 const confirmToolsSelection = () => {
   agentStore.updateAgentConfig({
-    tools: [...selectedTools.value]
+    tools: [...selectedTools.value],
   });
   toolsModalOpen.value = false;
-  toolsSearchText.value = '';
+  toolsSearchText.value = "";
 };
 
 const cancelToolsSelection = () => {
   toolsModalOpen.value = false;
-  toolsSearchText.value = '';
+  toolsSearchText.value = "";
   selectedTools.value = [];
 };
 
@@ -471,7 +463,7 @@ const enterEditMode = () => {
   systemPromptEditMode.value = true;
   // 使用 nextTick 确保 DOM 更新后再聚焦
   nextTick(() => {
-    const textarea = document.querySelector('.system-prompt-input');
+    const textarea = document.querySelector(".system-prompt-input");
     if (textarea) {
       textarea.focus();
     }
@@ -484,14 +476,16 @@ const validateAndFilterConfig = () => {
   const configItems = configurableItems.value;
 
   // 遍历所有配置项
-  Object.keys(configItems).forEach(key => {
+  Object.keys(configItems).forEach((key) => {
     const configItem = configItems[key];
     const currentValue = validatedConfig[key];
 
     // 检查工具配置
-    if (configItem.template_metadata?.kind === 'tools' && Array.isArray(currentValue)) {
-      const availableToolIds = availableTools.value ? Object.values(availableTools.value).map(tool => tool.id) : [];
-      validatedConfig[key] = currentValue.filter(toolId => availableToolIds.includes(toolId));
+    if (configItem.template_metadata?.kind === "tools" && Array.isArray(currentValue)) {
+      const availableToolIds = availableTools.value
+        ? Object.values(availableTools.value).map((tool) => tool.id)
+        : [];
+      validatedConfig[key] = currentValue.filter((toolId) => availableToolIds.includes(toolId));
 
       if (validatedConfig[key].length !== currentValue.length) {
         console.warn(`工具配置 ${key} 中包含无效的工具ID，已自动过滤`);
@@ -499,9 +493,9 @@ const validateAndFilterConfig = () => {
     }
 
     // 检查多选配置项 (type === 'list' 且有 options)
-    else if (configItem.type === 'list' && configItem.options && Array.isArray(currentValue)) {
+    else if (configItem.type === "list" && configItem.options && Array.isArray(currentValue)) {
       const validOptions = configItem.options;
-      validatedConfig[key] = currentValue.filter(value => validOptions.includes(value));
+      validatedConfig[key] = currentValue.filter((value) => validOptions.includes(value));
 
       if (validatedConfig[key].length !== currentValue.length) {
         console.warn(`配置项 ${key} 中包含无效的选项，已自动过滤`);
@@ -515,7 +509,7 @@ const validateAndFilterConfig = () => {
 // 配置保存和重置
 const saveConfig = async () => {
   if (!selectedAgentId.value) {
-    message.error('没有选择智能体');
+    message.error("没有选择智能体");
     return;
   }
 
@@ -526,29 +520,29 @@ const saveConfig = async () => {
     // 如果配置有变化，先更新到store
     if (JSON.stringify(validatedConfig) !== JSON.stringify(agentConfig.value)) {
       agentStore.updateAgentConfig(validatedConfig);
-      message.info('检测到无效配置项，已自动过滤');
+      message.info("检测到无效配置项，已自动过滤");
     }
 
     await agentStore.saveAgentConfig();
-    message.success('配置已保存到服务器');
+    message.success("配置已保存到服务器");
   } catch (error) {
-    console.error('保存配置到服务器出错:', error);
-    message.error('保存配置到服务器失败');
+    console.error("保存配置到服务器出错:", error);
+    message.error("保存配置到服务器失败");
   }
 };
 
 const resetConfig = async () => {
   if (!selectedAgentId.value) {
-    message.error('没有选择智能体');
+    message.error("没有选择智能体");
     return;
   }
 
   try {
     agentStore.resetAgentConfig();
-    message.info('配置已重置');
+    message.info("配置已重置");
   } catch (error) {
-    console.error('重置配置出错:', error);
-    message.error('重置配置失败');
+    console.error("重置配置出错:", error);
+    message.error("重置配置失败");
   }
 };
 </script>

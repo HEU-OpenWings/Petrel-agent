@@ -48,40 +48,40 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/user'
-import { safeRedirect } from '@/utils/redirect'
+import { reactive, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useUserStore } from "@/stores/user";
+import { safeRedirect } from "@/utils/redirect";
 
-const router = useRouter()
-const route = useRoute()
-const userStore = useUserStore()
+const router = useRouter();
+const route = useRoute();
+const userStore = useUserStore();
 
-const isRegister = ref(false)
-const submitting = ref(false)
-const errorMessage = ref('')
-const form = reactive({ email: '', password: '' })
+const isRegister = ref(false);
+const submitting = ref(false);
+const errorMessage = ref("");
+const form = reactive({ email: "", password: "" });
 
 function toggleMode() {
-  isRegister.value = !isRegister.value
-  errorMessage.value = ''
+  isRegister.value = !isRegister.value;
+  errorMessage.value = "";
 }
 
 async function handleSubmit() {
-  submitting.value = true
-  errorMessage.value = ''
+  submitting.value = true;
+  errorMessage.value = "";
   try {
     if (isRegister.value) {
-      await userStore.register(form.email, form.password)
+      await userStore.register(form.email, form.password);
     } else {
-      await userStore.login(form.email, form.password)
+      await userStore.login(form.email, form.password);
     }
     // 守卫把原目标放在 redirect 里，登录后回到它；safeRedirect 挡开放重定向
-    router.push(safeRedirect(route.query.redirect))
+    router.push(safeRedirect(route.query.redirect));
   } catch (error) {
-    errorMessage.value = error.message || '操作失败，请重试'
+    errorMessage.value = error.message || "操作失败，请重试";
   } finally {
-    submitting.value = false
+    submitting.value = false;
   }
 }
 </script>

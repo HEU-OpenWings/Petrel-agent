@@ -1,6 +1,6 @@
-import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
-import { loginApi, logoutApi, meApi, registerApi } from '@/apis/auth_api'
+import { defineStore } from "pinia";
+import { computed, ref } from "vue";
+import { loginApi, logoutApi, meApi, registerApi } from "@/apis/auth_api";
 
 /**
  * 用户状态。
@@ -8,32 +8,32 @@ import { loginApi, logoutApi, meApi, registerApi } from '@/apis/auth_api'
  * token 不在这里——它在 httpOnly cookie 里，JS 读不到也不需要读。
  * 代价是刷新页面后必须调一次 /api/auth/me 才知道自己是谁，见 main.js。
  */
-export const useUserStore = defineStore('user', () => {
-  const user = ref(null)
+export const useUserStore = defineStore("user", () => {
+  const user = ref(null);
 
-  const isLoggedIn = computed(() => user.value !== null)
-  const isAdmin = computed(() => user.value?.role === 'admin')
+  const isLoggedIn = computed(() => user.value !== null);
+  const isAdmin = computed(() => user.value?.role === "admin");
   /** 展示名取邮箱前缀，不单独落库 */
-  const displayName = computed(() => user.value?.email?.split('@')[0] ?? '')
+  const displayName = computed(() => user.value?.email?.split("@")[0] ?? "");
 
   async function login(email, password) {
-    const data = await loginApi(email, password)
-    user.value = data.user
-    return data.user
+    const data = await loginApi(email, password);
+    user.value = data.user;
+    return data.user;
   }
 
   async function register(email, password) {
-    const data = await registerApi(email, password)
-    user.value = data.user
-    return data.user
+    const data = await registerApi(email, password);
+    user.value = data.user;
+    return data.user;
   }
 
   async function logout() {
     // 先同步清本地态：http.js 的 401 分支不 await 本函数，紧接着就跳转登录页，
     // 跳转发生的那一刻必须已经是未登录态，否则路由守卫会把人当成已登录再弹走
-    user.value = null
+    user.value = null;
     try {
-      await logoutApi()
+      await logoutApi();
     } catch {
       // 后端不可达时不阻断本地登出
     }
@@ -48,9 +48,9 @@ export const useUserStore = defineStore('user', () => {
    * 该不该跳登录页由路由守卫按 meta.requiresAuth 决定。
    */
   async function fetchMe() {
-    const data = await meApi()
-    user.value = data.user
-    return data.user
+    const data = await meApi();
+    user.value = data.user;
+    return data.user;
   }
 
   /**
@@ -59,7 +59,7 @@ export const useUserStore = defineStore('user', () => {
    * userStore.getAuthHeaders()，删掉会让它们运行时 TypeError。
    * cookie 方案下不需要手动加认证头，返回空对象即可。
    */
-  const getAuthHeaders = () => ({})
+  const getAuthHeaders = () => ({});
 
   return {
     user,
@@ -70,9 +70,9 @@ export const useUserStore = defineStore('user', () => {
     register,
     logout,
     fetchMe,
-    getAuthHeaders
-  }
-})
+    getAuthHeaders,
+  };
+});
 
 /**
  * 以下两个是兼容垫片（具名导入），不是新功能。
@@ -87,12 +87,12 @@ export const useUserStore = defineStore('user', () => {
  */
 
 export const checkAdminPermission = () => {
-  const userStore = useUserStore()
+  const userStore = useUserStore();
   if (!userStore.isAdmin) {
-    throw new Error('需要管理员权限')
+    throw new Error("需要管理员权限");
   }
-  return true
-}
+  return true;
+};
 
 /** v0.5 没有 superadmin 这一级，等同于 admin 校验 */
-export const checkSuperAdminPermission = checkAdminPermission
+export const checkSuperAdminPermission = checkAdminPermission;

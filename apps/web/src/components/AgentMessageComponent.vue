@@ -15,7 +15,7 @@
     <!-- 助手消息 -->
     <div v-else-if="message.type === 'ai'" class="assistant-message">
       <div v-if="parsedData.reasoning_content" class="reasoning-box">
-        <a-collapse v-model:activeKey="reasoningActiveKey" :bordered="false">
+        <a-collapse v-model:active-key="reasoningActiveKey" :bordered="false">
           <template #expandIcon="{ isActive }">
             <caret-right-outlined :rotate="isActive ? 90 : 0" />
           </template>
@@ -27,11 +27,11 @@
 
       <!-- 消息内容 -->
       <MdPreview v-if="parsedData.content" ref="editorRef"
-        editorId="preview-only"
+        editor-id="preview-only"
         :theme="theme"
-        previewTheme="github"
-        :showCodeRowNumber="false"
-        :modelValue="parsedData.content"
+        preview-theme="github"
+        :show-code-row-number="false"
+        :model-value="parsedData.content"
         :key="message.id"
         class="message-md"/>
 
@@ -103,56 +103,54 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
-import { CaretRightOutlined, ThunderboltOutlined, LoadingOutlined } from '@ant-design/icons-vue';
-import RefsComponent from '@/components/RefsComponent.vue'
-import { Loader, CircleCheckBig, Copy, Check } from 'lucide-vue-next';
-import { ToolResultRenderer } from '@/components/ToolCallingResult'
-import { useAgentStore } from '@/stores/agent'
-import { useInfoStore } from '@/stores/info'
-import { useThemeStore } from '@/stores/theme'
-import { storeToRefs } from 'pinia'
-
-
-import { MdPreview } from 'md-editor-v3'
-import 'md-editor-v3/lib/preview.css';
+import { CaretRightOutlined, LoadingOutlined, ThunderboltOutlined } from "@ant-design/icons-vue";
+import { Check, CircleCheckBig, Copy, Loader } from "lucide-vue-next";
+import { MdPreview } from "md-editor-v3";
+import { storeToRefs } from "pinia";
+import { computed, ref } from "vue";
+import RefsComponent from "@/components/RefsComponent.vue";
+import { ToolResultRenderer } from "@/components/ToolCallingResult";
+import { useAgentStore } from "@/stores/agent";
+import { useInfoStore } from "@/stores/info";
+import { useThemeStore } from "@/stores/theme";
+import "md-editor-v3/lib/preview.css";
 
 const props = defineProps({
   // 消息角色：'user'|'assistant'|'sent'|'received'
   message: {
     type: Object,
-    required: true
+    required: true,
   },
   // 是否正在处理中
   isProcessing: {
     type: Boolean,
-    default: false
+    default: false,
   },
   // 自定义类
   customClasses: {
     type: Object,
-    default: () => ({})
+    default: () => ({}),
   },
   // 是否显示推理过程
   showRefs: {
     type: [Array, Boolean],
-    default: () => false
+    default: () => false,
   },
   // 是否为最新消息
   isLatestMessage: {
     type: Boolean,
-    default: false
+    default: false,
   },
   // 是否显示调试信息 (已废弃，使用 infoStore.debugMode)
   debugMode: {
     type: Boolean,
-    default: false
-  }
+    default: false,
+  },
 });
 
-const editorRef = ref()
+const editorRef = ref();
 
-const emit = defineEmits(['retry', 'retryStoppedMessage', 'openRefs']);
+const emit = defineEmits(["retry", "retryStoppedMessage", "openRefs"]);
 
 // 复制状态
 const isCopied = ref(false);
@@ -165,12 +163,12 @@ const copyToClipboard = async (text) => {
       isCopied.value = false;
     }, 2000);
   } catch (err) {
-    console.error('Failed to copy: ', err);
+    console.error("Failed to copy: ", err);
   }
 };
 
 // 推理面板展开状态
-const reasoningActiveKey = ref(['hide']);
+const reasoningActiveKey = ref(["hide"]);
 const expandedToolCalls = ref(new Set()); // 展开的工具调用集合
 
 // 错误消息处理
@@ -192,14 +190,14 @@ const getErrorMessage = computed(() => {
 
   // 对于已知的错误类型，返回默认提示
   switch (props.message.error_type) {
-    case 'interrupted':
-      return '回答生成已中断';
-    case 'content_guard_blocked':
-      return '检测到敏感内容，已中断输出';
-    case 'unexpect':
-      return '生成过程中出现异常';
-    case 'agent_error':
-      return '智能体获取失败';
+    case "interrupted":
+      return "回答生成已中断";
+    case "content_guard_blocked":
+      return "检测到敏感内容，已中断输出";
+    case "unexpect":
+      return "生成过程中出现异常";
+    case "agent_error":
+      return "智能体获取失败";
     default:
       return null;
   }
@@ -212,33 +210,33 @@ const themeStore = useThemeStore();
 const { availableTools } = storeToRefs(agentStore);
 
 // 主题设置 - 根据系统主题动态切换
-const theme = computed(() => themeStore.isDark ? 'dark' : 'light');
+const theme = computed(() => (themeStore.isDark ? "dark" : "light"));
 
 // 工具相关方法
 const getToolNameByToolCall = (toolCall) => {
   const toolId = toolCall.name || toolCall.function?.name;
   const toolsList = availableTools.value ? Object.values(availableTools.value) : [];
-  const tool = toolsList.find(t => t.id === toolId);
+  const tool = toolsList.find((t) => t.id === toolId);
   return tool ? tool.name : toolId;
 };
 
 const getFormattedToolArgs = (toolCall) => {
   const args = toolCall.args ? toolCall.args : toolCall.function?.arguments;
-  if (!args) return '';
+  if (!args) return "";
 
   try {
     // 尝试解析JSON格式的参数
-    if (typeof args === 'string' && args.trim().startsWith('{')) {
+    if (typeof args === "string" && args.trim().startsWith("{")) {
       const parsed = JSON.parse(args);
       return JSON.stringify(parsed, null, 2);
-    } else if (typeof args === 'object' && args !== null) {
+    } else if (typeof args === "object" && args !== null) {
       // 如果是对象类型，直接转换为字符串
-      console.log('Object args:', args);
+      console.log("Object args:", args);
       return JSON.stringify(args, null, 2);
     }
   } catch (e) {
     // 如果解析失败，直接返回原始字符串
-    console.log('Failed to parse tool arguments as JSON:', args);
+    console.log("Failed to parse tool arguments as JSON:", args);
   }
 
   return args;
@@ -250,26 +248,28 @@ const validToolCalls = computed(() => {
     return [];
   }
 
-  return props.message.tool_calls.filter(toolCall => {
+  return props.message.tool_calls.filter((toolCall) => {
     // 过滤掉无效的工具调用
-    return toolCall &&
-           (toolCall.id || toolCall.name) &&
-           (toolCall.args !== undefined ||
-            toolCall.function?.arguments !== undefined ||
-            toolCall.tool_call_result !== undefined);
+    return (
+      toolCall &&
+      (toolCall.id || toolCall.name) &&
+      (toolCall.args !== undefined ||
+        toolCall.function?.arguments !== undefined ||
+        toolCall.tool_call_result !== undefined)
+    );
   });
 });
 
 const parsedData = computed(() => {
   // Start with default values from the prop to avoid mutation.
-  let content = props.message.content.trim() || '';
-  let reasoning_content = props.message.additional_kwargs?.reasoning_content || '';
+  let content = props.message.content.trim() || "";
+  let reasoning_content = props.message.additional_kwargs?.reasoning_content || "";
 
   if (reasoning_content) {
     return {
       content,
       reasoning_content,
-    }
+    };
   }
 
   // Regex to find <think>...</think> or an unclosed <think>... at the end of the string.
@@ -278,9 +278,9 @@ const parsedData = computed(() => {
 
   if (thinkMatch) {
     // The captured reasoning is in either group 1 (closed tag) or 2 (unclosed tag).
-    reasoning_content = (thinkMatch[1] || thinkMatch[2] || '').trim();
+    reasoning_content = (thinkMatch[1] || thinkMatch[2] || "").trim();
     // Remove the entire matched <think> block from the original content.
-    content = content.replace(thinkMatch[0], '').trim();
+    content = content.replace(thinkMatch[0], "").trim();
   }
 
   return {
@@ -628,10 +628,10 @@ const toggleToolCall = (toolCallId) => {
 
 .ant-btn-icon-only {
   &:has(.anticon-stop) {
-    background-color: var(--color-error-500) !important;
+    background-color: var(--color-error-500);
 
     &:hover {
-      background-color: var(--color-error-100) !important;
+      background-color: var(--color-error-100);
     }
   }
 }

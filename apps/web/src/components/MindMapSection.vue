@@ -52,34 +52,29 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { message } from 'ant-design-vue'
-import {
-  RefreshCw,
-  Network,
-  Sparkles,
-  Maximize2
-} from 'lucide-vue-next'
-import { mindmapApi } from '@/apis/mindmap_api'
-import { Markmap } from 'markmap-view'
-import { Transformer } from 'markmap-lib'
+import { message } from "ant-design-vue";
+import { Maximize2, Network, RefreshCw, Sparkles } from "lucide-vue-next";
+import { Transformer } from "markmap-lib";
+import { Markmap } from "markmap-view";
+import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { mindmapApi } from "@/apis/mindmap_api";
 
 const props = defineProps({
   databaseId: {
     type: String,
-    required: true
-  }
-})
+    required: true,
+  },
+});
 
 // ============================================================================
 // 状态管理
 // ============================================================================
 
-const loading = ref(false)
-const generating = ref(false)
-const mindmapData = ref(null)
-const mindmapSvg = ref(null)
-let markmapInstance = null
+const loading = ref(false);
+const generating = ref(false);
+const mindmapData = ref(null);
+const mindmapSvg = ref(null);
+let markmapInstance = null;
 
 // ============================================================================
 // 方法
@@ -89,126 +84,130 @@ let markmapInstance = null
  * 加载思维导图
  */
 const loadMindmap = async () => {
-  if (!props.databaseId) return
+  if (!props.databaseId) return;
 
   try {
-    loading.value = true
-    const response = await mindmapApi.getByDatabase(props.databaseId)
+    loading.value = true;
+    const response = await mindmapApi.getByDatabase(props.databaseId);
 
     if (response.mindmap) {
-      mindmapData.value = response.mindmap
-      await nextTick()
+      mindmapData.value = response.mindmap;
+      await nextTick();
 
       // 延迟渲染，确保DOM完全更新
       setTimeout(() => {
-        renderMindmap(response.mindmap)
-      }, 100)
+        renderMindmap(response.mindmap);
+      }, 100);
     }
   } catch (error) {
     // 如果是404错误，说明还没有生成，静默处理
-    if (error?.message?.includes('404') || error?.message?.includes('不存在') || error?.message?.includes('还没有生成')) {
-      mindmapData.value = null
+    if (
+      error?.message?.includes("404") ||
+      error?.message?.includes("不存在") ||
+      error?.message?.includes("还没有生成")
+    ) {
+      mindmapData.value = null;
     } else {
-      console.error('加载思维导图失败:', error)
-      const errorMsg = error?.message || String(error)
-      message.error('加载思维导图失败: ' + errorMsg)
+      console.error("加载思维导图失败:", error);
+      const errorMsg = error?.message || String(error);
+      message.error(`加载思维导图失败: ${errorMsg}`);
     }
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-}
+};
 
 /**
  * 生成思维导图
  */
 const generateMindmap = async () => {
-  if (!props.databaseId) return
+  if (!props.databaseId) return;
 
   try {
-    generating.value = true
+    generating.value = true;
 
     const response = await mindmapApi.generateMindmap(
       props.databaseId,
       [], // 使用所有文件
-      '' // 无自定义提示
-    )
+      "", // 无自定义提示
+    );
 
-    mindmapData.value = response.mindmap
+    mindmapData.value = response.mindmap;
 
     // 等待DOM更新
-    await nextTick()
+    await nextTick();
 
     // 再延迟一点，确保SVG元素完全渲染
     setTimeout(() => {
-      renderMindmap(response.mindmap)
-      message.success('思维导图生成成功！')
-    }, 100)
+      renderMindmap(response.mindmap);
+      message.success("思维导图生成成功！");
+    }, 100);
   } catch (error) {
-    console.error('生成思维导图失败:', error)
-    const errorMsg = error?.message || String(error)
-    message.error('生成失败: ' + errorMsg)
+    console.error("生成思维导图失败:", error);
+    const errorMsg = error?.message || String(error);
+    message.error(`生成失败: ${errorMsg}`);
   } finally {
-    generating.value = false
+    generating.value = false;
   }
-}
+};
 
 /**
  * 刷新思维导图
  */
 const refreshMindmap = async () => {
-  await generateMindmap()
-}
+  await generateMindmap();
+};
 
 /**
  * 将JSON转换为Markdown
  */
 const jsonToMarkdown = (node, level = 0) => {
-  if (!node || !node.content) return ''
+  if (!node?.content) return "";
 
-  const indent = '#'.repeat(level + 1)
-  let markdown = `${indent} ${node.content}\n\n`
+  const indent = "#".repeat(level + 1);
+  let markdown = `${indent} ${node.content}\n\n`;
 
   if (node.children && node.children.length > 0) {
     for (const child of node.children) {
-      markdown += jsonToMarkdown(child, level + 1)
+      markdown += jsonToMarkdown(child, level + 1);
     }
   }
 
-  return markdown
-}
+  return markdown;
+};
 
 /**
  * 渲染思维导图
  */
 const renderMindmap = (data, retryCount = 0) => {
-  if (!data) return
+  if (!data) return;
 
   if (!mindmapSvg.value) {
     // 如果SVG引用还没准备好，最多重试3次
     if (retryCount < 3) {
       setTimeout(() => {
-        renderMindmap(data, retryCount + 1)
-      }, 100)
-      return
+        renderMindmap(data, retryCount + 1);
+      }, 100);
+      return;
     } else {
-      console.error('无法获取SVG容器，渲染失败')
-      message.error('渲染失败：无法找到SVG容器')
-      return
+      console.error("无法获取SVG容器，渲染失败");
+      message.error("渲染失败：无法找到SVG容器");
+      return;
     }
   }
 
   try {
     // 清空之前的实例
     if (markmapInstance) {
-      markmapInstance.destroy()
+      markmapInstance.destroy();
     }
 
     // 将JSON转换为Markdown
-    const markdown = jsonToMarkdown(data)
+    const markdown = jsonToMarkdown(data);
 
     // 使用Transformer转换
-    const transformer = new Transformer()
-    const { root } = transformer.transform(markdown)
+    const transformer = new Transformer();
+    const { root } = transformer.transform(markdown);
 
     // 创建Markmap实例
     markmapInstance = Markmap.create(mindmapSvg.value, {
@@ -217,81 +216,85 @@ const renderMindmap = (data, retryCount = 0) => {
       nodeMinHeight: 24,
       paddingX: 8,
       spacingVertical: 5,
-      spacingHorizontal: 60
-    })
+      spacingHorizontal: 60,
+    });
 
-    markmapInstance.setData(root)
-    markmapInstance.fit()
+    markmapInstance.setData(root);
+    markmapInstance.fit();
 
     // 延迟再次适应，确保布局完全稳定
     setTimeout(() => {
       if (markmapInstance) {
-        markmapInstance.fit()
+        markmapInstance.fit();
       }
-    }, 300)
+    }, 300);
   } catch (error) {
-    console.error('渲染思维导图失败:', error)
-    message.error('渲染失败: ' + error.message)
+    console.error("渲染思维导图失败:", error);
+    message.error(`渲染失败: ${error.message}`);
   }
-}
+};
 
 /**
  * 适应视图
  */
 const fitView = () => {
   if (markmapInstance) {
-    markmapInstance.fit()
+    markmapInstance.fit();
   }
-}
+};
 
 /**
  * 暴露给父组件的方法
  */
 defineExpose({
   refreshMindmap,
-  generateMindmap
-})
+  generateMindmap,
+});
 
 // ============================================================================
 // 生命周期
 // ============================================================================
 
 // 监听数据库ID变化
-watch(() => props.databaseId, (newId) => {
-  if (newId) {
-    loadMindmap()
-  }
-}, { immediate: true })
+watch(
+  () => props.databaseId,
+  (newId) => {
+    if (newId) {
+      loadMindmap();
+    }
+  },
+  { immediate: true },
+);
 
 // 监听容器大小变化，自动适应
-let resizeObserver = null
+let resizeObserver = null;
 
 onMounted(() => {
   // 设置ResizeObserver监听容器大小变化
   nextTick(() => {
     if (mindmapSvg.value) {
-      const container = mindmapSvg.value.parentElement
+      const container = mindmapSvg.value.parentElement;
       if (container) {
         resizeObserver = new ResizeObserver(() => {
           if (markmapInstance) {
-            markmapInstance.fit()
+            markmapInstance.fit();
           }
-        })
-        resizeObserver.observe(container)
+        });
+        resizeObserver.observe(container);
       }
     }
-  })
-})
+  });
+});
 
 // 清理
 onUnmounted(() => {
   if (markmapInstance) {
-    markmapInstance.destroy()
+    markmapInstance.destroy();
   }
   if (resizeObserver) {
-    resizeObserver.disconnect()
+    resizeObserver.disconnect();
   }
-})
+});
 </script>
 
 <style scoped lang="less">
@@ -381,8 +384,8 @@ onUnmounted(() => {
 
 // 确保父容器有高度
 :deep(.markmap) {
-  width: 100% !important;
-  height: 100% !important;
+  width: 100%;
+  height: 100%;
 }
 </style>
 

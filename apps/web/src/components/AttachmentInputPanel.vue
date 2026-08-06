@@ -42,43 +42,43 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { Paperclip, Trash2 } from 'lucide-vue-next'
+import { Paperclip, Trash2 } from "lucide-vue-next";
+import { computed } from "vue";
 
 const props = defineProps({
   attachments: { type: Array, default: () => [] },
   limits: { type: Object, default: () => null },
   isUploading: { type: Boolean, default: false },
-  disabled: { type: Boolean, default: false }
-})
+  disabled: { type: Boolean, default: false },
+});
 
-const emit = defineEmits(['upload', 'remove'])
+const emit = defineEmits(["upload", "remove"]);
 
 const extensionsText = computed(() => {
-  if (!props.limits?.allowed_extensions?.length) return 'txt/md/docx/html'
-  return props.limits.allowed_extensions.map(item => item.replace('.', '')).join(' / ')
-})
+  if (!props.limits?.allowed_extensions?.length) return "txt/md/docx/html";
+  return props.limits.allowed_extensions.map((item) => item.replace(".", "")).join(" / ");
+});
 
 const sizeHint = computed(() => {
-  if (!props.limits?.max_size_bytes) return '5 MB'
-  const mb = props.limits.max_size_bytes / (1024 * 1024)
-  return `${mb.toFixed(1)} MB`
-})
+  if (!props.limits?.max_size_bytes) return "5 MB";
+  const mb = props.limits.max_size_bytes / (1024 * 1024);
+  return `${mb.toFixed(1)} MB`;
+});
 
 const statusLabel = (item) => {
-  if (item.status === 'parsed') {
-    return item.truncated ? '已解析（截断）' : '已解析'
+  if (item.status === "parsed") {
+    return item.truncated ? "已解析（截断）" : "已解析";
   }
-  if (item.status === 'failed') return '解析失败'
-  return '处理中'
-}
+  if (item.status === "failed") return "解析失败";
+  return "处理中";
+};
 
 const handleFileChange = (event) => {
-  const files = Array.from(event.target.files || [])
-  event.target.value = ''
-  if (!files.length) return
-  emit('upload', files)
-}
+  const files = Array.from(event.target.files || []);
+  event.target.value = "";
+  if (!files.length) return;
+  emit("upload", files);
+};
 </script>
 
 <style scoped>

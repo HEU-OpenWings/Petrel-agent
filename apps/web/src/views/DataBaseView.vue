@@ -71,7 +71,7 @@
         <h3 style="margin-top: 20px;">语言模型 (LLM)</h3>
         <p style="color: var(--gray-700); font-size: 14px;">可以在设置中配置语言模型</p>
         <ModelSelectorComponent
-          :model_spec="llmModelSpec"
+          :model-spec="llmModelSpec"
           placeholder="请选择模型"
           @select-model="handleLLMSelect"
           size="large"
@@ -233,370 +233,377 @@
 </template>
 
 <script setup>
-import { ref, onMounted, reactive, watch, computed } from 'vue'
-import { useRouter, useRoute } from 'vue-router';
-import { useConfigStore } from '@/stores/config';
-import { message } from 'ant-design-vue'
-import { Database, Zap, FileDigit,  Waypoints, Building2 } from 'lucide-vue-next';
-import { LockOutlined, InfoCircleOutlined, QuestionCircleOutlined, PlusOutlined } from '@ant-design/icons-vue';
-import { databaseApi, typeApi } from '@/apis/knowledge_api';
-import HeaderComponent from '@/components/HeaderComponent.vue';
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue';
-import EmbeddingModelSelector from '@/components/EmbeddingModelSelector.vue';
-import dayjs, { parseToShanghai } from '@/utils/time';
-import AiTextarea from '@/components/AiTextarea.vue';
+import {
+  InfoCircleOutlined,
+  LockOutlined,
+  PlusOutlined,
+  QuestionCircleOutlined,
+} from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { Building2, Database, FileDigit, Waypoints, Zap } from "lucide-vue-next";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { databaseApi, typeApi } from "@/apis/knowledge_api";
+import AiTextarea from "@/components/AiTextarea.vue";
+import EmbeddingModelSelector from "@/components/EmbeddingModelSelector.vue";
+import HeaderComponent from "@/components/HeaderComponent.vue";
+import ModelSelectorComponent from "@/components/ModelSelectorComponent.vue";
+import { useConfigStore } from "@/stores/config";
+import dayjs, { parseToShanghai } from "@/utils/time";
 
-const route = useRoute()
-const router = useRouter()
-const databases = ref([])
-const configStore = useConfigStore()
+const route = useRoute();
+const router = useRouter();
+const databases = ref([]);
+const configStore = useConfigStore();
 
 const state = reactive({
   loading: false,
   creating: false,
   openNewDatabaseModel: false,
-})
-
+});
 
 // 语言选项（值使用英文，以保证后端/LightRAG 兼容；标签为中英文方便理解）
 const languageOptions = [
-  { label: '英语 English', value: 'English' },
-  { label: '中文 Chinese', value: 'Chinese' },
-  { label: '日语 Japanese', value: 'Japanese' },
-  { label: '韩语 Korean', value: 'Korean' },
-  { label: '德语 German', value: 'German' },
-  { label: '法语 French', value: 'French' },
-  { label: '西班牙语 Spanish', value: 'Spanish' },
-  { label: '葡萄牙语 Portuguese', value: 'Portuguese' },
-  { label: '俄语 Russian', value: 'Russian' },
-  { label: '阿拉伯语 Arabic', value: 'Arabic' },
-  { label: '印地语 Hindi', value: 'Hindi' },
-]
+  { label: "英语 English", value: "English" },
+  { label: "中文 Chinese", value: "Chinese" },
+  { label: "日语 Japanese", value: "Japanese" },
+  { label: "韩语 Korean", value: "Korean" },
+  { label: "德语 German", value: "German" },
+  { label: "法语 French", value: "French" },
+  { label: "西班牙语 Spanish", value: "Spanish" },
+  { label: "葡萄牙语 Portuguese", value: "Portuguese" },
+  { label: "俄语 Russian", value: "Russian" },
+  { label: "阿拉伯语 Arabic", value: "Arabic" },
+  { label: "印地语 Hindi", value: "Hindi" },
+];
 
 const createEmptyDatabaseForm = () => ({
-  name: '',
-  description: '',
+  name: "",
+  description: "",
   embed_model_name: configStore.config?.embed_model,
-  kb_type: 'milvus',
+  kb_type: "milvus",
   is_private: false,
-  storage: '',
-  language: 'English',
+  storage: "",
+  language: "English",
   llm_info: {
-    provider: '',
-    model_name: ''
+    provider: "",
+    model_name: "",
   },
   reranker: {
     enabled: false,
-    model: '',
+    model: "",
     recall_top_k: 50,
     final_top_k: 10,
-  }
-})
+  },
+});
 
-const newDatabase = reactive(createEmptyDatabaseForm())
+const newDatabase = reactive(createEmptyDatabaseForm());
 
 const rerankerOptions = computed(() =>
   Object.entries(configStore?.config?.reranker_names || {}).map(([value, info]) => ({
     label: info?.name || value,
-    value
-  }))
-)
+    value,
+  })),
+);
 
-const isVectorKb = computed(() => ['chroma', 'milvus'].includes(newDatabase.kb_type))
+const isVectorKb = computed(() => ["chroma", "milvus"].includes(newDatabase.kb_type));
 
 const llmModelSpec = computed(() => {
-  const provider = newDatabase.llm_info?.provider || ''
-  const modelName = newDatabase.llm_info?.model_name || ''
+  const provider = newDatabase.llm_info?.provider || "";
+  const modelName = newDatabase.llm_info?.model_name || "";
   if (provider && modelName) {
-    return `${provider}/${modelName}`
+    return `${provider}/${modelName}`;
   }
-  return ''
-})
+  return "";
+});
 
 // 支持的知识库类型
-const supportedKbTypes = ref({})
+const supportedKbTypes = ref({});
 
 // 有序的知识库类型（Chroma 排在最后）
 const orderedKbTypes = computed(() => {
-  const types = { ...supportedKbTypes.value }
-  const ordered = {}
-  const chromaData = types.chroma
+  const types = { ...supportedKbTypes.value };
+  const ordered = {};
+  const chromaData = types.chroma;
 
   // 先添加除了 Chroma 之外的所有类型
-  Object.keys(types).forEach(key => {
-    if (key !== 'chroma') {
-      ordered[key] = types[key]
+  Object.keys(types).forEach((key) => {
+    if (key !== "chroma") {
+      ordered[key] = types[key];
     }
-  })
+  });
 
   // 最后添加 Chroma（如果存在）
   if (chromaData) {
-    ordered.chroma = chromaData
+    ordered.chroma = chromaData;
   }
 
-  return ordered
-})
+  return ordered;
+});
 
 // 加载支持的知识库类型
 const loadSupportedKbTypes = async () => {
   try {
-    const data = await typeApi.getKnowledgeBaseTypes()
-    supportedKbTypes.value = data.kb_types
-    console.log('支持的知识库类型:', supportedKbTypes.value)
+    const data = await typeApi.getKnowledgeBaseTypes();
+    supportedKbTypes.value = data.kb_types;
+    console.log("支持的知识库类型:", supportedKbTypes.value);
   } catch (error) {
-    console.error('加载知识库类型失败:', error)
+    console.error("加载知识库类型失败:", error);
     // 如果加载失败，设置默认类型
     supportedKbTypes.value = {
       lightrag: {
         description: "基于图检索的知识库，支持实体关系构建和复杂查询",
-        class_name: "LightRagKB"
-      }
-    }
+        class_name: "LightRagKB",
+      },
+    };
   }
-}
+};
 
 // 重排序模型信息现在直接从 configStore.config.reranker_names 获取，无需单独加载
 
 const loadDatabases = () => {
-  state.loading = true
+  state.loading = true;
   // loadGraph()
-  databaseApi.getDatabases()
-    .then(data => {
-      console.log(data)
+  databaseApi
+    .getDatabases()
+    .then((data) => {
+      console.log(data);
       // 按照创建时间排序，最新的在前面
       databases.value = data.databases.sort((a, b) => {
-        const timeA = parseToShanghai(a.created_at)
-        const timeB = parseToShanghai(b.created_at)
-        if (!timeA && !timeB) return 0
-        if (!timeA) return 1
-        if (!timeB) return -1
-        return timeB.valueOf() - timeA.valueOf() // 降序排列，最新的在前面
-      })
-      state.loading = false
+        const timeA = parseToShanghai(a.created_at);
+        const timeB = parseToShanghai(b.created_at);
+        if (!timeA && !timeB) return 0;
+        if (!timeA) return 1;
+        if (!timeB) return -1;
+        return timeB.valueOf() - timeA.valueOf(); // 降序排列，最新的在前面
+      });
+      state.loading = false;
     })
-    .catch(error => {
-      console.error('加载数据库列表失败:', error);
-      if (error.message.includes('权限')) {
-        message.error('需要管理员权限访问知识库')
+    .catch((error) => {
+      console.error("加载数据库列表失败:", error);
+      if (error.message.includes("权限")) {
+        message.error("需要管理员权限访问知识库");
       }
-      state.loading = false
-    })
-}
+      state.loading = false;
+    });
+};
 
 const resetNewDatabase = () => {
-  Object.assign(newDatabase, createEmptyDatabaseForm())
-}
+  Object.assign(newDatabase, createEmptyDatabaseForm());
+};
 
 const cancelCreateDatabase = () => {
-  state.openNewDatabaseModel = false
-}
+  state.openNewDatabaseModel = false;
+};
 
 // 知识库类型相关工具方法
 const getKbTypeLabel = (type) => {
   const labels = {
-    lightrag: 'LightRAG',
-    chroma: 'Chroma',
-    milvus: 'Milvus'
-  }
-  return labels[type] || type
-}
+    lightrag: "LightRAG",
+    chroma: "Chroma",
+    milvus: "Milvus",
+  };
+  return labels[type] || type;
+};
 
 const getKbTypeIcon = (type) => {
   const icons = {
     lightrag: Waypoints,
     chroma: FileDigit,
-    milvus: Building2
-  }
-  return icons[type] || Database
-}
+    milvus: Building2,
+  };
+  return icons[type] || Database;
+};
 
 const getKbTypeColor = (type) => {
   const colors = {
-    lightrag: 'purple',
-    chroma: 'orange',
-    milvus: 'red'
-  }
-  return colors[type] || 'blue'
-}
+    lightrag: "purple",
+    chroma: "orange",
+    milvus: "red",
+  };
+  return colors[type] || "blue";
+};
 
 // 格式化创建时间
 const formatCreatedTime = (createdAt) => {
-  if (!createdAt) return ''
-  const parsed = parseToShanghai(createdAt)
-  if (!parsed) return ''
+  if (!createdAt) return "";
+  const parsed = parseToShanghai(createdAt);
+  if (!parsed) return "";
 
-  const today = dayjs().startOf('day')
-  const createdDay = parsed.startOf('day')
-  const diffInDays = today.diff(createdDay, 'day')
+  const today = dayjs().startOf("day");
+  const createdDay = parsed.startOf("day");
+  const diffInDays = today.diff(createdDay, "day");
 
   if (diffInDays === 0) {
-    return '今天创建'
+    return "今天创建";
   }
   if (diffInDays === 1) {
-    return '昨天创建'
+    return "昨天创建";
   }
   if (diffInDays < 7) {
-    return `${diffInDays} 天前创建`
+    return `${diffInDays} 天前创建`;
   }
   if (diffInDays < 30) {
-    const weeks = Math.floor(diffInDays / 7)
-    return `${weeks} 周前创建`
+    const weeks = Math.floor(diffInDays / 7);
+    return `${weeks} 周前创建`;
   }
   if (diffInDays < 365) {
-    const months = Math.floor(diffInDays / 30)
-    return `${months} 个月前创建`
+    const months = Math.floor(diffInDays / 30);
+    return `${months} 个月前创建`;
   }
-  const years = Math.floor(diffInDays / 365)
-  return `${years} 年前创建`
-}
+  const years = Math.floor(diffInDays / 365);
+  return `${years} 年前创建`;
+};
 
 // 处理知识库类型改变
 const handleKbTypeChange = (type) => {
-  console.log('知识库类型改变:', type)
-  resetNewDatabase()
-  newDatabase.kb_type = type
-  if (!['chroma', 'milvus'].includes(type)) {
-    newDatabase.reranker.enabled = false
+  console.log("知识库类型改变:", type);
+  resetNewDatabase();
+  newDatabase.kb_type = type;
+  if (!["chroma", "milvus"].includes(type)) {
+    newDatabase.reranker.enabled = false;
   }
-}
+};
 
 // 处理LLM选择
 const handleLLMSelect = (spec) => {
-  console.log('LLM选择:', spec)
-  if (typeof spec !== 'string' || !spec) return
+  console.log("LLM选择:", spec);
+  if (typeof spec !== "string" || !spec) return;
 
-  const index = spec.indexOf('/')
-  const provider = index !== -1 ? spec.slice(0, index) : ''
-  const modelName = index !== -1 ? spec.slice(index + 1) : ''
+  const index = spec.indexOf("/");
+  const provider = index !== -1 ? spec.slice(0, index) : "";
+  const modelName = index !== -1 ? spec.slice(index + 1) : "";
 
-  newDatabase.llm_info.provider = provider
-  newDatabase.llm_info.model_name = modelName
-}
+  newDatabase.llm_info.provider = provider;
+  newDatabase.llm_info.model_name = modelName;
+};
 
 const createDatabase = () => {
   if (!newDatabase.name?.trim()) {
-    message.error('数据库名称不能为空')
-    return
+    message.error("数据库名称不能为空");
+    return;
   }
 
   if (!newDatabase.kb_type) {
-    message.error('请选择知识库类型')
-    return
+    message.error("请选择知识库类型");
+    return;
   }
 
-  state.creating = true
+  state.creating = true;
 
   const requestData = {
     database_name: newDatabase.name.trim(),
-    description: newDatabase.description?.trim() || '',
+    description: newDatabase.description?.trim() || "",
     embed_model_name: newDatabase.embed_model_name || configStore.config.embed_model,
     kb_type: newDatabase.kb_type,
     additional_params: {
-      is_private: newDatabase.is_private || false
-    }
-  }
+      is_private: newDatabase.is_private || false,
+    },
+  };
 
   // 添加类型特有的配置
-  if (newDatabase.kb_type === 'chroma' || newDatabase.kb_type === 'milvus') {
+  if (newDatabase.kb_type === "chroma" || newDatabase.kb_type === "milvus") {
     if (newDatabase.storage) {
-      requestData.additional_params.storage = newDatabase.storage
+      requestData.additional_params.storage = newDatabase.storage;
     }
 
     if (newDatabase.reranker.enabled) {
       if (!newDatabase.reranker.model) {
-        message.error('请选择重排序模型')
-        state.creating = false
-        return
+        message.error("请选择重排序模型");
+        state.creating = false;
+        return;
       }
       requestData.additional_params.reranker_config = {
         enabled: true,
         model: newDatabase.reranker.model,
         recall_top_k: Number(newDatabase.reranker.recall_top_k) || 50,
         final_top_k: Number(newDatabase.reranker.final_top_k) || 10,
-      }
+      };
     }
   }
 
-  if (newDatabase.kb_type === 'lightrag') {
-    requestData.additional_params.language = newDatabase.language || 'English'
+  if (newDatabase.kb_type === "lightrag") {
+    requestData.additional_params.language = newDatabase.language || "English";
     // 添加LLM信息到请求数据
     if (newDatabase.llm_info.provider && newDatabase.llm_info.model_name) {
       requestData.llm_info = {
         provider: newDatabase.llm_info.provider,
-        model_name: newDatabase.llm_info.model_name
-      }
+        model_name: newDatabase.llm_info.model_name,
+      };
     }
   }
 
-  databaseApi.createDatabase(requestData)
-    .then(data => {
-      console.log('创建成功:', data)
-      loadDatabases()
-      resetNewDatabase()
-      message.success('创建成功')
+  databaseApi
+    .createDatabase(requestData)
+    .then((data) => {
+      console.log("创建成功:", data);
+      loadDatabases();
+      resetNewDatabase();
+      message.success("创建成功");
     })
-    .catch(error => {
-      console.error('创建数据库失败:', error)
-      message.error(error.message || '创建失败')
+    .catch((error) => {
+      console.error("创建数据库失败:", error);
+      message.error(error.message || "创建失败");
     })
     .finally(() => {
-      state.creating = false
-      state.openNewDatabaseModel = false
-    })
-}
+      state.creating = false;
+      state.openNewDatabaseModel = false;
+    });
+};
 
 const navigateToDatabase = (databaseId) => {
   router.push({ path: `/knowledge/${databaseId}` });
 };
 
-watch(() => newDatabase.reranker.enabled, (enabled) => {
-  if (
-    enabled &&
-    !newDatabase.reranker.model &&
-    rerankerOptions.value.length > 0
-  ) {
-    newDatabase.reranker.model = rerankerOptions.value[0].value
-  }
-})
+watch(
+  () => newDatabase.reranker.enabled,
+  (enabled) => {
+    if (enabled && !newDatabase.reranker.model && rerankerOptions.value.length > 0) {
+      newDatabase.reranker.model = rerankerOptions.value[0].value;
+    }
+  },
+);
 
 watch(rerankerOptions, (options) => {
   if (!newDatabase.reranker.enabled || options.length === 0) {
-    return
+    return;
   }
-  const exists = options.some(option => option.value === newDatabase.reranker.model)
+  const exists = options.some((option) => option.value === newDatabase.reranker.model);
   if (!exists) {
-    newDatabase.reranker.model = options[0].value
+    newDatabase.reranker.model = options[0].value;
   }
-})
+});
 
 watch(isVectorKb, (isVector) => {
   if (!isVector) {
-    newDatabase.reranker.enabled = false
+    newDatabase.reranker.enabled = false;
   }
-})
+});
 
 watch(
   () => newDatabase.reranker.final_top_k,
   (value) => {
-    if (!newDatabase.reranker.enabled) return
+    if (!newDatabase.reranker.enabled) return;
     if (value > newDatabase.reranker.recall_top_k) {
-      newDatabase.reranker.recall_top_k = value
+      newDatabase.reranker.recall_top_k = value;
     }
-  }
-)
+  },
+);
 
-watch(() => route.path, (newPath, oldPath) => {
-  if (newPath === '/knowledge') {
-    loadDatabases();
-  }
-});
+watch(
+  () => route.path,
+  (newPath, _oldPath) => {
+    if (newPath === "/knowledge") {
+      loadDatabases();
+    }
+  },
+);
 
 onMounted(() => {
-  loadSupportedKbTypes()
-  loadDatabases()
+  loadSupportedKbTypes();
+  loadDatabases();
   // 重排序模型信息现在直接从 configStore 获取，无需单独加载
-})
-
+});
 </script>
 
 <style lang="less" scoped>

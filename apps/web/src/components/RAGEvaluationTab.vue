@@ -63,7 +63,7 @@
               :label="selectedBenchmark.has_gold_answers ? '答案生成模型' : '答案生成模型（当前基准无需）'"
             >
               <ModelSelectorComponent
-                v-model:model_spec="configForm.answer_llm"
+                v-model:model-spec="configForm.answer_llm"
                 size="small"
                 :disabled="!selectedBenchmark || !selectedBenchmark.has_gold_answers"
                 @select-model="(value) => configForm.answer_llm = value"
@@ -77,7 +77,7 @@
               :label="selectedBenchmark.has_gold_answers ? '答案评判模型' : '答案评判模型（当前基准无需）'"
             >
               <ModelSelectorComponent
-                v-model:model_spec="configForm.judge_llm"
+                v-model:model-spec="configForm.judge_llm"
                 size="small"
                 :disabled="!selectedBenchmark || !selectedBenchmark.has_gold_answers"
                 @select-model="(value) => configForm.judge_llm = value"
@@ -350,22 +350,22 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, h } from 'vue';
-import { message } from 'ant-design-vue';
-import { evaluationApi } from '@/apis/knowledge_api';
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue';
-import SearchConfigModal from './SearchConfigModal.vue';
-import { SettingOutlined, ReloadOutlined } from '@ant-design/icons-vue';
-import { useTaskerStore } from '@/stores/tasker';
+import { ReloadOutlined, SettingOutlined } from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { computed, h, onMounted, reactive, ref } from "vue";
+import { evaluationApi } from "@/apis/knowledge_api";
+import ModelSelectorComponent from "@/components/ModelSelectorComponent.vue";
+import { useTaskerStore } from "@/stores/tasker";
+import SearchConfigModal from "./SearchConfigModal.vue";
 
 const props = defineProps({
   databaseId: {
     type: String,
-    required: true
-  }
+    required: true,
+  },
 });
 
-const emit = defineEmits(['switch-to-benchmarks']);
+const emit = defineEmits(["switch-to-benchmarks"]);
 
 // 使用任务中心 store
 const taskerStore = useTaskerStore();
@@ -390,51 +390,47 @@ const pageSize = ref(20);
 const paginationTotal = ref(0);
 const paginationTotalPages = ref(0);
 
-
 // 评估配置表单（使用知识库默认配置）
 const configForm = reactive({
-  answer_llm: '', // 答案生成模型
-  judge_llm: '', // 评判模型
+  answer_llm: "", // 答案生成模型
+  judge_llm: "", // 评判模型
 });
 
 // 表格列定义
 const resultColumns = computed(() => {
   const columns = [
     {
-      title: '问题',
-      dataIndex: 'query',
-      key: 'query',
-      width: 100
+      title: "问题",
+      dataIndex: "query",
+      key: "query",
+      width: 100,
     },
     {
-      title: '生成答案',
-      key: 'generated_answer',
-      width: 180
+      title: "生成答案",
+      key: "generated_answer",
+      width: 180,
     },
     {
-      title: '答案评判',
-      key: 'answer_score',
-      width: 260
-    }
+      title: "答案评判",
+      key: "answer_score",
+      width: 260,
+    },
   ];
 
   // 检查是否有检索指标数据
-  const hasRetrievalMetrics = detailedResults.value.some(item => {
+  const hasRetrievalMetrics = detailedResults.value.some((item) => {
     if (!item.metrics) return false;
-    return Object.keys(item.metrics).some(key =>
-      key.startsWith('recall') ||
-      key.startsWith('precision') ||
-      key === 'map' ||
-      key === 'ndcg'
+    return Object.keys(item.metrics).some(
+      (key) => key.startsWith("recall") || key.startsWith("precision") || key === "map" || key === "ndcg",
     );
   });
 
   // 如果有检索指标数据，添加检索指标列
   if (hasRetrievalMetrics) {
     columns.splice(2, 0, {
-      title: '检索指标',
-      key: 'retrieval_score',
-      width: 100
+      title: "检索指标",
+      key: "retrieval_score",
+      width: 100,
     });
   }
 
@@ -443,65 +439,81 @@ const resultColumns = computed(() => {
 
 const historyColumns = [
   {
-    title: '开始时间',
-    dataIndex: 'started_at',
-    key: 'started_at',
+    title: "开始时间",
+    dataIndex: "started_at",
+    key: "started_at",
     width: 180,
-    customRender: ({ record }) => formatTime(record.started_at)
+    customRender: ({ record }) => formatTime(record.started_at),
   },
   {
-    title: '评估基准',
-    key: 'benchmark_name',
+    title: "评估基准",
+    key: "benchmark_name",
     width: 200,
     customRender: ({ record }) => {
       // 根据 benchmark_id 查找基准名称
-      const benchmark = availableBenchmarks.value.find(b => b.benchmark_id === record.benchmark_id);
-      return benchmark ? benchmark.name : record.benchmark_id?.slice(0, 8) || '-';
-    }
+      const benchmark = availableBenchmarks.value.find((b) => b.benchmark_id === record.benchmark_id);
+      return benchmark ? benchmark.name : record.benchmark_id?.slice(0, 8) || "-";
+    },
   },
   {
-    title: '状态',
-    dataIndex: 'status',
-    key: 'status',
-    width: 100
+    title: "状态",
+    dataIndex: "status",
+    key: "status",
+    width: 100,
   },
   {
-    title: 'Recall@10',
-    key: 'recall_10',
+    title: "Recall@10",
+    key: "recall_10",
     width: 100,
     customRender: ({ record }) => {
       // 使用后端返回的 metrics.recall@10 数据
-      if (record.metrics && record.metrics['recall@10'] !== undefined && record.metrics['recall@10'] !== null) {
-        const recallValue = record.metrics['recall@10'];
+      if (
+        record.metrics &&
+        record.metrics["recall@10"] !== undefined &&
+        record.metrics["recall@10"] !== null
+      ) {
+        const recallValue = record.metrics["recall@10"];
         const displayValue = formatMetricValue(recallValue);
-        return h('a-tag', {
-          color: getScoreTagColor(recallValue)
-        }, displayValue);
+        return h(
+          "a-tag",
+          {
+            color: getScoreTagColor(recallValue),
+          },
+          displayValue,
+        );
       }
 
       // 如果是运行中的任务，显示计算中
-      if (record.status === 'running') {
-        return h('a-tag', {
-          color: 'processing'
-        }, '计算中');
+      if (record.status === "running") {
+        return h(
+          "a-tag",
+          {
+            color: "processing",
+          },
+          "计算中",
+        );
       }
 
       // 已完成但没有 recall@10 数据
-      if (record.status === 'completed') {
-        return h('a-tag', {
-          color: 'default'
-        }, '无数据');
+      if (record.status === "completed") {
+        return h(
+          "a-tag",
+          {
+            color: "default",
+          },
+          "无数据",
+        );
       }
 
       // 其他情况显示横线
-      return h('span', '-');
-    }
+      return h("span", "-");
+    },
   },
   {
-    title: '操作',
-    key: 'actions',
-    width: 150
-  }
+    title: "操作",
+    key: "actions",
+    width: 150,
+  },
 ];
 
 // 计算属性：当前选中的基准对象
@@ -509,7 +521,7 @@ const currentBenchmark = computed(() => {
   if (!selectedBenchmarkId.value || !availableBenchmarks.value) {
     return null;
   }
-  return availableBenchmarks.value.find(b => b.benchmark_id === selectedBenchmarkId.value);
+  return availableBenchmarks.value.find((b) => b.benchmark_id === selectedBenchmarkId.value);
 });
 
 // 切换错误显示模式
@@ -532,7 +544,7 @@ const handlePageChange = (page, size) => {
 };
 
 // 处理页面大小变化
-const handlePageSizeChange = (current, size) => {
+const handlePageSizeChange = (_current, size) => {
   currentPage.value = 1;
   pageSize.value = size;
   loadResultsWithPagination();
@@ -550,11 +562,11 @@ const loadResultsWithPagination = async () => {
       {
         page: currentPage.value,
         pageSize: pageSize.value,
-        errorOnly: showErrorsOnly.value
-      }
+        errorOnly: showErrorsOnly.value,
+      },
     );
 
-    if (response.message === 'success' && response.data) {
+    if (response.message === "success" && response.data) {
       const resultData = response.data;
 
       // 更新详细结果
@@ -592,8 +604,8 @@ const loadResultsWithPagination = async () => {
       }
     }
   } catch (error) {
-    console.error('加载评估结果失败:', error);
-    message.error('加载评估结果失败');
+    console.error("加载评估结果失败:", error);
+    message.error("加载评估结果失败");
   } finally {
     resultsLoading.value = false;
   }
@@ -606,7 +618,7 @@ const openSearchConfigModal = () => {
 
 // 处理检索配置保存
 const handleSearchConfigSave = (config) => {
-  console.log('RAG评估中的检索配置已更新:', config);
+  console.log("RAG评估中的检索配置已更新:", config);
   // 可以在这里添加配置更新后的处理逻辑
 };
 
@@ -618,7 +630,7 @@ const loadBenchmarks = async (showSuccessMessage = false) => {
   try {
     const response = await evaluationApi.getBenchmarks(props.databaseId);
 
-    if (response && response.message === 'success' && Array.isArray(response.data)) {
+    if (response && response.message === "success" && Array.isArray(response.data)) {
       availableBenchmarks.value = response.data;
 
       // 如果没有选中的基准，且有可用基准，默认选中第一个
@@ -627,13 +639,13 @@ const loadBenchmarks = async (showSuccessMessage = false) => {
         selectedBenchmark.value = response.data[0];
       } else if (selectedBenchmarkId.value) {
         // 如果之前有选中的基准，重新验证其有效性
-        const exists = response.data.some(b => b.benchmark_id === selectedBenchmarkId.value);
+        const exists = response.data.some((b) => b.benchmark_id === selectedBenchmarkId.value);
         if (!exists) {
           selectedBenchmarkId.value = null;
           selectedBenchmark.value = null;
         } else {
           // 更新选中的基准对象
-          selectedBenchmark.value = response.data.find(b => b.benchmark_id === selectedBenchmarkId.value);
+          selectedBenchmark.value = response.data.find((b) => b.benchmark_id === selectedBenchmarkId.value);
         }
       }
 
@@ -642,12 +654,12 @@ const loadBenchmarks = async (showSuccessMessage = false) => {
         message.success(`已刷新，找到 ${response.data.length} 个评估基准`);
       }
     } else {
-      console.error('响应格式不符合预期:', response);
-      message.error('基准数据格式错误');
+      console.error("响应格式不符合预期:", response);
+      message.error("基准数据格式错误");
     }
   } catch (error) {
-    console.error('加载评估基准失败:', error);
-    message.error('加载评估基准失败');
+    console.error("加载评估基准失败:", error);
+    message.error("加载评估基准失败");
   } finally {
     benchmarksLoading.value = false;
   }
@@ -655,7 +667,7 @@ const loadBenchmarks = async (showSuccessMessage = false) => {
 
 // 下拉框选择变化
 const onBenchmarkChanged = (benchmarkId) => {
-  const benchmark = availableBenchmarks.value.find(b => b.benchmark_id === benchmarkId);
+  const benchmark = availableBenchmarks.value.find((b) => b.benchmark_id === benchmarkId);
   selectedBenchmark.value = benchmark || null;
 };
 
@@ -664,20 +676,19 @@ const refreshHistory = async () => {
   refreshingHistory.value = true;
   try {
     await loadEvaluationHistory();
-    message.success('历史记录已刷新');
+    message.success("历史记录已刷新");
   } catch (error) {
-    console.error('刷新历史记录失败:', error);
-    message.error('刷新历史记录失败');
+    console.error("刷新历史记录失败:", error);
+    message.error("刷新历史记录失败");
   } finally {
     refreshingHistory.value = false;
   }
 };
 
-
 // 开始评估
 const startEvaluation = async () => {
   if (!selectedBenchmark.value) {
-    message.error('请先选择评估基准');
+    message.error("请先选择评估基准");
     return;
   }
 
@@ -688,43 +699,41 @@ const startEvaluation = async () => {
     benchmark_id: selectedBenchmark.value.benchmark_id,
     model_config: {
       answer_llm: configForm.answer_llm, // 传递答案生成模型
-      judge_llm: configForm.judge_llm // 传递评判模型
-    }
+      judge_llm: configForm.judge_llm, // 传递评判模型
+    },
   };
 
   try {
     const response = await evaluationApi.runEvaluation(props.databaseId, params);
 
-    if (response.message === 'success') {
-      message.success('评估任务已开始');
+    if (response.message === "success") {
+      message.success("评估任务已开始");
       loadEvaluationHistory();
       // 刷新任务中心的任务列表
       taskerStore.loadTasks();
     } else {
-      message.error(response.message || '启动评估失败');
+      message.error(response.message || "启动评估失败");
     }
   } catch (error) {
-    console.error('启动评估失败:', error);
-    message.error('启动评估失败');
+    console.error("启动评估失败:", error);
+    message.error("启动评估失败");
   } finally {
     startingEvaluation.value = false;
   }
 };
 
-
 // 加载评估历史
 const loadEvaluationHistory = async () => {
   try {
     const response = await evaluationApi.getEvaluationHistory(props.databaseId);
-    if (response.message === 'success') {
+    if (response.message === "success") {
       evaluationHistory.value = response.data || [];
     }
   } catch (error) {
-    console.error('加载评估历史失败:', error);
-    message.error('加载评估历史失败');
+    console.error("加载评估历史失败:", error);
+    message.error("加载评估历史失败");
   }
 };
-
 
 // 计算评估统计信息
 const calculateEvaluationStats = (results) => {
@@ -738,13 +747,13 @@ const calculateEvaluationStats = (results) => {
     answerAccuracy: 0,
     correctAnswers: 0,
     averageResponseTime: 0,
-    totalResponseTime: 0
+    totalResponseTime: 0,
   };
 
   const metricSums = {};
   const metricCounts = {};
 
-  results.forEach(item => {
+  results.forEach((item) => {
     // 答案准确率
     if (item.metrics && item.metrics.score !== undefined) {
       if (item.metrics.score > 0.5) {
@@ -754,8 +763,8 @@ const calculateEvaluationStats = (results) => {
 
     // 检索指标统计
     if (item.metrics) {
-      Object.keys(item.metrics).forEach(key => {
-        if (key.startsWith('recall') || key.startsWith('precision') || key === 'map' || key === 'ndcg') {
+      Object.keys(item.metrics).forEach((key) => {
+        if (key.startsWith("recall") || key.startsWith("precision") || key === "map" || key === "ndcg") {
           if (!metricSums[key]) {
             metricSums[key] = 0;
             metricCounts[key] = 0;
@@ -768,12 +777,12 @@ const calculateEvaluationStats = (results) => {
   });
 
   // 计算平均值
-  Object.keys(metricSums).forEach(key => {
+  Object.keys(metricSums).forEach((key) => {
     stats.retrievalMetrics[key] = metricSums[key] / metricCounts[key];
   });
 
   // 计算答案准确率
-  stats.answerAccuracy = stats.totalQuestions > 0 ? (stats.correctAnswers / stats.totalQuestions) : 0;
+  stats.answerAccuracy = stats.totalQuestions > 0 ? stats.correctAnswers / stats.totalQuestions : 0;
 
   return stats;
 };
@@ -790,11 +799,11 @@ const viewResults = async (taskId) => {
     // 先获取基本信息（不分页）
     const response = await evaluationApi.getEvaluationResultsByDb(props.databaseId, taskId);
 
-    if (response.message === 'success' && response.data) {
+    if (response.message === "success" && response.data) {
       const resultData = response.data;
 
       // 从历史记录中找到对应的任务信息，如果没有则使用API返回的数据
-      selectedResult.value = evaluationHistory.value.find(r => r.task_id === taskId) || {
+      selectedResult.value = evaluationHistory.value.find((r) => r.task_id === taskId) || {
         task_id: resultData.task_id,
         status: resultData.status,
         started_at: resultData.started_at,
@@ -802,7 +811,7 @@ const viewResults = async (taskId) => {
         total_questions: resultData.total_questions || 0,
         completed_questions: resultData.completed_questions || 0,
         overall_score: resultData.overall_score,
-        retrieval_config: resultData.retrieval_config
+        retrieval_config: resultData.retrieval_config,
       };
 
       // 如果是从历史记录获取的，确保也有 retrieval_config
@@ -816,38 +825,37 @@ const viewResults = async (taskId) => {
       // 加载分页数据
       await loadResultsWithPagination();
     } else {
-      message.error('获取评估结果失败：数据格式错误');
+      message.error("获取评估结果失败：数据格式错误");
     }
   } catch (error) {
-    console.error('获取评估结果失败:', error);
-    message.error('获取评估结果失败');
+    console.error("获取评估结果失败:", error);
+    message.error("获取评估结果失败");
   } finally {
     resultsLoading.value = false;
   }
 };
 
-
 // 删除评估记录
 const deleteEvaluationRecord = async (taskId) => {
   try {
     // 找到对应的记录并设置loading状态
-    const record = evaluationHistory.value.find(r => r.task_id === taskId);
+    const record = evaluationHistory.value.find((r) => r.task_id === taskId);
     if (record) {
       record.deleting = true;
     }
 
     const response = await evaluationApi.deleteEvaluationResultByDb(props.databaseId, taskId);
-    if (response.message === 'success') {
-      message.success('删除成功');
+    if (response.message === "success") {
+      message.success("删除成功");
       // 重新加载评估历史
       await loadEvaluationHistory();
     }
   } catch (error) {
-    console.error('删除评估记录失败:', error);
-    message.error('删除评估记录失败');
+    console.error("删除评估记录失败:", error);
+    message.error("删除评估记录失败");
   } finally {
     // 清除loading状态
-    const record = evaluationHistory.value.find(r => r.task_id === taskId);
+    const record = evaluationHistory.value.find((r) => r.task_id === taskId);
     if (record) {
       record.deleting = false;
     }
@@ -856,93 +864,93 @@ const deleteEvaluationRecord = async (taskId) => {
 
 // 工具函数
 const truncateText = (text, maxLength) => {
-  if (!text) return '';
-  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+  if (!text) return "";
+  return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
 };
 
 const formatTime = (timeStr) => {
-  if (!timeStr) return '-';
+  if (!timeStr) return "-";
   const date = new Date(timeStr);
-  return date.toLocaleString('zh-CN');
+  return date.toLocaleString("zh-CN");
 };
 
 const getScoreColor = (score) => {
-  if (score >= 0.8) return 'var(--color-success-500)';
-  if (score >= 0.6) return 'var(--color-warning-500)';
-  return 'var(--color-error-500)';
+  if (score >= 0.8) return "var(--color-success-500)";
+  if (score >= 0.6) return "var(--color-warning-500)";
+  return "var(--color-error-500)";
 };
 
 const getScoreTagColor = (score) => {
-  if (score >= 0.8) return 'success';
-  if (score >= 0.6) return 'warning';
-  return 'error';
+  if (score >= 0.8) return "success";
+  if (score >= 0.6) return "warning";
+  return "error";
 };
 
 const getStatusColor = (status) => {
   const colors = {
-    running: 'blue',
-    completed: 'green',
-    failed: 'red',
-    paused: 'orange'
+    running: "blue",
+    completed: "green",
+    failed: "red",
+    paused: "orange",
   };
-  return colors[status] || 'default';
+  return colors[status] || "default";
 };
 
 const getStatusText = (status) => {
   const texts = {
-    running: '运行中',
-    completed: '已完成',
-    failed: '失败',
-    paused: '已暂停'
+    running: "运行中",
+    completed: "已完成",
+    failed: "失败",
+    paused: "已暂停",
   };
   return texts[status] || status;
 };
 
 const getMetricTitle = (key) => {
   const titles = {
-    precision: '精确率',
-    recall: '召回率',
-    map: '平均精度',
-    ndcg: 'NDCG',
-    bleu: 'BLEU分数',
-    rouge: 'ROUGE分数',
-    answer_correctness: '答案准确性',
-    score: '评分',
-    reasoning: '理由',
-    overall_score: '综合评分'
+    precision: "精确率",
+    recall: "召回率",
+    map: "平均精度",
+    ndcg: "NDCG",
+    bleu: "BLEU分数",
+    rouge: "ROUGE分数",
+    answer_correctness: "答案准确性",
+    score: "评分",
+    reasoning: "理由",
+    overall_score: "综合评分",
   };
   // 处理 recall@k
-  if (key.startsWith('recall@')) return `召回率 (${key.split('@')[1]})`;
-  if (key.startsWith('precision@')) return `精确率 (${key.split('@')[1]})`;
+  if (key.startsWith("recall@")) return `召回率 (${key.split("@")[1]})`;
+  if (key.startsWith("precision@")) return `精确率 (${key.split("@")[1]})`;
 
   return titles[key] || key;
 };
 
 // 获取指标类型
 const getMetricType = (key) => {
-  if (key.startsWith('recall')) return 'recall';
-  if (key.startsWith('precision')) return 'precision';
-  if (key === 'map') return 'map';
-  if (key === 'ndcg') return 'ndcg';
-  return 'default';
+  if (key.startsWith("recall")) return "recall";
+  if (key.startsWith("precision")) return "precision";
+  if (key === "map") return "map";
+  if (key === "ndcg") return "ndcg";
+  return "default";
 };
 
 // 获取指标短名称
 const getMetricShortName = (key) => {
-  if (key.startsWith('recall@')) return `R@${key.split('@')[1]}`;
-  if (key.startsWith('precision@')) return `P@${key.split('@')[1]}`;
-  if (key === 'precision') return 'Precision';
-  if (key === 'recall') return 'Recall';
-  if (key === 'map') return 'MAP';
-  if (key === 'ndcg') return 'NDCG';
+  if (key.startsWith("recall@")) return `R@${key.split("@")[1]}`;
+  if (key.startsWith("precision@")) return `P@${key.split("@")[1]}`;
+  if (key === "precision") return "Precision";
+  if (key === "recall") return "Recall";
+  if (key === "map") return "MAP";
+  if (key === "ndcg") return "NDCG";
   return key;
 };
 
 // 格式化指标值
 const formatMetricValue = (val) => {
-  if (typeof val !== 'number') return '-';
+  if (typeof val !== "number") return "-";
   // 检索指标（recall, precision, f1 等）范围是 0.0-1.0，统一转换为百分比
-  if (val <= 1) return (val * 100).toFixed(1) + '%';
+  if (val <= 1) return `${(val * 100).toFixed(1)}%`;
   return val.toFixed(3);
 };
 
@@ -961,13 +969,11 @@ const formatDuration = (seconds) => {
   }
 };
 
-
 // 组件挂载时加载数据
 onMounted(() => {
   loadBenchmarks();
   loadEvaluationHistory();
 });
-
 </script>
 
 <style lang="less" scoped>
@@ -1467,18 +1473,18 @@ onMounted(() => {
 
 // 仅查看错误按钮样式
 .error-only-active {
-  background-color: var(--color-error-500) !important;
-  border-color: var(--color-error-500) !important;
-  color: white !important;
+  background-color: var(--color-error-500);
+  border-color: var(--color-error-500);
+  color: white;
 
   &:hover {
-    background-color: var(--color-error-600) !important;
-    border-color: var(--color-error-600) !important;
+    background-color: var(--color-error-600);
+    border-color: var(--color-error-600);
   }
 
   &:focus {
-    background-color: var(--color-error-500) !important;
-    border-color: var(--color-error-500) !important;
+    background-color: var(--color-error-500);
+    border-color: var(--color-error-500);
   }
 }
 

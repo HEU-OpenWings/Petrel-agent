@@ -160,42 +160,38 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue';
-import { useDatabaseStore } from '@/stores/database';
-import { message } from 'ant-design-vue';
-import { queryApi } from '@/apis/knowledge_api';
-import {
-  SearchOutlined,
-  ReloadOutlined,
-  SettingOutlined,
-} from '@ant-design/icons-vue';
-import SearchConfigModal from './SearchConfigModal.vue';
+import { ReloadOutlined, SearchOutlined, SettingOutlined } from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
+import { queryApi } from "@/apis/knowledge_api";
+import { useDatabaseStore } from "@/stores/database";
+import SearchConfigModal from "./SearchConfigModal.vue";
 
 const store = useDatabaseStore();
 
 const props = defineProps({
   visible: {
     type: Boolean,
-    default: true
+    default: true,
   },
   style: {
     type: Object,
-    default: () => ({})
+    default: () => ({}),
   },
 });
 
 // 声明事件
-const emit = defineEmits(['toggleVisible']);
+const emit = defineEmits(["toggleVisible"]);
 
 const searchLoading = computed(() => store.state.searchLoading);
-const queryResult = ref('');
+const queryResult = ref("");
 const showRawData = ref(true);
 
 // 判断是否为 LightRAG 类型知识库
-const isLightRAG = computed(() => store.database?.kb_type?.toLowerCase() === 'lightrag');
+const isLightRAG = computed(() => store.database?.kb_type?.toLowerCase() === "lightrag");
 
 // 查询测试
-const queryText = ref('');
+const queryText = ref("");
 
 // 示例问题相关
 const queryExamples = ref([]);
@@ -216,7 +212,7 @@ const openSearchConfigModal = () => {
 
 // 处理检索配置保存
 const handleSearchConfigSave = (config) => {
-  console.log('查询测试中的检索配置已更新:', config);
+  console.log("查询测试中的检索配置已更新:", config);
   // 可以在这里添加配置更新后的处理逻辑，比如重新查询
 };
 
@@ -235,10 +231,10 @@ const loadSampleQuestions = async () => {
     }
   } catch (error) {
     // 404表示还没有生成问题，清空问题列表
-    if (error.status === 404 || error?.message?.includes('404') || error?.message?.includes('还没有生成')) {
+    if (error.status === 404 || error?.message?.includes("404") || error?.message?.includes("还没有生成")) {
       queryExamples.value = [];
     } else {
-      console.error('加载示例问题失败:', error);
+      console.error("加载示例问题失败:", error);
     }
   } finally {
     loadingQuestions.value = false;
@@ -270,23 +266,23 @@ const generateSampleQuestions = async (silent = false) => {
       }
     }
   } catch (error) {
-    console.error('生成示例问题失败:', error);
+    console.error("生成示例问题失败:", error);
     // 静默模式下不显示错误消息（自动生成时）
     if (!silent) {
       // 提取详细错误信息
-      let errorMsg = '未知错误';
+      let errorMsg = "未知错误";
       if (error.response?.data?.detail) {
         errorMsg = error.response.data.detail;
       } else if (error.detail) {
         errorMsg = error.detail;
       } else if (error.message) {
         errorMsg = error.message;
-      } else if (typeof error === 'string') {
+      } else if (typeof error === "string") {
         errorMsg = error;
       } else {
         errorMsg = JSON.stringify(error);
       }
-      message.error('生成失败: ' + errorMsg);
+      message.error(`生成失败: ${errorMsg}`);
     }
   } finally {
     generatingQuestions.value = false;
@@ -332,13 +328,12 @@ watch(
       }
     }
   },
-  { immediate: false }
+  { immediate: false },
 );
-
 
 const onQuery = async () => {
   if (!queryText.value.trim()) {
-    message.error('请输入查询内容');
+    message.error("请输入查询内容");
     return;
   }
 
@@ -350,11 +345,10 @@ const onQuery = async () => {
   try {
     const data = await queryApi.queryTest(store.database.db_id, queryText.value.trim(), queryMeta);
     queryResult.value = data;
-
   } catch (error) {
     console.error(error);
     message.error(error.message);
-    queryResult.value = '';
+    queryResult.value = "";
   } finally {
     store.state.searchLoading = false;
   }
@@ -392,7 +386,7 @@ defineExpose({
   loadSampleQuestions,
   hasQuestions,
   clearQuestions,
-  queryExamples
+  queryExamples,
 });
 </script>
 

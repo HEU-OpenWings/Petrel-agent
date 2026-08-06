@@ -55,7 +55,7 @@
       <!-- 仅对 LightRAG 类型显示 LLM 配置 -->
       <a-form-item v-if="database.kb_type === 'lightrag'" label="语言模型 (LLM)" name="llm_info">
         <ModelSelectorComponent
-          :model_spec="llmModelSpec"
+          :model-spec="llmModelSpec"
           placeholder="请选择模型"
           @select-model="handleLLMSelect"
           style="width: 100%;"
@@ -66,19 +66,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue';
-import { useRouter } from 'vue-router';
-import { useDatabaseStore } from '@/stores/database';
-import { getKbTypeLabel, getKbTypeIcon, getKbTypeColor } from '@/utils/kb_utils';
-import {
-  LeftOutlined,
-  EditOutlined,
-  DeleteOutlined,
-} from '@ant-design/icons-vue';
-import HeaderComponent from '@/components/HeaderComponent.vue';
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue';
-import AiTextarea from '@/components/AiTextarea.vue';
-import { h } from 'vue';
+import { DeleteOutlined, EditOutlined, LeftOutlined } from "@ant-design/icons-vue";
+import { computed, h, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
+import AiTextarea from "@/components/AiTextarea.vue";
+import HeaderComponent from "@/components/HeaderComponent.vue";
+import ModelSelectorComponent from "@/components/ModelSelectorComponent.vue";
+import { useDatabaseStore } from "@/stores/database";
+import { getKbTypeColor, getKbTypeIcon, getKbTypeLabel } from "@/utils/kb_utils";
 
 const router = useRouter();
 const store = useDatabaseStore();
@@ -89,73 +84,76 @@ const loading = computed(() => store.state.databaseLoading);
 const editModalVisible = ref(false);
 const editFormRef = ref(null);
 const editForm = reactive({
-  name: '',
-  description: '',
+  name: "",
+  description: "",
   llm_info: {
-    provider: '',
-    model_name: ''
-  }
+    provider: "",
+    model_name: "",
+  },
 });
 
 const rules = {
-  name: [{ required: true, message: '请输入知识库名称' }]
+  name: [{ required: true, message: "请输入知识库名称" }],
 };
 
 const backToDatabase = () => {
-  router.push('/database');
+  router.push("/database");
 };
 
 const showEditModal = () => {
-  editForm.name = database.value.name || '';
-  editForm.description = database.value.description || '';
+  editForm.name = database.value.name || "";
+  editForm.description = database.value.description || "";
   // 如果是 LightRAG 类型，加载当前的 LLM 配置
-  if (database.value.kb_type === 'lightrag') {
+  if (database.value.kb_type === "lightrag") {
     const llmInfo = database.value.llm_info || {};
-    editForm.llm_info.provider = llmInfo.provider || '';
-    editForm.llm_info.model_name = llmInfo.model_name || '';
+    editForm.llm_info.provider = llmInfo.provider || "";
+    editForm.llm_info.model_name = llmInfo.model_name || "";
   }
   editModalVisible.value = true;
 };
 
 const handleEditSubmit = () => {
-  editFormRef.value.validate().then(async () => {
-    const updateData = {
-      name: editForm.name,
-      description: editForm.description
-    };
-
-    // 如果是 LightRAG 类型，包含 llm_info
-    if (database.value.kb_type === 'lightrag') {
-      updateData.llm_info = {
-        provider: editForm.llm_info.provider,
-        model_name: editForm.llm_info.model_name
+  editFormRef.value
+    .validate()
+    .then(async () => {
+      const updateData = {
+        name: editForm.name,
+        description: editForm.description,
       };
-    }
 
-    await store.updateDatabaseInfo(updateData);
-    editModalVisible.value = false;
-  }).catch(err => {
-    console.error('表单验证失败:', err);
-  });
+      // 如果是 LightRAG 类型，包含 llm_info
+      if (database.value.kb_type === "lightrag") {
+        updateData.llm_info = {
+          provider: editForm.llm_info.provider,
+          model_name: editForm.llm_info.model_name,
+        };
+      }
+
+      await store.updateDatabaseInfo(updateData);
+      editModalVisible.value = false;
+    })
+    .catch((err) => {
+      console.error("表单验证失败:", err);
+    });
 };
 
 // LLM 模型选择处理
 const llmModelSpec = computed(() => {
-  const provider = editForm.llm_info?.provider || '';
-  const modelName = editForm.llm_info?.model_name || '';
+  const provider = editForm.llm_info?.provider || "";
+  const modelName = editForm.llm_info?.model_name || "";
   if (provider && modelName) {
     return `${provider}/${modelName}`;
   }
-  return '';
+  return "";
 });
 
 const handleLLMSelect = (spec) => {
-  console.log('LLM选择:', spec);
-  if (typeof spec !== 'string' || !spec) return;
+  console.log("LLM选择:", spec);
+  if (typeof spec !== "string" || !spec) return;
 
-  const index = spec.indexOf('/');
-  const provider = index !== -1 ? spec.slice(0, index) : '';
-  const modelName = index !== -1 ? spec.slice(index + 1) : '';
+  const index = spec.indexOf("/");
+  const provider = index !== -1 ? spec.slice(0, index) : "";
+  const modelName = index !== -1 ? spec.slice(index + 1) : "";
 
   editForm.llm_info.provider = provider;
   editForm.llm_info.model_name = modelName;

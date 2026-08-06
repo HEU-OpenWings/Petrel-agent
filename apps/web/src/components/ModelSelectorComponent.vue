@@ -43,139 +43,136 @@
 </template>
 
 <script setup>
-import { computed, reactive } from 'vue'
-import { useConfigStore } from '@/stores/config'
-import { chatModelApi } from '@/apis/system_api'
+import { computed, reactive } from "vue";
+import { chatModelApi } from "@/apis/system_api";
+import { useConfigStore } from "@/stores/config";
 
 const props = defineProps({
   model_spec: {
     type: String,
-    default: ''
+    default: "",
   },
   sep: {
     type: String,
-    default: '/'
+    default: "/",
   },
   placeholder: {
     type: String,
-    default: '请选择模型'
+    default: "请选择模型",
   },
   size: {
     type: String,
-    default: 'small',
-    validator: value => ['small', 'middle', 'large'].includes(value)
-  }
+    default: "small",
+    validator: (value) => ["small", "middle", "large"].includes(value),
+  },
 });
 
-const configStore = useConfigStore()
-const emit = defineEmits(['select-model'])
+const configStore = useConfigStore();
+const emit = defineEmits(["select-model"]);
 
 // 状态管理
 const state = reactive({
   currentModelStatus: null, // 当前模型状态
-  checkingStatus: false // 是否正在检查状态
-})
+  checkingStatus: false, // 是否正在检查状态
+});
 
 // 从configStore中获取所需数据
-const modelNames = computed(() => configStore.config?.model_names)
-const modelStatus = computed(() => configStore.config?.model_provider_status)
+const modelNames = computed(() => configStore.config?.model_names);
+const modelStatus = computed(() => configStore.config?.model_provider_status);
 
 // 筛选 modelStatus 中为真的key
 const modelKeys = computed(() => {
-  return Object.keys(modelStatus.value || {}).filter(key => modelStatus.value?.[key])
-})
+  return Object.keys(modelStatus.value || {}).filter((key) => modelStatus.value?.[key]);
+});
 
-const resolvedSep = computed(() => props.sep || '/')
-const resolvedSize = computed(() => props.size || 'small')
+const resolvedSep = computed(() => props.sep || "/");
+const resolvedSize = computed(() => props.size || "small");
 const modelSelectClasses = computed(() => ({
-  'model-select--middle': resolvedSize.value === 'middle',
-  'model-select--large': resolvedSize.value === 'large'
-}))
+  "model-select--middle": resolvedSize.value === "middle",
+  "model-select--large": resolvedSize.value === "large",
+}));
 const buttonSize = computed(() => {
-  if (resolvedSize.value === 'large') return 'large'
-  if (resolvedSize.value === 'middle') return 'middle'
-  return 'small'
-})
+  if (resolvedSize.value === "large") return "large";
+  if (resolvedSize.value === "middle") return "middle";
+  return "small";
+});
 
 const resolvedModel = computed(() => {
-  const spec = props.model_spec || ''
-  const sep = resolvedSep.value
+  const spec = props.model_spec || "";
+  const sep = resolvedSep.value;
   if (spec && sep) {
-    const index = spec.indexOf(sep)
+    const index = spec.indexOf(sep);
     if (index !== -1) {
-      const provider = spec.slice(0, index)
-      const name = spec.slice(index + sep.length)
+      const provider = spec.slice(0, index);
+      const name = spec.slice(index + sep.length);
       if (provider && name) {
-        return { provider, name }
+        return { provider, name };
       }
     }
   }
-  return { provider: '', name: '' }
-})
+  return { provider: "", name: "" };
+});
 
-const displayModelProvider = computed(() => resolvedModel.value.provider || '')
-const displayModelName = computed(() => resolvedModel.value.name || '')
-const displayModelText = computed(() => displayModelName.value || props.placeholder)
+const displayModelProvider = computed(() => resolvedModel.value.provider || "");
+const displayModelName = computed(() => resolvedModel.value.name || "");
+const displayModelText = computed(() => displayModelName.value || props.placeholder);
 
 // 当前模型状态
 const currentModelStatus = computed(() => {
-  return state.currentModelStatus
-})
+  return state.currentModelStatus;
+});
 
 // 检查当前模型状态
 const checkCurrentModelStatus = async () => {
-  const { provider, name } = resolvedModel.value
-  if (!provider || !name) return
+  const { provider, name } = resolvedModel.value;
+  if (!provider || !name) return;
 
   try {
-    state.checkingStatus = true
-    const response = await chatModelApi.getModelStatus(provider, name)
+    state.checkingStatus = true;
+    const response = await chatModelApi.getModelStatus(provider, name);
     if (response.status) {
-      state.currentModelStatus = response.status
+      state.currentModelStatus = response.status;
     } else {
-      state.currentModelStatus = null
+      state.currentModelStatus = null;
     }
   } catch (error) {
-    console.error(`检查当前模型 ${provider}/${name} 状态失败:`, error)
-    state.currentModelStatus = { status: 'error', message: error.message }
+    console.error(`检查当前模型 ${provider}/${name} 状态失败:`, error);
+    state.currentModelStatus = { status: "error", message: error.message };
   } finally {
-    state.checkingStatus = false
+    state.checkingStatus = false;
   }
-}
+};
 
 const modelStatusIcon = computed(() => {
-  const status = currentModelStatus.value
-  if (!status) return '○'
-  if (status.status === 'available') return '✓'
-  if (status.status === 'unavailable') return '✗'
-  if (status.status === 'error') return '⚠'
-  return '○'
-})
-
+  const status = currentModelStatus.value;
+  if (!status) return "○";
+  if (status.status === "available") return "✓";
+  if (status.status === "unavailable") return "✗";
+  if (status.status === "error") return "⚠";
+  return "○";
+});
 
 // 获取当前模型状态提示文本
 const getCurrentModelStatusTooltip = () => {
-  const status = currentModelStatus.value
-  if (!status) return '状态未知'
+  const status = currentModelStatus.value;
+  if (!status) return "状态未知";
 
-  let statusText = ''
-  if (status.status === 'available') statusText = '可用'
-  else if (status.status === 'unavailable') statusText = '不可用'
-  else if (status.status === 'error') statusText = '错误'
+  let statusText = "";
+  if (status.status === "available") statusText = "可用";
+  else if (status.status === "unavailable") statusText = "不可用";
+  else if (status.status === "error") statusText = "错误";
 
-  const message = status.message || '无详细信息'
-  return `${statusText}: ${message}`
-}
-
+  const message = status.message || "无详细信息";
+  return `${statusText}: ${message}`;
+};
 
 // 选择模型的方法
 const handleSelectModel = async (provider, name) => {
-  const sep = resolvedSep.value || '/'
-  const separator = sep || '/'
-  const spec = `${provider}${separator}${name}`
-  emit('select-model', spec)
-}
-
+  const sep = resolvedSep.value || "/";
+  const separator = sep || "/";
+  const spec = `${provider}${separator}${name}`;
+  emit("select-model", spec);
+};
 </script>
 
 <style lang="less" scoped>

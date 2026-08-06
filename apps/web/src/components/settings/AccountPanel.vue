@@ -34,54 +34,54 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
-import { message } from 'ant-design-vue'
-import { changePassword } from '@/apis/account_api'
-import { useUserStore } from '@/stores/user'
+import { message } from "ant-design-vue";
+import { reactive, ref } from "vue";
+import { changePassword } from "@/apis/account_api";
+import { useUserStore } from "@/stores/user";
 
 /** 与后端 apps/server/src/services/auth.ts 的 PASSWORD_MIN_LENGTH 对齐，改一处要改两处 */
-const PASSWORD_MIN_LENGTH = 8
+const PASSWORD_MIN_LENGTH = 8;
 
-const userStore = useUserStore()
-const formRef = ref(null)
-const submitting = ref(false)
+const userStore = useUserStore();
+const formRef = ref(null);
+const submitting = ref(false);
 
 const form = reactive({
-  currentPassword: '',
-  newPassword: '',
-  confirmPassword: ''
-})
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: "",
+});
 
 const rules = {
-  currentPassword: [{ required: true, message: '请输入当前密码' }],
+  currentPassword: [{ required: true, message: "请输入当前密码" }],
   newPassword: [
-    { required: true, message: '请输入新密码' },
-    { min: PASSWORD_MIN_LENGTH, message: `密码至少 ${PASSWORD_MIN_LENGTH} 位` }
+    { required: true, message: "请输入新密码" },
+    { min: PASSWORD_MIN_LENGTH, message: `密码至少 ${PASSWORD_MIN_LENGTH} 位` },
   ],
   confirmPassword: [
-    { required: true, message: '请再次输入新密码' },
+    { required: true, message: "请再次输入新密码" },
     {
       validator: (_rule, value) =>
-        value === form.newPassword ? Promise.resolve() : Promise.reject('两次输入的密码不一致')
-    }
-  ]
-}
+        value === form.newPassword ? Promise.resolve() : Promise.reject("两次输入的密码不一致"),
+    },
+  ],
+};
 
 async function onSubmit() {
-  submitting.value = true
+  submitting.value = true;
   try {
-    await changePassword(form.currentPassword, form.newPassword)
-    message.success('密码已修改')
+    await changePassword(form.currentPassword, form.newPassword);
+    message.success("密码已修改");
     // 成功后清空三个字段，包含 currentPassword——不让密码明文停留在输入框。
     // 失败时故意不清空，用户要能改一下重试
-    formRef.value?.resetFields()
+    formRef.value?.resetFields();
   } catch (error) {
     // 后端的文案更有用（「当前密码不正确」/「尝试次数过多」），原样显示。
     // 旧密码错误是 403，不会触发 http.js 只针对 401 的全局登出分支；
     // 真正的登录失效仍会正常清状态并跳转登录页
-    message.error(error.message || '修改失败，请重试')
+    message.error(error.message || "修改失败，请重试");
   } finally {
-    submitting.value = false
+    submitting.value = false;
   }
 }
 </script>

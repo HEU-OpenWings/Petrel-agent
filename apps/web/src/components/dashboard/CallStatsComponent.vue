@@ -39,266 +39,271 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, defineExpose, watch } from 'vue'
-import * as echarts from 'echarts'
-import { dashboardApi } from '@/apis/dashboard_api'
-import { getColorByIndex, truncateLegend } from '@/utils/chartColors'
-import { useThemeStore } from '@/stores/theme'
+import * as echarts from "echarts";
+import { computed, defineExpose, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { dashboardApi } from "@/apis/dashboard_api";
+import { useThemeStore } from "@/stores/theme";
+import { getColorByIndex, truncateLegend } from "@/utils/chartColors";
 
 // CSS 变量解析工具函数
 function getCSSVariable(variableName, element = document.documentElement) {
-  return getComputedStyle(element).getPropertyValue(variableName).trim()
+  return getComputedStyle(element).getPropertyValue(variableName).trim();
 }
 
 const props = defineProps({
   loading: { type: Boolean, default: false },
-})
+});
 
 // theme store
-const themeStore = useThemeStore()
+const themeStore = useThemeStore();
 
 // state
-const callStatsData = ref(null)
-const callStatsLoading = ref(false)
-const callTimeRange = ref('14days')
-const callDataType = ref('agents')
+const callStatsData = ref(null);
+const callStatsLoading = ref(false);
+const callTimeRange = ref("14days");
+const callDataType = ref("agents");
 const timeRangeOptions = [
-  { value: '14hours', label: '近14小时' },
-  { value: '14days', label: '近14天' },
-  { value: '14weeks', label: '近14周' },
-]
+  { value: "14hours", label: "近14小时" },
+  { value: "14days", label: "近14天" },
+  { value: "14weeks", label: "近14周" },
+];
 const dataTypeOptions = [
-  { value: 'models', label: '模型调用' },
-  { value: 'agents', label: '智能体调用' },
-  { value: 'tokens', label: 'Token消耗' },
-  { value: 'tools', label: '工具调用' },
-]
-const isTokenView = computed(() => callDataType.value === 'tokens')
+  { value: "models", label: "模型调用" },
+  { value: "agents", label: "智能体调用" },
+  { value: "tokens", label: "Token消耗" },
+  { value: "tools", label: "工具调用" },
+];
+const isTokenView = computed(() => callDataType.value === "tokens");
 
 const formatTokenValue = (value) => {
   if (value === null || value === undefined || Number.isNaN(value)) {
-    return '0M'
+    return "0M";
   }
-  const millionValue = value / 1_000_000
-  const absMillion = Math.abs(millionValue)
-  const decimalPlaces = absMillion >= 100 ? 0 : absMillion >= 10 ? 1 : 2
-  return `${millionValue.toFixed(decimalPlaces)}M`
-}
+  const millionValue = value / 1_000_000;
+  const absMillion = Math.abs(millionValue);
+  const decimalPlaces = absMillion >= 100 ? 0 : absMillion >= 10 ? 1 : 2;
+  return `${millionValue.toFixed(decimalPlaces)}M`;
+};
 
 const formatValueForDisplay = (value) => {
   if (isTokenView.value) {
-    return formatTokenValue(value)
+    return formatTokenValue(value);
   }
-  if (typeof value === 'number') {
-    return value.toLocaleString()
+  if (typeof value === "number") {
+    return value.toLocaleString();
   }
-  return (value ?? 0).toString()
-}
+  return (value ?? 0).toString();
+};
 
 const switchTimeRange = (val) => {
-  if (callTimeRange.value === val) return
-  callTimeRange.value = val
-  loadCallStats()
-}
+  if (callTimeRange.value === val) return;
+  callTimeRange.value = val;
+  loadCallStats();
+};
 
 const switchDataType = (val) => {
-  if (callDataType.value === val) return
-  callDataType.value = val
-  loadCallStats()
-}
-const callStatsChartRef = ref(null)
-let callStatsChart = null
-let retryTimer = null
-const retryCount = ref(0)
-const maxRetry = 20
+  if (callDataType.value === val) return;
+  callDataType.value = val;
+  loadCallStats();
+};
+const callStatsChartRef = ref(null);
+let callStatsChart = null;
+let retryTimer = null;
+const retryCount = ref(0);
+const maxRetry = 20;
 
 const loadCallStats = async () => {
-  callStatsLoading.value = true
+  callStatsLoading.value = true;
   try {
-    const response = await dashboardApi.getCallTimeseries(callDataType.value, callTimeRange.value)
-    callStatsData.value = response
-    await nextTick()
-    renderCallStatsChart()
+    const response = await dashboardApi.getCallTimeseries(callDataType.value, callTimeRange.value);
+    callStatsData.value = response;
+    await nextTick();
+    renderCallStatsChart();
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error('加载调用统计数据失败:', error)
+    console.error("加载调用统计数据失败:", error);
   } finally {
-    callStatsLoading.value = false
+    callStatsLoading.value = false;
   }
-}
+};
 
 const renderCallStatsChart = () => {
-  const container = callStatsChartRef.value
-  if (!container || !callStatsData.value) return
+  const container = callStatsChartRef.value;
+  if (!container || !callStatsData.value) return;
 
   // 若父卡片仍在 loading，等待 loading 结束
   if (props.loading) {
-    scheduleRetry()
-    return
+    scheduleRetry();
+    return;
   }
 
-  const { clientWidth, clientHeight } = container
+  const { clientWidth, clientHeight } = container;
   if (!clientWidth || !clientHeight) {
-    scheduleRetry()
-    return
+    scheduleRetry();
+    return;
   }
 
   if (retryTimer) {
-    clearTimeout(retryTimer)
-    retryTimer = null
+    clearTimeout(retryTimer);
+    retryTimer = null;
   }
-  retryCount.value = 0
+  retryCount.value = 0;
 
   if (callStatsChart) {
-    callStatsChart.dispose()
+    callStatsChart.dispose();
   }
 
+  callStatsChart = echarts.init(container);
 
-  callStatsChart = echarts.init(container)
+  const data = callStatsData.value.data || [];
+  const categories = callStatsData.value.categories || [];
 
-  const data = callStatsData.value.data || []
-  const categories = callStatsData.value.categories || []
-
-  const xAxisData = data.map(item => {
-    const date = item.date
-    if (callTimeRange.value === '14hours') {
-      return date.split(' ')[1]
-    } else if (callTimeRange.value === '14weeks') {
-      return `第${date.split('-')[1]}周`
+  const xAxisData = data.map((item) => {
+    const date = item.date;
+    if (callTimeRange.value === "14hours") {
+      return date.split(" ")[1];
+    } else if (callTimeRange.value === "14weeks") {
+      return `第${date.split("-")[1]}周`;
     } else {
-      return date.split('-').slice(1).join('-')
+      return date.split("-").slice(1).join("-");
     }
-  })
+  });
 
   const series = categories.map((category, index) => ({
-    name: category === 'None' ? '未知模型' : category,
-    type: 'bar',
-    stack: 'total',
-    emphasis: { focus: 'series' },
-    data: data.map(item => item.data[category] || 0),
+    name: category === "None" ? "未知模型" : category,
+    type: "bar",
+    stack: "total",
+    emphasis: { focus: "series" },
+    data: data.map((item) => item.data[category] || 0),
     itemStyle: {
       color: getColorByIndex(index),
       borderRadius: 0,
-    }
-  }))
+    },
+  }));
 
   const option = {
     grid: {
-      left: '3%',
-      right: '4%',
-      top: '5%',     /* 减少顶部留白 */
-      bottom: 50,    /* 减少底部留白，从60减少到50 */
-      containLabel: true
+      left: "3%",
+      right: "4%",
+      top: "5%" /* 减少顶部留白 */,
+      bottom: 50 /* 减少底部留白，从60减少到50 */,
+      containLabel: true,
     },
     xAxis: {
-      type: 'category',
+      type: "category",
       data: xAxisData,
-      axisLine: { lineStyle: { color: getCSSVariable('--gray-200') } },
+      axisLine: { lineStyle: { color: getCSSVariable("--gray-200") } },
       axisTick: { show: false },
-      axisLabel: { color: getCSSVariable('--gray-500'), fontSize: 12 }
+      axisLabel: { color: getCSSVariable("--gray-500"), fontSize: 12 },
     },
     yAxis: {
-      type: 'value',
+      type: "value",
       axisLine: { show: false },
       axisTick: { show: false },
       axisLabel: {
-        color: getCSSVariable('--gray-500'),
+        color: getCSSVariable("--gray-500"),
         fontSize: 12,
         formatter: (value) => (isTokenView.value ? formatTokenValue(value) : value),
       },
-      splitLine: { lineStyle: { color: getCSSVariable('--gray-100') } }
+      splitLine: { lineStyle: { color: getCSSVariable("--gray-100") } },
     },
     tooltip: {
-      trigger: 'axis',
-      backgroundColor: getCSSVariable('--gray-0'),
-      borderColor: getCSSVariable('--gray-200'),
+      trigger: "axis",
+      backgroundColor: getCSSVariable("--gray-0"),
+      borderColor: getCSSVariable("--gray-200"),
       borderWidth: 1,
-      textStyle: { color: getCSSVariable('--gray-600'), fontSize: 12 },
+      textStyle: { color: getCSSVariable("--gray-600"), fontSize: 12 },
       formatter: (params) => {
-        if (!params?.length) return ''
-        let total = 0
-        let result = `${params[0].name}<br/>`
-        params.forEach(param => {
-          total += param.value
-          const truncatedName = truncateLegend(param.seriesName)
-          result += `<span style=\"display:inline-block;margin-right:5px;border-radius:10px;width:10px;height:10px;background-color:${param.color}\"></span>`
-          result += `${truncatedName}: ${formatValueForDisplay(param.value)}<br/>`
-        })
-        const labelMap = { models: '模型调用', agents: '智能体调用', tokens: 'Token消耗', tools: '工具调用' }
-        const formattedTotal = formatValueForDisplay(total)
-        return `<div style=\"font-weight:bold;margin-bottom:5px\">${labelMap[callDataType.value]}</div>${result}<strong>总计: ${formattedTotal}</strong>`
-      }
+        if (!params?.length) return "";
+        let total = 0;
+        let result = `${params[0].name}<br/>`;
+        params.forEach((param) => {
+          total += param.value;
+          const truncatedName = truncateLegend(param.seriesName);
+          result += `<span style="display:inline-block;margin-right:5px;border-radius:10px;width:10px;height:10px;background-color:${param.color}"></span>`;
+          result += `${truncatedName}: ${formatValueForDisplay(param.value)}<br/>`;
+        });
+        const labelMap = { models: "模型调用", agents: "智能体调用", tokens: "Token消耗", tools: "工具调用" };
+        const formattedTotal = formatValueForDisplay(total);
+        return `<div style="font-weight:bold;margin-bottom:5px">${labelMap[callDataType.value]}</div>${result}<strong>总计: ${formattedTotal}</strong>`;
+      },
     },
     legend: {
-      data: categories.map(cat => (cat === 'None' ? '未知模型' : cat)),
-      bottom: 5,        /* 调整图例位置，从0改为5 */
-      textStyle: { color: getCSSVariable('--gray-500'), fontSize: 12 },
+      data: categories.map((cat) => (cat === "None" ? "未知模型" : cat)),
+      bottom: 5 /* 调整图例位置，从0改为5 */,
+      textStyle: { color: getCSSVariable("--gray-500"), fontSize: 12 },
       itemWidth: 14,
       itemHeight: 14,
-      formatter: (name) => truncateLegend(name)
+      formatter: (name) => truncateLegend(name),
     },
     series,
-  }
+  };
 
-  callStatsChart.setOption(option)
+  callStatsChart.setOption(option);
 
-  window.addEventListener('resize', handleResize, resizeListenerOptions)
-}
+  window.addEventListener("resize", handleResize, resizeListenerOptions);
+};
 
 const scheduleRetry = () => {
-  if (retryCount.value >= maxRetry) return
-  if (retryTimer) clearTimeout(retryTimer)
+  if (retryCount.value >= maxRetry) return;
+  if (retryTimer) clearTimeout(retryTimer);
   retryTimer = setTimeout(() => {
-    retryCount.value += 1
-    renderCallStatsChart()
-  }, 100)
-}
+    retryCount.value += 1;
+    renderCallStatsChart();
+  }, 100);
+};
 
 const handleResize = () => {
-  if (callStatsChart) callStatsChart.resize()
-}
+  if (callStatsChart) callStatsChart.resize();
+};
 
-const resizeListenerOptions = { passive: true }
+const resizeListenerOptions = { passive: true };
 
 const cleanup = () => {
-  window.removeEventListener('resize', handleResize, resizeListenerOptions)
+  window.removeEventListener("resize", handleResize, resizeListenerOptions);
   if (retryTimer) {
-    clearTimeout(retryTimer)
-    retryTimer = null
+    clearTimeout(retryTimer);
+    retryTimer = null;
   }
-  retryCount.value = 0
+  retryCount.value = 0;
   if (callStatsChart) {
-    callStatsChart.dispose()
-    callStatsChart = null
+    callStatsChart.dispose();
+    callStatsChart = null;
   }
-}
+};
 
-defineExpose({ cleanup })
+defineExpose({ cleanup });
 
 onMounted(() => {
-  loadCallStats()
-})
+  loadCallStats();
+});
 
-watch(() => props.loading, (now) => {
-  if (!now) {
-    if (callStatsData.value) {
-      nextTick().then(() => renderCallStatsChart())
+watch(
+  () => props.loading,
+  (now) => {
+    if (!now) {
+      if (callStatsData.value) {
+        nextTick().then(() => renderCallStatsChart());
+      }
     }
-  }
-})
+  },
+);
 
 // 监听主题变化，重新渲染图表
-watch(() => themeStore.isDark, () => {
-  if (callStatsData.value && callStatsChart) {
-    nextTick(() => {
-      renderCallStatsChart()
-    })
-  }
-})
+watch(
+  () => themeStore.isDark,
+  () => {
+    if (callStatsData.value && callStatsChart) {
+      nextTick(() => {
+        renderCallStatsChart();
+      });
+    }
+  },
+);
 
 onUnmounted(() => {
-  cleanup()
-})
+  cleanup();
+});
 </script>
 
 <style scoped lang="less">
@@ -331,7 +336,7 @@ onUnmounted(() => {
 }
 
 .call-stats .chart {
-  height: 100% !important;
+  height: 100%;
   width: 100%;
   padding: 0; /* 移除chart的padding */
   border: none; /* 移除chart的border */

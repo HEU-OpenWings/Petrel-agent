@@ -51,7 +51,6 @@ afterAll(() => close?.());
 /** 从 Set-Cookie 里取出可直接回填给下一个请求的 cookie 串 */
 function cookieFrom(response: Response): string {
   const raw = response.headers.get("Set-Cookie") ?? "";
-  // biome-ignore lint/style/noNonNullAssertion: split(";") 对任意字符串至少返回一个元素
   return raw.split(";")[0]!;
 }
 

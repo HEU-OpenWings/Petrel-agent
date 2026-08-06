@@ -90,7 +90,7 @@
       <!-- 仅对 LightRAG 类型显示 LLM 配置 -->
       <a-form-item v-if="database.kb_type === 'lightrag'" label="语言模型 (LLM)" name="llm_info">
         <ModelSelectorComponent
-          :model_spec="llmModelSpec"
+          :model-spec="llmModelSpec"
           placeholder="请选择模型"
           @select-model="handleLLMSelect"
           style="width: 100%;"
@@ -101,19 +101,15 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, h } from 'vue';
-import { useRouter } from 'vue-router';
-import { useDatabaseStore } from '@/stores/database';
-import { getKbTypeLabel, getKbTypeColor } from '@/utils/kb_utils';
-import { message } from 'ant-design-vue';
-import { LeftOutlined } from '@ant-design/icons-vue';
-import {
-  Pencil,
-  Trash2,
-  Copy,
-} from 'lucide-vue-next';
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue';
-import AiTextarea from '@/components/AiTextarea.vue';
+import { LeftOutlined } from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { Copy, Pencil, Trash2 } from "lucide-vue-next";
+import { computed, h, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
+import AiTextarea from "@/components/AiTextarea.vue";
+import ModelSelectorComponent from "@/components/ModelSelectorComponent.vue";
+import { useDatabaseStore } from "@/stores/database";
+import { getKbTypeColor, getKbTypeLabel } from "@/utils/kb_utils";
 
 const router = useRouter();
 const store = useDatabaseStore();
@@ -123,116 +119,119 @@ const database = computed(() => store.database);
 // 复制数据库ID
 const copyDatabaseId = async () => {
   if (!database.value.db_id) {
-    message.warning('知识库ID为空');
+    message.warning("知识库ID为空");
     return;
   }
 
   try {
     await navigator.clipboard.writeText(database.value.db_id);
-    message.success('知识库ID已复制到剪贴板');
+    message.success("知识库ID已复制到剪贴板");
   } catch (err) {
     // 降级方案
-    const textArea = document.createElement('textarea');
+    const textArea = document.createElement("textarea");
     textArea.value = database.value.db_id;
     document.body.appendChild(textArea);
     textArea.select();
-    document.execCommand('copy');
+    document.execCommand("copy");
     document.body.removeChild(textArea);
-    message.success('知识库ID已复制到剪贴板');
+    message.success("知识库ID已复制到剪贴板");
   }
 };
 
 // 格式化日期
 const formatDate = (dateStr) => {
-  if (!dateStr) return 'N/A';
+  if (!dateStr) return "N/A";
   const date = new Date(dateStr);
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 };
 
 // 返回数据库列表
 const backToDatabase = () => {
-  router.push('/knowledge');
+  router.push("/knowledge");
 };
 
 // 编辑相关逻辑（复用自 DatabaseHeader）
 const editModalVisible = ref(false);
 const editFormRef = ref(null);
 const editForm = reactive({
-  name: '',
-  description: '',
+  name: "",
+  description: "",
   auto_generate_questions: false,
   llm_info: {
-    provider: '',
-    model_name: ''
-  }
+    provider: "",
+    model_name: "",
+  },
 });
 
 const rules = {
-  name: [{ required: true, message: '请输入知识库名称' }]
+  name: [{ required: true, message: "请输入知识库名称" }],
 };
 
 const showEditModal = () => {
-  editForm.name = database.value.name || '';
-  editForm.description = database.value.description || '';
+  editForm.name = database.value.name || "";
+  editForm.description = database.value.description || "";
   editForm.auto_generate_questions = database.value.additional_params?.auto_generate_questions || false;
 
   // 如果是 LightRAG 类型，加载当前的 LLM 配置
-  if (database.value.kb_type === 'lightrag') {
+  if (database.value.kb_type === "lightrag") {
     const llmInfo = database.value.llm_info || {};
-    editForm.llm_info.provider = llmInfo.provider || '';
-    editForm.llm_info.model_name = llmInfo.model_name || '';
+    editForm.llm_info.provider = llmInfo.provider || "";
+    editForm.llm_info.model_name = llmInfo.model_name || "";
   }
   editModalVisible.value = true;
 };
 
 const handleEditSubmit = () => {
-  editFormRef.value.validate().then(async () => {
-    const updateData = {
-      name: editForm.name,
-      description: editForm.description,
-      additional_params: {
-        auto_generate_questions: editForm.auto_generate_questions
-      }
-    };
-
-    // 如果是 LightRAG 类型，包含 llm_info
-    if (database.value.kb_type === 'lightrag') {
-      updateData.llm_info = {
-        provider: editForm.llm_info.provider,
-        model_name: editForm.llm_info.model_name
+  editFormRef.value
+    .validate()
+    .then(async () => {
+      const updateData = {
+        name: editForm.name,
+        description: editForm.description,
+        additional_params: {
+          auto_generate_questions: editForm.auto_generate_questions,
+        },
       };
-    }
 
-    await store.updateDatabaseInfo(updateData);
-    editModalVisible.value = false;
-  }).catch(err => {
-    console.error('表单验证失败:', err);
-  });
+      // 如果是 LightRAG 类型，包含 llm_info
+      if (database.value.kb_type === "lightrag") {
+        updateData.llm_info = {
+          provider: editForm.llm_info.provider,
+          model_name: editForm.llm_info.model_name,
+        };
+      }
+
+      await store.updateDatabaseInfo(updateData);
+      editModalVisible.value = false;
+    })
+    .catch((err) => {
+      console.error("表单验证失败:", err);
+    });
 };
 
 // LLM 模型选择处理
 const llmModelSpec = computed(() => {
-  const provider = editForm.llm_info?.provider || '';
-  const modelName = editForm.llm_info?.model_name || '';
+  const provider = editForm.llm_info?.provider || "";
+  const modelName = editForm.llm_info?.model_name || "";
   if (provider && modelName) {
     return `${provider}/${modelName}`;
   }
-  return '';
+  return "";
 });
 
 const handleLLMSelect = (spec) => {
-  console.log('LLM选择:', spec);
-  if (typeof spec !== 'string' || !spec) return;
+  console.log("LLM选择:", spec);
+  if (typeof spec !== "string" || !spec) return;
 
-  const index = spec.indexOf('/');
-  const provider = index !== -1 ? spec.slice(0, index) : '';
-  const modelName = index !== -1 ? spec.slice(index + 1) : '';
+  const index = spec.indexOf("/");
+  const provider = index !== -1 ? spec.slice(0, index) : "";
+  const modelName = index !== -1 ? spec.slice(index + 1) : "";
 
   editForm.llm_info.provider = provider;
   editForm.llm_info.model_name = modelName;

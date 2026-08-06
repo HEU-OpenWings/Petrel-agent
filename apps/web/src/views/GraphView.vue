@@ -117,9 +117,9 @@
         </div>
         <a-upload-dragger
           class="upload-dragger"
-          v-model:fileList="fileList"
+          v-model:file-list="fileList"
           name="file"
-          :fileList="fileList"
+          :file-list="fileList"
           :max-count="1"
           accept=".jsonl"
           action="/api/knowledge/files/upload?allow_jsonl=true"
@@ -164,26 +164,39 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, h } from 'vue';
-import { useRouter } from 'vue-router';
-import { message } from 'ant-design-vue';
-import { useConfigStore } from '@/stores/config';
-import { UploadOutlined, SyncOutlined, GlobalOutlined, InfoCircleOutlined, SearchOutlined, ReloadOutlined, LoadingOutlined, HighlightOutlined, DatabaseOutlined, ExportOutlined } from '@ant-design/icons-vue';
-import HeaderComponent from '@/components/HeaderComponent.vue';
-import { neo4jApi, unifiedApi } from '@/apis/graph_api';
-import { useUserStore } from '@/stores/user';
-import GraphCanvas from '@/components/GraphCanvas.vue';
-import GraphDetailPanel from '@/components/GraphDetailPanel.vue';
-import UploadModal from '@/components/FileUploadModal.vue';
-import { useGraph } from '@/composables/useGraph';
+import {
+  DatabaseOutlined,
+  ExportOutlined,
+  GlobalOutlined,
+  HighlightOutlined,
+  InfoCircleOutlined,
+  LoadingOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+  SyncOutlined,
+  UploadOutlined,
+} from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { computed, h, onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
+import { neo4jApi, unifiedApi } from "@/apis/graph_api";
+import UploadModal from "@/components/FileUploadModal.vue";
+import GraphCanvas from "@/components/GraphCanvas.vue";
+import GraphDetailPanel from "@/components/GraphDetailPanel.vue";
+import HeaderComponent from "@/components/HeaderComponent.vue";
+import { useGraph } from "@/composables/useGraph";
+import { useConfigStore } from "@/stores/config";
+import { useUserStore } from "@/stores/user";
 
 const configStore = useConfigStore();
 const cur_embed_model = computed(() => configStore.config?.embed_model);
-const modelMatched = computed(() => !graphInfo?.value?.embed_model_name || graphInfo.value.embed_model_name === cur_embed_model.value)
+const modelMatched = computed(
+  () => !graphInfo?.value?.embed_model_name || graphInfo.value.embed_model_name === cur_embed_model.value,
+);
 
 const router = useRouter();
-const graphRef = ref(null)
-const graphInfo = ref(null)
+const graphRef = ref(null);
+const graphInfo = ref(null);
 const fileList = ref([]);
 const sampleNodeCount = ref(100);
 
@@ -192,7 +205,7 @@ const graph = reactive(useGraph(graphRef));
 const state = reactive({
   loadingGraphInfo: false,
   loadingDatabases: false,
-  searchInput: '',
+  searchInput: "",
   searchLoading: false,
   showModal: false,
   showInfoModal: false,
@@ -200,18 +213,18 @@ const state = reactive({
   processing: false,
   indexing: false,
   showPage: true,
-  selectedDbId: 'neo4j',
+  selectedDbId: "neo4j",
   dbOptions: [],
   lightragStats: null,
-})
+});
 
 const isNeo4j = computed(() => {
-  return state.selectedDbId === 'neo4j';
+  return state.selectedDbId === "neo4j";
 });
 
 // 检查是否有有效的已上传文件
 const hasValidFile = computed(() => {
-  return fileList.value.some(file => file.status === 'done' && file.response?.file_path);
+  return fileList.value.some((file) => file.status === "done" && file.response?.file_path);
 });
 
 // 计算未索引节点数量
@@ -223,36 +236,36 @@ const formattedGraphInfo = computed(() => {
   if (isNeo4j.value) {
     return {
       node_count: graphInfo.value?.entity_count || 0,
-      edge_count: graphInfo.value?.relationship_count || 0
-    }
+      edge_count: graphInfo.value?.relationship_count || 0,
+    };
   } else {
     return {
       node_count: state.lightragStats?.total_nodes || 0,
-      edge_count: state.lightragStats?.total_edges || 0
-    }
+      edge_count: state.lightragStats?.total_edges || 0,
+    };
   }
-})
+});
 
 const loadDatabases = async () => {
   state.loadingDatabases = true;
   try {
     const res = await unifiedApi.getGraphs();
     if (res.success && res.data) {
-      state.dbOptions = res.data.map(db => ({
+      state.dbOptions = res.data.map((db) => ({
         label: `${db.name} (${db.type})`,
         value: db.id,
-        type: db.type
+        type: db.type,
       }));
 
       // If no selection or invalid selection, select first
-      if (!state.selectedDbId || !state.dbOptions.find(o => o.value === state.selectedDbId)) {
+      if (!state.selectedDbId || !state.dbOptions.find((o) => o.value === state.selectedDbId)) {
         if (state.dbOptions.length > 0) {
           state.selectedDbId = state.dbOptions[0].value;
         }
       }
     }
   } catch (error) {
-    console.error('Failed to load databases:', error);
+    console.error("Failed to load databases:", error);
   } finally {
     state.loadingDatabases = false;
   }
@@ -261,7 +274,7 @@ const loadDatabases = async () => {
 const handleDbChange = () => {
   // Clear current data
   graph.clearGraph();
-  state.searchInput = '';
+  state.searchInput = "";
   state.lightragStats = null;
 
   if (isNeo4j.value) {
@@ -274,51 +287,56 @@ const handleDbChange = () => {
 };
 
 const loadLightRAGStats = () => {
-  unifiedApi.getStats(state.selectedDbId).then(res => {
-    if(res.success) {
-      state.lightragStats = res.data;
-    }
-  }).catch(e => console.error(e));
+  unifiedApi
+    .getStats(state.selectedDbId)
+    .then((res) => {
+      if (res.success) {
+        state.lightragStats = res.data;
+      }
+    })
+    .catch((e) => console.error(e));
 };
 
 const loadGraphInfo = () => {
-  state.loadingGraphInfo = true
-  neo4jApi.getInfo()
-    .then(data => {
-      console.log(data)
-      graphInfo.value = data.data
-      state.loadingGraphInfo = false
+  state.loadingGraphInfo = true;
+  neo4jApi
+    .getInfo()
+    .then((data) => {
+      console.log(data);
+      graphInfo.value = data.data;
+      state.loadingGraphInfo = false;
     })
-    .catch(error => {
-      console.error(error)
-      message.error(error.message || '加载图数据库信息失败')
-      state.loadingGraphInfo = false
-    })
-}
+    .catch((error) => {
+      console.error(error);
+      message.error(error.message || "加载图数据库信息失败");
+      state.loadingGraphInfo = false;
+    });
+};
 
 const addDocumentByFile = () => {
   // 使用计算属性验证文件
   if (!hasValidFile.value) {
-    message.error('请先等待文件上传完成')
-    return
+    message.error("请先等待文件上传完成");
+    return;
   }
 
-  state.processing = true
+  state.processing = true;
 
   // 获取已上传的文件路径
-  const uploadedFile = fileList.value.find(file => file.status === 'done' && file.response?.file_path);
+  const uploadedFile = fileList.value.find((file) => file.status === "done" && file.response?.file_path);
   const filePath = uploadedFile?.response?.file_path;
 
   // 再次验证文件路径
   if (!filePath) {
-    message.error('文件路径获取失败，请重新上传文件')
-    state.processing = false
-    return
+    message.error("文件路径获取失败，请重新上传文件");
+    state.processing = false;
+    return;
   }
 
-  neo4jApi.addEntities(filePath)
+  neo4jApi
+    .addEntities(filePath)
     .then((data) => {
-      if (data.status === 'success') {
+      if (data.status === "success") {
         message.success(data.message);
         state.showModal = false;
         // 清空文件列表
@@ -333,67 +351,69 @@ const addDocumentByFile = () => {
       }
     })
     .catch((error) => {
-      console.error(error)
-      message.error(error.message || '添加文件失败');
+      console.error(error);
+      message.error(error.message || "添加文件失败");
     })
-    .finally(() => state.processing = false)
+    .finally(() => (state.processing = false));
 };
 
 const loadSampleNodes = () => {
-  graph.fetching = true
+  graph.fetching = true;
 
-  unifiedApi.getSubgraph({
-    db_id: state.selectedDbId,
-    node_label: '*',
-    max_nodes: sampleNodeCount.value
-  })
+  unifiedApi
+    .getSubgraph({
+      db_id: state.selectedDbId,
+      node_label: "*",
+      max_nodes: sampleNodeCount.value,
+    })
     .then((data) => {
       // Normalize data structure if needed
       const result = data.data;
       graph.updateGraphData(result.nodes, result.edges);
-      console.log(graph.graphData)
+      console.log(graph.graphData);
     })
     .catch((error) => {
-      console.error(error)
-      message.error(error.message || '加载节点失败');
+      console.error(error);
+      message.error(error.message || "加载节点失败");
     })
-    .finally(() => graph.fetching = false)
-}
+    .finally(() => (graph.fetching = false));
+};
 
 const onSearch = () => {
   if (state.searchLoading) {
-    message.error('请稍后再试')
-    return
+    message.error("请稍后再试");
+    return;
   }
 
   if (isNeo4j.value && graphInfo?.value?.embed_model_name !== cur_embed_model.value) {
     // 可选：提示模型不一致
   }
 
-  state.searchLoading = true
+  state.searchLoading = true;
 
-  unifiedApi.getSubgraph({
-    db_id: state.selectedDbId,
-    node_label: state.searchInput || '*',
-    max_nodes: sampleNodeCount.value
-  })
+  unifiedApi
+    .getSubgraph({
+      db_id: state.selectedDbId,
+      node_label: state.searchInput || "*",
+      max_nodes: sampleNodeCount.value,
+    })
     .then((data) => {
       const result = data.data;
-      if (!result || !result.nodes || !result.edges) {
-        throw new Error('返回数据格式不正确');
+      if (!result?.nodes || !result.edges) {
+        throw new Error("返回数据格式不正确");
       }
       graph.updateGraphData(result.nodes, result.edges);
       if (graph.graphData.nodes.length === 0) {
-        message.info('未找到相关实体')
+        message.info("未找到相关实体");
       }
-      console.log(data)
-      console.log(graph.graphData)
+      console.log(data);
+      console.log(graph.graphData);
     })
     .catch((error) => {
-      console.error('查询错误:', error);
-      message.error(`查询出错：${error.message || '未知错误'}`);
+      console.error("查询错误:", error);
+      message.error(`查询出错：${error.message || "未知错误"}`);
     })
-    .finally(() => state.searchLoading = false)
+    .finally(() => (state.searchLoading = false));
 };
 
 onMounted(async () => {
@@ -407,23 +427,23 @@ const handleFileUpload = ({ file, fileList: newFileList }) => {
   fileList.value = newFileList;
 
   // 如果上传失败，显示错误信息
-  if (file.status === 'error') {
+  if (file.status === "error") {
     message.error(`文件上传失败: ${file.name}`);
   }
 
   // 如果上传成功，显示成功信息
-  if (file.status === 'done' && file.response?.file_path) {
+  if (file.status === "done" && file.response?.file_path) {
     message.success(`文件上传成功: ${file.name}`);
   }
 
-  console.log('File upload status:', file.status, file.name);
-  console.log('File list:', fileList.value);
-}
+  console.log("File upload status:", file.status, file.name);
+  console.log("File list:", fileList.value);
+};
 
 const handleDrop = (event) => {
-  console.log(event)
-  console.log(fileList.value)
-}
+  console.log(event);
+  console.log(fileList.value);
+};
 
 const handleModalCancel = () => {
   state.showModal = false;
@@ -432,39 +452,41 @@ const handleModalCancel = () => {
 };
 
 const graphStatusClass = computed(() => {
-  if (state.loadingGraphInfo) return 'loading';
-  return graphInfo.value?.status === 'open' ? 'open' : 'closed';
+  if (state.loadingGraphInfo) return "loading";
+  return graphInfo.value?.status === "open" ? "open" : "closed";
 });
 
 const graphStatusText = computed(() => {
-  if (state.loadingGraphInfo) return '加载中';
-  return graphInfo.value?.status === 'open' ? '已连接' : '已关闭';
+  if (state.loadingGraphInfo) return "加载中";
+  return graphInfo.value?.status === "open" ? "已连接" : "已关闭";
 });
-
 
 // 为未索引节点添加索引
 const indexNodes = () => {
   // 判断 embed_model_name 是否相同
   if (!modelMatched.value) {
-    message.error(`向量模型不匹配，无法添加索引，当前向量模型为 ${cur_embed_model.value}，图数据库向量模型为 ${graphInfo.value?.embed_model_name}`)
-    return
+    message.error(
+      `向量模型不匹配，无法添加索引，当前向量模型为 ${cur_embed_model.value}，图数据库向量模型为 ${graphInfo.value?.embed_model_name}`,
+    );
+    return;
   }
 
   if (state.processing) {
-    message.error('后台正在处理，请稍后再试')
-    return
+    message.error("后台正在处理，请稍后再试");
+    return;
   }
 
   state.indexing = true;
-  neo4jApi.indexEntities('neo4j')
-    .then(data => {
-      message.success(data.message || '索引添加成功');
+  neo4jApi
+    .indexEntities("neo4j")
+    .then((data) => {
+      message.success(data.message || "索引添加成功");
       // 刷新图谱信息
       loadGraphInfo();
     })
-    .catch(error => {
+    .catch((error) => {
       console.error(error);
-      message.error(error.message || '添加索引失败');
+      message.error(error.message || "添加索引失败");
     })
     .finally(() => {
       state.indexing = false;
@@ -472,17 +494,21 @@ const indexNodes = () => {
 };
 
 const exportGraphData = () => {
-  const dataStr = JSON.stringify({
-    nodes: graph.graphData.nodes,
-    edges: graph.graphData.edges,
-    graphInfo: isNeo4j.value ? graphInfo.value : state.lightragStats,
-    source: state.selectedDbId,
-    exportTime: new Date().toISOString()
-  }, null, 2);
+  const dataStr = JSON.stringify(
+    {
+      nodes: graph.graphData.nodes,
+      edges: graph.graphData.edges,
+      graphInfo: isNeo4j.value ? graphInfo.value : state.lightragStats,
+      source: state.selectedDbId,
+      exportTime: new Date().toISOString(),
+    },
+    null,
+    2,
+  );
 
-  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+  const dataBlob = new Blob([dataStr], { type: "application/json" });
   const url = URL.createObjectURL(dataBlob);
-  const link = document.createElement('a');
+  const link = document.createElement("a");
   link.href = url;
   link.download = `graph-data-${state.selectedDbId}-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.appendChild(link);
@@ -490,7 +516,7 @@ const exportGraphData = () => {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 
-  message.success('图谱数据已导出');
+  message.success("图谱数据已导出");
 };
 
 const getAuthHeaders = () => {
@@ -499,20 +525,20 @@ const getAuthHeaders = () => {
 };
 
 const openLink = (url) => {
-  window.open(url, '_blank')
-}
+  window.open(url, "_blank");
+};
 
 const getDatabaseName = () => {
-  const selectedDb = state.dbOptions.find(db => db.value === state.selectedDbId);
+  const selectedDb = state.dbOptions.find((db) => db.value === state.selectedDbId);
   return selectedDb ? selectedDb.label : state.selectedDbId;
 };
 
 const getUploadTipMessage = () => {
   if (isNeo4j.value) {
-    return 'Neo4j 图数据库支持通过上传 JSONL 格式文件直接导入实体和关系数据。';
+    return "Neo4j 图数据库支持通过上传 JSONL 格式文件直接导入实体和关系数据。";
   } else {
-    const selectedDb = state.dbOptions.find(db => db.value === state.selectedDbId);
-    const dbType = selectedDb?.type || '未知';
+    const selectedDb = state.dbOptions.find((db) => db.value === state.selectedDbId);
+    const dbType = selectedDb?.type || "未知";
     const dbName = selectedDb?.label || getDatabaseName();
     return `当前选择的是 ${dbType.toUpperCase()} 类型的知识库"${dbName}"，该类型知识库需要在文档知识库页面上传文档，系统会自动从中提取知识图谱。`;
   }
@@ -523,17 +549,16 @@ const goToDatabasePage = () => {
 
   // 如果不是 Neo4j，需要找到对应的知识库 ID 并跳转
   if (!isNeo4j.value) {
-    const selectedDb = state.dbOptions.find(db => db.value === state.selectedDbId);
-    if (selectedDb && selectedDb.type !== 'neo4j') {
+    const selectedDb = state.dbOptions.find((db) => db.value === state.selectedDbId);
+    if (selectedDb && selectedDb.type !== "neo4j") {
       // 跳转到对应的知识库详情页面
       router.push(`/database/${state.selectedDbId}`);
     } else {
       // 如果找不到对应的数据库，跳转到数据库列表页面
-      router.push('/database');
+      router.push("/database");
     }
   }
 };
-
 </script>
 
 <style lang="less" scoped>

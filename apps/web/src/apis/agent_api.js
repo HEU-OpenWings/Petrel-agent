@@ -1,13 +1,11 @@
-import { apiGet, apiPost, apiDelete, apiPut, apiAdminGet, apiAdminPost, apiRequest } from './base'
-import { useUserStore } from '@/stores/user'
+import { useUserStore } from "@/stores/user";
+import { apiAdminGet, apiAdminPost, apiDelete, apiGet, apiPost, apiPut, apiRequest } from "./base";
 
 /**
  * 智能体API模块
  * 包含智能体管理、聊天、配置等功能
  * 权限要求: 任何已登录用户（普通用户、管理员、超级管理员）
  */
-
-
 
 // =============================================================================
 // === 智能体聊天分组 ===
@@ -23,20 +21,20 @@ export const agentApi = {
   sendAgentMessage: (agentId, data, options = {}) => {
     const { signal, headers: extraHeaders, ...restOptions } = options || {};
     const baseHeaders = {
-      'Content-Type': 'application/json',
-      ...useUserStore().getAuthHeaders()
+      "Content-Type": "application/json",
+      ...useUserStore().getAuthHeaders(),
     };
 
     return fetch(`/api/chat/agent/${agentId}`, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(data),
       signal,
       headers: {
         ...baseHeaders,
-        ...(extraHeaders || {})
+        ...(extraHeaders || {}),
       },
-      ...restOptions
-    })
+      ...restOptions,
+    });
   },
 
   /**
@@ -44,19 +42,19 @@ export const agentApi = {
    * @param {string} query - 查询内容
    * @returns {Promise} - 聊天响应
    */
-  simpleCall: (query) => apiPost('/api/chat/call', { query }),
+  simpleCall: (query) => apiPost("/api/chat/call", { query }),
 
   /**
    * 获取默认智能体
    * @returns {Promise} - 默认智能体信息
    */
-  getDefaultAgent: () => apiGet('/api/chat/default_agent'),
+  getDefaultAgent: () => apiGet("/api/chat/default_agent"),
 
   /**
    * 获取智能体列表
    * @returns {Promise} - 智能体列表
    */
-  getAgents: () => apiGet('/api/chat/agent'),
+  getAgents: () => apiGet("/api/chat/agent"),
 
   /**
    * 获取单个智能体详情
@@ -111,7 +109,8 @@ export const agentApi = {
    * @param {Array} models - 选中的模型列表
    * @returns {Promise} - 更新结果
    */
-  updateProviderModels: (provider, models) => apiPost(`/api/chat/models/update?model_provider=${provider}`, models),
+  updateProviderModels: (provider, models) =>
+    apiPost(`/api/chat/models/update?model_provider=${provider}`, models),
 
   /**
    * 获取智能体配置
@@ -119,7 +118,7 @@ export const agentApi = {
    * @returns {Promise} - 智能体配置
    */
   getAgentConfig: async (agentName) => {
-    return apiAdminGet(`/api/chat/agent/${agentName}/config`)
+    return apiAdminGet(`/api/chat/agent/${agentName}/config`);
   },
 
   /**
@@ -129,7 +128,7 @@ export const agentApi = {
    * @returns {Promise} - 保存结果
    */
   saveAgentConfig: async (agentName, config) => {
-    return apiAdminPost(`/api/chat/agent/${agentName}/config`, config)
+    return apiAdminPost(`/api/chat/agent/${agentName}/config`, config);
   },
 
   /**
@@ -138,7 +137,7 @@ export const agentApi = {
    * @returns {Promise} - 设置结果
    */
   setDefaultAgent: async (agentId) => {
-    return apiAdminPost('/api/chat/set_default_agent', { agent_id: agentId })
+    return apiAdminPost("/api/chat/set_default_agent", { agent_id: agentId });
   },
 
   /**
@@ -151,23 +150,22 @@ export const agentApi = {
   resumeAgentChat: (agentId, data, options = {}) => {
     const { signal, headers: extraHeaders, ...restOptions } = options || {};
     const baseHeaders = {
-      'Content-Type': 'application/json',
-      ...useUserStore().getAuthHeaders()
+      "Content-Type": "application/json",
+      ...useUserStore().getAuthHeaders(),
     };
 
     return fetch(`/api/chat/agent/${agentId}/resume`, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(data),
       signal,
       headers: {
         ...baseHeaders,
-        ...(extraHeaders || {})
+        ...(extraHeaders || {}),
       },
-      ...restOptions
-    })
-  }
-}
-
+      ...restOptions,
+    });
+  },
+};
 
 // =============================================================================
 // === 多模态图片支持分组 ===
@@ -181,15 +179,18 @@ export const multimodalApi = {
    */
   uploadImage: (file) => {
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append("file", file);
 
-    return apiRequest('/api/chat/image/upload', {
-      method: 'POST',
-      body: formData,
-    }, true);
+    return apiRequest(
+      "/api/chat/image/upload",
+      {
+        method: "POST",
+        body: formData,
+      },
+      true,
+    );
   },
-
-  };
+};
 
 // =============================================================================
 // === 对话线程分组 ===
@@ -213,11 +214,12 @@ export const threadApi = {
    * @param {Object} metadata - 元数据
    * @returns {Promise} - 创建结果
    */
-  createThread: (agentId, title, metadata) => apiPost('/api/chat/thread', {
-    agent_id: agentId,
-    title: title || '新的对话',
-    metadata: metadata || {}
-  }),
+  createThread: (agentId, title, metadata) =>
+    apiPost("/api/chat/thread", {
+      agent_id: agentId,
+      title: title || "新的对话",
+      metadata: metadata || {},
+    }),
 
   /**
    * 更新对话线程
@@ -226,10 +228,11 @@ export const threadApi = {
    * @param {string} description - 对话描述
    * @returns {Promise} - 更新结果
    */
-  updateThread: (threadId, title, description) => apiPut(`/api/chat/thread/${threadId}`, {
-    title,
-    description
-  }),
+  updateThread: (threadId, title, description) =>
+    apiPut(`/api/chat/thread/${threadId}`, {
+      title,
+      description,
+    }),
 
   /**
    * 删除对话线程
@@ -252,12 +255,12 @@ export const threadApi = {
    * @returns {Promise}
    */
   uploadThreadAttachment: (threadId, file) => {
-    const formData = new FormData()
-    formData.append('file', file)
+    const formData = new FormData();
+    formData.append("file", file);
     return apiRequest(`/api/chat/thread/${threadId}/attachments`, {
-      method: 'POST',
-      body: formData
-    })
+      method: "POST",
+      body: formData,
+    });
   },
 
   /**
@@ -266,5 +269,6 @@ export const threadApi = {
    * @param {string} fileId
    * @returns {Promise}
    */
-  deleteThreadAttachment: (threadId, fileId) => apiDelete(`/api/chat/thread/${threadId}/attachments/${fileId}`)
+  deleteThreadAttachment: (threadId, fileId) =>
+    apiDelete(`/api/chat/thread/${threadId}/attachments/${fileId}`),
 };
