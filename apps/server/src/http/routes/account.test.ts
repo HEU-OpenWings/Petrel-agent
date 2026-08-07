@@ -1,6 +1,8 @@
+import { createUserRepository } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
+import { __resetAuthRateLimits } from "./auth.ts";
 
 /** state 用 vi.hoisted：vi.mock 会被提升到 import 之上，工厂里不能引用普通顶层变量 */
 const state = vi.hoisted(() => ({ db: undefined as TestDb | undefined }));
@@ -28,6 +30,7 @@ beforeAll(async () => {
 // process.env。用例后清理，避免污染同进程其他测试文件（与 models.test.ts 同口径）。
 beforeEach(() => {
   vi.stubEnv("DEEPSEEK_API_KEY", "test-stub");
+  __resetAuthRateLimits();
   return reset();
 });
 
@@ -38,14 +41,21 @@ afterEach(() => {
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
 
-/** 注册一个用户并返回它的 cookie（同 admin.test.ts 的 registerUser） */
+/** 注册一个用户并返回它的 cookie（验证流程本身在 routes/auth.test.ts 覆盖，这里直接置为已验证再登录） */
 async function registerUser(email: string): Promise<string> {
   const response = await app.request("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
-  return (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+  const body = (await response.json()) as { user: { id: string } };
+  await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
+  const login = await app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  return (login.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
 }
 
 function getPreferences(cookie: string) {

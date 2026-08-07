@@ -1,19 +1,22 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { users } from "../schema.ts";
 import type { Database } from "./sessions.ts";
 
-/** 对外可见的用户字段。passwordHash 永远不在里面 */
+/** 对外可见的用户字段。passwordHash 永远不在里面；emailVerifiedAt 非敏感，admin 列表可见 */
 export interface PublicUser {
   id: string;
   email: string;
   role: string;
   disabled: boolean;
+  emailVerifiedAt: Date | null;
   createdAt: Date;
 }
 
-/** 只有登录校验用得到，不要泄漏到 route 层 */
+/** 只有登录 / 验证 / 重置校验用得到，不要泄漏到 route 层 */
 export interface UserWithSecret extends PublicUser {
   passwordHash: string;
+  emailVerifyTokenExpiresAt: Date | null;
+  passwordResetTokenExpiresAt: Date | null;
 }
 
 /**
@@ -27,18 +30,26 @@ const PUBLIC_COLUMNS = {
   email: users.email,
   role: users.role,
   disabled: users.disabled,
+  emailVerifiedAt: users.emailVerifiedAt,
   createdAt: users.createdAt,
 } as const;
 
 export function createUserRepository(db: Database) {
   return {
-    async create(input: { email: string; passwordHash: string; role?: string }): Promise<PublicUser> {
+    async create(input: {
+      email: string;
+      passwordHash: string;
+      role?: string;
+      /** 验证开关关闭时直接建出已验证用户，避免「create 完再 update」的中间态 */
+      emailVerifiedAt?: Date | null;
+    }): Promise<PublicUser> {
       const inserted = await db
         .insert(users)
         .values({
           email: input.email,
           passwordHash: input.passwordHash,
           role: input.role ?? "user",
+          ...(input.emailVerifiedAt ? { emailVerifiedAt: input.emailVerifiedAt } : {}),
         })
         .returning();
       // 0 参 returning()：TS 在 NodePgDatabase | PgliteDatabase 联合上调用带泛型的
@@ -50,6 +61,7 @@ export function createUserRepository(db: Database) {
         email: row.email,
         role: row.role,
         disabled: row.disabled,
+        emailVerifiedAt: row.emailVerifiedAt,
         createdAt: row.createdAt,
       };
     },
@@ -57,7 +69,12 @@ export function createUserRepository(db: Database) {
     /** 登录校验专用：带 passwordHash */
     async findByEmail(email: string): Promise<UserWithSecret | undefined> {
       const rows = await db
-        .select({ ...PUBLIC_COLUMNS, passwordHash: users.passwordHash })
+        .select({
+          ...PUBLIC_COLUMNS,
+          passwordHash: users.passwordHash,
+          emailVerifyTokenExpiresAt: users.emailVerifyTokenExpiresAt,
+          passwordResetTokenExpiresAt: users.passwordResetTokenExpiresAt,
+        })
         .from(users)
         .where(eq(users.email, email))
         .limit(1);
@@ -82,6 +99,81 @@ export function createUserRepository(db: Database) {
 
     async setRole(id: string, role: string): Promise<boolean> {
       const updated = await db.update(users).set({ role }).where(eq(users.id, id)).returning();
+      return updated.length > 0;
+    },
+
+    /**
+     * 验证成功后置位。**不清掉验证 token 哈希**：用户（或邮件客户端）可能点两次链接，
+     * 清掉后第二次会变成「链接无效」。保留哈希没有安全影响——账号已验证，
+     * 哈希只是 sha256 的 256 位随机值；下次重发验证会覆盖它。
+     */
+    async setEmailVerified(id: string, at: Date): Promise<boolean> {
+      const updated = await db.update(users).set({ emailVerifiedAt: at }).where(eq(users.id, id)).returning();
+      return updated.length > 0;
+    },
+
+    async setEmailVerifyToken(id: string, tokenHash: string, expiresAt: Date): Promise<boolean> {
+      const updated = await db
+        .update(users)
+        .set({ emailVerifyTokenHash: tokenHash, emailVerifyTokenExpiresAt: expiresAt })
+        .where(eq(users.id, id))
+        .returning();
+      return updated.length > 0;
+    },
+
+    /** 验证链接专用：按 token 哈希找用户，带 passwordHash 只是复用现有查询形状 */
+    async findByEmailVerifyToken(tokenHash: string): Promise<UserWithSecret | undefined> {
+      const rows = await db
+        .select({
+          ...PUBLIC_COLUMNS,
+          passwordHash: users.passwordHash,
+          emailVerifyTokenExpiresAt: users.emailVerifyTokenExpiresAt,
+          passwordResetTokenExpiresAt: users.passwordResetTokenExpiresAt,
+        })
+        .from(users)
+        .where(eq(users.emailVerifyTokenHash, tokenHash))
+        .limit(1);
+      return rows[0];
+    },
+
+    async setPasswordResetToken(id: string, tokenHash: string, expiresAt: Date): Promise<boolean> {
+      const updated = await db
+        .update(users)
+        .set({ passwordResetTokenHash: tokenHash, passwordResetTokenExpiresAt: expiresAt })
+        .where(eq(users.id, id))
+        .returning();
+      return updated.length > 0;
+    },
+
+    async findByPasswordResetToken(tokenHash: string): Promise<UserWithSecret | undefined> {
+      const rows = await db
+        .select({
+          ...PUBLIC_COLUMNS,
+          passwordHash: users.passwordHash,
+          emailVerifyTokenExpiresAt: users.emailVerifyTokenExpiresAt,
+          passwordResetTokenExpiresAt: users.passwordResetTokenExpiresAt,
+        })
+        .from(users)
+        .where(eq(users.passwordResetTokenHash, tokenHash))
+        .limit(1);
+      return rows[0];
+    },
+
+    /**
+     * 密码重置落库：换哈希 + 清空重置 token，并把邮箱顺带标记为已验证
+     * （重置邮件本身就是邮箱所有权证明，也兜住「验证邮件丢了」的情况）。
+     */
+    async resetPassword(id: string, passwordHash: string, now: Date): Promise<boolean> {
+      const updated = await db
+        .update(users)
+        .set({
+          passwordHash,
+          passwordResetTokenHash: null,
+          passwordResetTokenExpiresAt: null,
+          emailVerifiedAt: sql`COALESCE(${users.emailVerifiedAt}, ${now})`,
+        })
+        .where(eq(users.id, id))
+        .returning();
       return updated.length > 0;
     },
 

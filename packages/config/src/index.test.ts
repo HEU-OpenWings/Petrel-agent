@@ -26,7 +26,12 @@ describe("jwtSecret", () => {
   });
 
   it("生产环境提供了就用它", async () => {
-    const { env } = await loadEnv({ NODE_ENV: "production", JWT_SECRET: "s3cret-from-env" });
+    const { env } = await loadEnv({
+      NODE_ENV: "production",
+      JWT_SECRET: "s3cret-from-env",
+      MAIL_TRANSPORT: "smtp",
+      SMTP_HOST: "smtp.example.com",
+    });
     expect(env.jwtSecret).toBe("s3cret-from-env");
   });
 
@@ -151,5 +156,109 @@ describe("quota", () => {
   // booleanEnv 大小写不敏感（toLowerCase），故 TRUE/false 等合法；只拒绝真非法值
   it.each(["yes", "1", "maybe", "on"])("QUOTA_ENFORCEMENT 非布尔字符串抛错：%s", async (raw) => {
     await expect(loadEnv({ QUOTA_ENFORCEMENT: raw })).rejects.toThrow("QUOTA_ENFORCEMENT");
+  });
+});
+
+describe("mail", () => {
+  it("开发环境默认 console 传输，不要求 SMTP 配置", async () => {
+    const { env } = await loadEnv({
+      NODE_ENV: "development",
+      MAIL_TRANSPORT: undefined,
+      SMTP_HOST: undefined,
+    });
+    expect(env.mail.transport).toBe("console");
+    expect(env.mail.smtp.host).toBe("");
+  });
+
+  it("生产环境缺 MAIL_TRANSPORT 启动失败", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        JWT_SECRET: "s3cret",
+        MAIL_TRANSPORT: undefined,
+      }),
+    ).rejects.toThrow("MAIL_TRANSPORT");
+  });
+
+  it("生产环境缺 SMTP_HOST 启动失败", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        JWT_SECRET: "s3cret",
+        MAIL_TRANSPORT: "smtp",
+        SMTP_HOST: undefined,
+      }),
+    ).rejects.toThrow("SMTP_HOST");
+  });
+
+  it("smtp 配置被完整解析", async () => {
+    const { env } = await loadEnv({
+      NODE_ENV: "production",
+      JWT_SECRET: "s3cret",
+      MAIL_TRANSPORT: "smtp",
+      SMTP_HOST: "smtp.example.com",
+      SMTP_PORT: "465",
+      SMTP_SECURE: "true",
+      SMTP_USER: "no-reply@example.com",
+      SMTP_PASSWORD: "hunter2",
+      MAIL_FROM: " Petrel <no-reply@example.com> ",
+    });
+    expect(env.mail).toEqual({
+      transport: "smtp",
+      from: "Petrel <no-reply@example.com>",
+      smtp: {
+        host: "smtp.example.com",
+        port: 465,
+        secure: true,
+        user: "no-reply@example.com",
+        password: "hunter2",
+      },
+    });
+  });
+
+  it("publicApiUrl 与 publicWebUrl 有开发默认值", async () => {
+    const { env } = await loadEnv({ PUBLIC_API_URL: undefined, PUBLIC_WEB_URL: undefined });
+    expect(env.publicApiUrl).toBe("http://localhost:5050");
+    expect(env.publicWebUrl).toBe("http://localhost:5173");
+  });
+});
+
+describe("rateLimit", () => {
+  it("默认值：注册 5 次/15 分钟，邮件 3 次/15 分钟", async () => {
+    const { env } = await loadEnv({
+      REGISTER_RATE_LIMIT_MAX: undefined,
+      REGISTER_RATE_LIMIT_WINDOW_MINUTES: undefined,
+      AUTH_MAIL_RATE_LIMIT_MAX: undefined,
+      AUTH_MAIL_RATE_LIMIT_WINDOW_MINUTES: undefined,
+    });
+    expect(env.rateLimit).toEqual({
+      registerMax: 5,
+      registerWindowMs: 15 * 60_000,
+      authMailMax: 3,
+      authMailWindowMs: 15 * 60_000,
+    });
+  });
+
+  it("显式合法值被采用（分钟换算成毫秒）", async () => {
+    const { env } = await loadEnv({
+      REGISTER_RATE_LIMIT_MAX: "10",
+      REGISTER_RATE_LIMIT_WINDOW_MINUTES: "60",
+      AUTH_MAIL_RATE_LIMIT_MAX: "5",
+      AUTH_MAIL_RATE_LIMIT_WINDOW_MINUTES: "30",
+    });
+    expect(env.rateLimit.registerMax).toBe(10);
+    expect(env.rateLimit.registerWindowMs).toBe(60 * 60_000);
+    expect(env.rateLimit.authMailMax).toBe(5);
+    expect(env.rateLimit.authMailWindowMs).toBe(30 * 60_000);
+  });
+
+  it.each(["0", "-1", "1.5", "abc"])("REGISTER_RATE_LIMIT_MAX 非正整数抛错：%s", async (raw) => {
+    await expect(loadEnv({ REGISTER_RATE_LIMIT_MAX: raw })).rejects.toThrow("REGISTER_RATE_LIMIT_MAX");
+  });
+
+  it.each(["0", "-1", "1.5", "abc"])("REGISTER_RATE_LIMIT_WINDOW_MINUTES 非正整数抛错：%s", async (raw) => {
+    await expect(loadEnv({ REGISTER_RATE_LIMIT_WINDOW_MINUTES: raw })).rejects.toThrow(
+      "REGISTER_RATE_LIMIT_WINDOW_MINUTES",
+    );
   });
 });

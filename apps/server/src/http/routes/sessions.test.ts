@@ -1,8 +1,9 @@
-import { createEntryRepository } from "@petrel/database";
+import { createEntryRepository, createUserRepository } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService } from "../../services/session.ts";
 import { app } from "../app.ts";
+import { __resetAuthRateLimits } from "./auth.ts";
 import { __resetRegistry, getRegistry } from "./chat.ts";
 
 /**
@@ -50,14 +51,22 @@ let cookie: string;
 
 beforeEach(async () => {
   await reset();
+  __resetAuthRateLimits();
   __resetRegistry();
   const response = await app.request("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: "a@x.io", password: "hunter2hunter2" }),
   });
-  cookie = (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
   const body = (await response.json()) as { user: { id: string } };
+  // 验证流程本身在 routes/auth.test.ts 覆盖，这里直接置为已验证再登录
+  await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
+  const login = await app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "a@x.io", password: "hunter2hunter2" }),
+  });
+  cookie = (login.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
   service = createSessionService(state.db!, body.user.id);
 });
 

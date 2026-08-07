@@ -14,9 +14,11 @@
     "@petrel/config": "workspace:*",
     "@petrel/database": "workspace:*",
     "@petrel/logger": "workspace:*",
-    "hono": "^4.12.32"
+    "hono": "^4.12.32",
+    "nodemailer": "^9.0.4"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.83.0"
+    "@earendil-works/pi-ai": "0.83.0",
+    "@types/nodemailer": "^8.0.1"
   }
 }

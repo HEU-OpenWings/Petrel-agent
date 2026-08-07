@@ -18,6 +18,10 @@ export const registerApi = (email, password) =>
 export const loginApi = (email, password) =>
   post('/api/auth/login', { email, password }, { treatUnauthorizedAsRequestError: true })
 
+/** 未验证登录被拒（403）后重发验证邮件；恒 200 防枚举，按邮箱限流 */
+export const resendVerificationApi = (email) =>
+  post('/api/auth/resend-verification', { email }, { treatUnauthorizedAsRequestError: true })
+
 export const logoutApi = () => post('/api/auth/logout', {})
 
 /** skipUnauthorizedHandler：未登录时的 401 是预期结果，见 http.js 的 handleUnauthorized */

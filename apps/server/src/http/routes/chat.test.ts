@@ -4,11 +4,13 @@ import {
   createEntryRepository,
   createQuotaLimitsRepository,
   createTokenUsageRepository,
+  createUserRepository,
 } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService } from "../../services/session.ts";
 import { app } from "../app.ts";
+import { __resetAuthRateLimits } from "./auth.ts";
 import { __resetRegistry } from "./chat.ts";
 
 /**
@@ -117,7 +119,13 @@ async function registerUser(email: string): Promise<{ cookie: string; id: string
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
-  return { cookie: (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
+  await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
+  const login = await app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  return { cookie: (login.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
 }
 
 /** 注册一个新用户并返回它的 cookie，用来跨用户测越权场景 */
@@ -149,6 +157,7 @@ beforeEach(async () => {
   state.quotaEnforcement = false;
   useFaux();
   await reset();
+  __resetAuthRateLimits();
   __resetRegistry();
   const user = await registerUser("a@x.io");
   cookie = user.cookie;
