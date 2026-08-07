@@ -128,6 +128,7 @@ beforeEach(async () => {
   __resetRegistry();
   const user = await registerUser("a@x.io");
   cookie = user.cookie;
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   service = createSessionService(state.db!, user.id);
   state.seenHarnessOptions = undefined;
 });

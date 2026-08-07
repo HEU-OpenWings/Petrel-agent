@@ -5,7 +5,7 @@
     :footer="null"
     wrap-class-name="file-detail"
     @after-open-change="afterOpenChange"
-    :body-style="{ height: '80vh', padding: '0' }"
+    :bodyStyle="{ height: '80vh', padding: '0' }"
   >
     <template #title>
       <div class="modal-title-wrapper">

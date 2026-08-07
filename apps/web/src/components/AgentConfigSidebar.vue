@@ -56,7 +56,7 @@
                 <div v-if="value.template_metadata.kind === 'llm'" class="model-selector">
                   <ModelSelectorComponent
                     @select-model="handleModelChange"
-                    :model-spec="agentConfig[key] || ''"
+                    :model_spec="agentConfig[key] || ''"
                   />
                 </div>
 
@@ -231,7 +231,7 @@
       title="选择工具"
       :width="800"
       :footer="null"
-      :mask-closable="false"
+      :maskClosable="false"
       class="tools-modal"
     >
       <div class="tools-modal-content">

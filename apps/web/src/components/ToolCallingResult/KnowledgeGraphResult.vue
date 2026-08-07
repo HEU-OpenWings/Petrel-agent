@@ -300,8 +300,8 @@ defineExpose({
     border: 1px solid var(--gray-200);
 
     :deep(.ant-collapse-header) {
-      background: var(--gray-50);
-      border-radius: 4px;
+      background: var(--gray-50) !important;
+      border-radius: 4px !important;
       margin-bottom: 2px;
       font-size: 13px;
     }

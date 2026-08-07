@@ -55,7 +55,7 @@
       <!-- 仅对 LightRAG 类型显示 LLM 配置 -->
       <a-form-item v-if="database.kb_type === 'lightrag'" label="语言模型 (LLM)" name="llm_info">
         <ModelSelectorComponent
-          :model-spec="llmModelSpec"
+          :model_spec="llmModelSpec"
           placeholder="请选择模型"
           @select-model="handleLLMSelect"
           style="width: 100%;"

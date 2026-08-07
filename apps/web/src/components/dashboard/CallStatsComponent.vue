@@ -336,7 +336,7 @@ onUnmounted(() => {
 }
 
 .call-stats .chart {
-  height: 100%;
+  height: 100% !important;
   width: 100%;
   padding: 0; /* 移除chart的padding */
   border: none; /* 移除chart的border */

@@ -149,11 +149,11 @@
       <div class="preview-questions" v-if="previewQuestions && previewQuestions.length > 0">
         <h4>问题列表 (共{{ previewPagination.total }}条)</h4>
         <a-table
-          :data-source="previewQuestions"
+          :dataSource="previewQuestions"
           :columns="displayedQuestionColumns"
           :pagination="paginationConfig"
           size="small"
-          :row-key="(_, index) => index"
+          :rowKey="(_, index) => index"
           :loading="previewPagination.loading"
         >
           <template #bodyCell="{ column, record, index }">
@@ -753,9 +753,9 @@ onMounted(() => {
 
       // 确保表格单元格内容可以换行
       .ant-table-cell {
-        white-space: normal;
-        word-wrap: break-word;
-        word-break: break-all;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        word-break: break-all !important;
       }
     }
   }

@@ -20,7 +20,7 @@
     <div class="resize-handle" ref="resizeHandle"></div>
 
     <div class="right-panel" :style="{ width: (100 - leftPanelWidth) + '%', display: store.state.rightPanelVisible ? 'flex' : 'none' }">
-      <a-tabs v-model:active-key="activeTab" class="knowledge-tabs" :tab-bar-style="{ margin: 0, padding: '0 16px' }">
+      <a-tabs v-model:activeKey="activeTab" class="knowledge-tabs" :tabBarStyle="{ margin: 0, padding: '0 16px' }">
         <a-tab-pane key="graph" tab="知识图谱" v-if="isGraphSupported">
           <KnowledgeGraphSection
             :visible="true"

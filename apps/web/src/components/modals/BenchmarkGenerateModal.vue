@@ -3,7 +3,7 @@
   v-model:open="visible"
   title="自动生成评估基准"
   width="600px"
-  :confirm-loading="generating"
+  :confirmLoading="generating"
   @ok="handleGenerate"
   @cancel="handleCancel"
 >
@@ -31,7 +31,7 @@
     <a-form-item label="生成参数" name="params" :extra="extraText">
       <a-row :gutter="16">
         <a-col :span="12">
-          <a-form-item label="问题数量" name="count" :label-col="{ span: 24 }" :wrapper-col="{ span: 24 }">
+          <a-form-item label="问题数量" name="count" :labelCol="{ span: 24 }" :wrapperCol="{ span: 24 }">
             <a-input-number
               v-model:value="formState.count"
               :min="1"
@@ -42,7 +42,7 @@
           </a-form-item>
         </a-col>
         <a-col :span="12">
-          <a-form-item label="相似chunks数量" name="neighbors_count" :label-col="{ span: 24 }" :wrapper-col="{ span: 24 }">
+          <a-form-item label="相似chunks数量" name="neighbors_count" :labelCol="{ span: 24 }" :wrapperCol="{ span: 24 }">
             <a-input-number
               v-model:value="formState.neighbors_count"
               :min="0"
@@ -63,7 +63,7 @@
       <a-card size="small" title="配置参数">
         <a-form-item label="LLM模型配置" name="llm_model_spec" :rules="[{ required: true, message: '请选择LLM模型' }]">
           <ModelSelectorComponent
-            :model-spec="formState.llm_model_spec"
+            :model_spec="formState.llm_model_spec"
             placeholder="选择用于生成问题的LLM模型"
             size="small"
             @select-model="handleSelectLLMModel"
@@ -80,7 +80,7 @@
 
         <a-row :gutter="16">
           <a-col :span="12">
-            <a-form-item label="Temperature" name="temperature" :label-col="{ span: 24 }" :wrapper-col="{ span: 24 }">
+            <a-form-item label="Temperature" name="temperature" :labelCol="{ span: 24 }" :wrapperCol="{ span: 24 }">
               <a-input-number
                 v-model:value="formState.llm_config.temperature"
                 :min="0"
@@ -92,7 +92,7 @@
             </a-form-item>
           </a-col>
           <a-col :span="12">
-            <a-form-item label="Max Tokens" name="max_tokens" :label-col="{ span: 24 }" :wrapper-col="{ span: 24 }">
+            <a-form-item label="Max Tokens" name="max_tokens" :labelCol="{ span: 24 }" :wrapperCol="{ span: 24 }">
               <a-input-number
                 v-model:value="formState.llm_config.max_tokens"
                 :min="100"

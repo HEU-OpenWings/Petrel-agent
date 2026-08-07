@@ -44,9 +44,9 @@
     title="请告诉我们不满意的原因"
     @ok="submitDislikeFeedback"
     @cancel="cancelDislike"
-    :confirm-loading="submittingFeedback"
-    ok-text="提交"
-    cancel-text="取消"
+    :confirmLoading="submittingFeedback"
+    okText="提交"
+    cancelText="取消"
   >
     <a-textarea
       v-model:value="dislikeReason"

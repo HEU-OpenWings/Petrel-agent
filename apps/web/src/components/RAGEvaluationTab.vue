@@ -63,7 +63,7 @@
               :label="selectedBenchmark.has_gold_answers ? '答案生成模型' : '答案生成模型（当前基准无需）'"
             >
               <ModelSelectorComponent
-                v-model:model-spec="configForm.answer_llm"
+                v-model:model_spec="configForm.answer_llm"
                 size="small"
                 :disabled="!selectedBenchmark || !selectedBenchmark.has_gold_answers"
                 @select-model="(value) => configForm.answer_llm = value"
@@ -77,7 +77,7 @@
               :label="selectedBenchmark.has_gold_answers ? '答案评判模型' : '答案评判模型（当前基准无需）'"
             >
               <ModelSelectorComponent
-                v-model:model-spec="configForm.judge_llm"
+                v-model:model_spec="configForm.judge_llm"
                 size="small"
                 :disabled="!selectedBenchmark || !selectedBenchmark.has_gold_answers"
                 @select-model="(value) => configForm.judge_llm = value"
@@ -1473,18 +1473,18 @@ onMounted(() => {
 
 // 仅查看错误按钮样式
 .error-only-active {
-  background-color: var(--color-error-500);
-  border-color: var(--color-error-500);
-  color: white;
+  background-color: var(--color-error-500) !important;
+  border-color: var(--color-error-500) !important;
+  color: white !important;
 
   &:hover {
-    background-color: var(--color-error-600);
-    border-color: var(--color-error-600);
+    background-color: var(--color-error-600) !important;
+    border-color: var(--color-error-600) !important;
   }
 
   &:focus {
-    background-color: var(--color-error-500);
-    border-color: var(--color-error-500);
+    background-color: var(--color-error-500) !important;
+    border-color: var(--color-error-500) !important;
   }
 }
 

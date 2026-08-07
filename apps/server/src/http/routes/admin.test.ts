@@ -79,6 +79,7 @@ async function registerUser(email: string): Promise<{ cookie: string; id: string
 /** 注册后直接改库提权，再重新登录拿到 admin 身份的 cookie */
 async function registerAdmin(email: string): Promise<{ cookie: string; id: string }> {
   const { id } = await registerUser(email);
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setRole(id, "admin");
 
   const response = await app.request("/api/auth/login", {

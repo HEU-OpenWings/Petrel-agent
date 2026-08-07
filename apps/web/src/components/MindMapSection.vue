@@ -384,8 +384,8 @@ onUnmounted(() => {
 
 // 确保父容器有高度
 :deep(.markmap) {
-  width: 100%;
-  height: 100%;
+  width: 100% !important;
+  height: 100% !important;
 }
 </style>
 

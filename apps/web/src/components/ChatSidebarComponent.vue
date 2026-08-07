@@ -256,7 +256,7 @@ const toggleCollapse = () => {
   }
 
   &.no-transition {
-    transition: none;
+    transition: none !important;
   }
 
   &.sidebar-open {
@@ -398,10 +398,10 @@ const toggleCollapse = () => {
 
         .more-btn {
           color: var(--gray-600);
-          background-color: transparent;
+          background-color: transparent !important;
           &:hover {
             color: var(--main-500);
-            background-color: transparent;
+            background-color: transparent !important;
           }
         }
       }

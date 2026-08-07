@@ -417,7 +417,7 @@ defineExpose({
 }
 
 :deep(.ant-statistic-content-value) {
-  font-weight: bold;
+  font-weight: bold !important;
 }
 
 </style>

@@ -15,7 +15,7 @@
     <!-- 助手消息 -->
     <div v-else-if="message.type === 'ai'" class="assistant-message">
       <div v-if="parsedData.reasoning_content" class="reasoning-box">
-        <a-collapse v-model:active-key="reasoningActiveKey" :bordered="false">
+        <a-collapse v-model:activeKey="reasoningActiveKey" :bordered="false">
           <template #expandIcon="{ isActive }">
             <caret-right-outlined :rotate="isActive ? 90 : 0" />
           </template>
@@ -27,11 +27,11 @@
 
       <!-- 消息内容 -->
       <MdPreview v-if="parsedData.content" ref="editorRef"
-        editor-id="preview-only"
+        editorId="preview-only"
         :theme="theme"
-        preview-theme="github"
-        :show-code-row-number="false"
-        :model-value="parsedData.content"
+        previewTheme="github"
+        :showCodeRowNumber="false"
+        :modelValue="parsedData.content"
         :key="message.id"
         class="message-md"/>
 
@@ -628,10 +628,10 @@ const toggleToolCall = (toolCallId) => {
 
 .ant-btn-icon-only {
   &:has(.anticon-stop) {
-    background-color: var(--color-error-500);
+    background-color: var(--color-error-500) !important;
 
     &:hover {
-      background-color: var(--color-error-100);
+      background-color: var(--color-error-100) !important;
     }
   }
 }

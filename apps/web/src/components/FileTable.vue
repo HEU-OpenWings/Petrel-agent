@@ -133,7 +133,7 @@
         </a-tooltip>
 
         <div v-else-if="column.key === 'action'" class="table-row-actions">
-          <a-popover placement="bottomRight" trigger="click" overlay-class-name="file-action-popover">
+          <a-popover placement="bottomRight" trigger="click" overlayClassName="file-action-popover">
             <template #content>
               <div class="file-action-list">
                 <a-button type="text" block @click="handleDownloadFile(record)" :disabled="lock || record.status !== 'done'">

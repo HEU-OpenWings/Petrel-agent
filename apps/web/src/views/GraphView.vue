@@ -117,9 +117,9 @@
         </div>
         <a-upload-dragger
           class="upload-dragger"
-          v-model:file-list="fileList"
+          v-model:fileList="fileList"
           name="file"
-          :file-list="fileList"
+          :fileList="fileList"
           :max-count="1"
           accept=".jsonl"
           action="/api/knowledge/files/upload?allow_jsonl=true"

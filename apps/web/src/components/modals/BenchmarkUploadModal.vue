@@ -3,7 +3,7 @@
   v-model:open="visible"
   title="上传评估基准"
   width="600px"
-  :confirm-loading="uploading"
+  :confirmLoading="uploading"
   @ok="handleUpload"
   @cancel="handleCancel"
 >
@@ -34,7 +34,7 @@
       :extra="extraText"
     >
       <a-upload-dragger
-        v-model:file-list="fileList"
+        v-model:fileList="fileList"
         name="file"
         :multiple="false"
         accept=".jsonl"

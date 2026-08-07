@@ -78,7 +78,7 @@
       <div class="upload" v-if="uploadMode === 'file'">
         <a-upload-dragger
           class="upload-dragger"
-          v-model:file-list="fileList"
+          v-model:fileList="fileList"
           name="file"
           :multiple="true"
           :disabled="chunkLoading"

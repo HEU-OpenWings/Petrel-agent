@@ -58,6 +58,7 @@ beforeEach(async () => {
   });
   cookie = (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
   const body = (await response.json()) as { user: { id: string } };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   service = createSessionService(state.db!, body.user.id);
 });
 

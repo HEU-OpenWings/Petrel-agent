@@ -67,29 +67,29 @@
 /* 使用更具体的选择器来覆盖 Ant Design 的默认样式 */
 .dashboard-card .ant-card-head {
   /* border-bottom: 1px solid var(--gray-200) !important; */
-  min-height: 56px;
-  padding: 0 20px;
+  min-height: 56px !important;
+  padding: 0 20px !important;
   flex-shrink: 0;
-  background-color: var(--gray-0);
+  background-color: var(--gray-0) !important;
   /* border: 1px solo; */
 }
 
 .dashboard-card .ant-card-head-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--gray-1000);
+  font-size: 18px !important;
+  font-weight: 600 !important;
+  color: var(--gray-1000) !important;
 }
 
 .dashboard-card .ant-card-body {
-  padding: 20px;
-  padding-top: 0px;
+  padding: 20px !important;
+  padding-top: 0px !important;
   flex: 1;
   overflow: auto;
-  background-color: var(--gray-0);
+  background-color: var(--gray-0) !important;
 }
 
 .dashboard-card .ant-card-extra {
-  padding-top: 0px;
+  padding-top: 0px !important;
 }
 
 /* 统计概览样式 */
@@ -158,8 +158,8 @@
 
 /* Ant Design 组件样式覆盖 */
 .dashboard-card .ant-statistic-title {
-  color: var(--gray-600);
-  font-weight: 500;
+  color: var(--gray-600) !important;
+  font-weight: 500 !important;
 }
 
 .dashboard-card .ant-statistic-content {
@@ -168,7 +168,7 @@
 
 /* 强制设置所有统计卡片数字为粗体 */
 .dashboard-card .ant-statistic-content-value {
-  font-weight: 700;
+  font-weight: 700 !important;
 }
 
 .dashboard-card .ant-table {
@@ -205,12 +205,12 @@
 
 .dashboard-card .ant-progress {
   .ant-progress-bg {
-    background-color: var(--main-500);
+    background-color: var(--main-500) !important;
     border-radius: 4px;
   }
 
   .ant-progress-text {
-    color: var(--gray-1000);
+    color: var(--gray-1000) !important;
     font-weight: 500;
     font-size: 12px;
   }

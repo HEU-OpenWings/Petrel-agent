@@ -35,23 +35,28 @@
       "linter": {
         "rules": {
           "style": {
-            "useConst": "off",
-            "useImportType": "off"
+            "useConst": "off"
           },
           "correctness": {
             "noUnusedVariables": "off",
             "noUnusedImports": "off",
             "noVueDuplicateKeys": "off"
+          },
+          "complexity": {
+            "noImportantStyles": "off"
           }
         }
       }
     },
     {
-      "includes": ["apps/web/**/*.css"],
+      "includes": ["apps/web/**/*.{css,less}"],
       "linter": {
         "rules": {
           "style": {
             "noDescendingSpecificity": "off"
+          },
+          "complexity": {
+            "noImportantStyles": "off"
           }
         }
       }
@@ -63,19 +68,6 @@
           "complexity": {
             "useLiteralKeys": "off",
             "noStaticOnlyClass": "off"
-          },
-          "style": {
-            "noNonNullAssertion": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": ["**/*.test.ts"],
-      "linter": {
-        "rules": {
-          "style": {
-            "noNonNullAssertion": "off"
           }
         }
       }

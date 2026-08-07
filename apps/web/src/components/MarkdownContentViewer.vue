@@ -21,9 +21,9 @@
       <!-- 左侧：Markdown内容 -->
       <div class="content-panel">
         <MdPreview
-          :model-value="mergedContent"
+          :modelValue="mergedContent"
           :theme="theme"
-          preview-theme="github"
+          previewTheme="github"
           class="markdown-content"
         />
       </div>

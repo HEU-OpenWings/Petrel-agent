@@ -121,7 +121,7 @@ const filteredEdgeProperties = computed(() => {
     :deep(.ant-descriptions-item-label),
     :deep(.ant-descriptions-item-content) {
       font-size: 12px;
-      padding: 4px 8px;
+      padding: 4px 8px !important;
     }
   }
 

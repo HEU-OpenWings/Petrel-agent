@@ -101,7 +101,7 @@ describe("login", () => {
     await service.register("a@x.io", "hunter2hunter2");
     const { createUserRepository } = await import("@petrel/database");
     const found = await createUserRepository(db).findByEmail("a@x.io");
-    await createUserRepository(db).setDisabled(found!.id, true);
+    await createUserRepository(db).setDisabled(found?.id, true);
 
     await expect(service.login("a@x.io", "hunter2hunter2")).rejects.toMatchObject({ status: 401 });
   });

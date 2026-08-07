@@ -1053,18 +1053,18 @@ watch(
 }
 
 .floating-sidebar {
-  position: absolute;
+  position: absolute !important;
   z-index: 101;
   height: 100%;
   left: 0;
   top: 0;
   transform: translateX(0);
   transition: transform 0.3s ease;
-  width: 80%;
+  width: 80% !important;
   max-width: 300px;
 
   &.no-transition {
-    transition: none;
+    transition: none !important;
   }
 
   &.collapsed {
@@ -1350,7 +1350,7 @@ watch(
   }
 
   .chat-header {
-    padding: 0.5rem 0;
+    padding: 0.5rem 0 !important;
 
   }
 
@@ -1363,7 +1363,7 @@ watch(
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     transform: translateX(0);
     transition: transform 0.3s ease;
-    width: 80%;
+    width: 80% !important;
     max-width: 300px;
 
     &.collapsed {

@@ -71,7 +71,7 @@
         <h3 style="margin-top: 20px;">语言模型 (LLM)</h3>
         <p style="color: var(--gray-700); font-size: 14px;">可以在设置中配置语言模型</p>
         <ModelSelectorComponent
-          :model-spec="llmModelSpec"
+          :model_spec="llmModelSpec"
           placeholder="请选择模型"
           @select-model="handleLLMSelect"
           size="large"

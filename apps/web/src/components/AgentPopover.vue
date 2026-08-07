@@ -4,7 +4,7 @@
     :title="null"
     placement="bottomRight"
     trigger="click"
-    :overlay-style="{ width: '400px', zIndex: 999 }"
+    :overlayStyle="{ width: '400px', zIndex: 999 }"
   >
     <template #content>
       <div class="popover-content">

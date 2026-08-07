@@ -152,8 +152,8 @@
       :title="`配置${providerConfig.providerName}模型`"
       @ok="saveProviderConfig"
       @cancel="cancelProviderConfig"
-      :ok-text="'保存配置'"
-      :cancel-text="'取消'"
+      :okText="'保存配置'"
+      :cancelText="'取消'"
       :ok-type="'primary'"
       :width="800"
     >
@@ -268,11 +268,11 @@
       :title="customProviderModal.isEdit ? '编辑自定义供应商' : '添加自定义供应商'"
       @ok="saveCustomProvider"
       @cancel="cancelCustomProvider"
-      :ok-text="'保存'"
-      :cancel-text="'取消'"
+      :okText="'保存'"
+      :cancelText="'取消'"
       :ok-type="'primary'"
       :width="600"
-      :confirm-loading="customProviderModal.loading"
+      :confirmLoading="customProviderModal.loading"
     >
       <a-form
         ref="customProviderForm"
@@ -1352,7 +1352,7 @@ const testCustomProvider = async (providerId, modelName) => {
 
 .provider-config-modal {
   .ant-modal-body {
-    padding: 16px 0;
+    padding: 16px 0 !important;
     .modal-loading-container {
       display: flex;
       flex-direction: column;

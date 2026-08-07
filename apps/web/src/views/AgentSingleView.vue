@@ -6,7 +6,7 @@
       title="选择智能体"
       :width="800"
       :footer="null"
-      :mask-closable="true"
+      :maskClosable="true"
       class="agent-modal"
     >
       <div class="agent-modal-content">
