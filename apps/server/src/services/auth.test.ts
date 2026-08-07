@@ -465,6 +465,10 @@ describe("changePassword", () => {
       message: "当前密码不正确",
     });
     await expect(service.login("a@x.io", OLD)).resolves.toMatchObject({ email: "a@x.io" });
+    // 失败的改密不得自增 tokenVersion：否则攻击者可以靠乱猜密码把别人全部踢下线
+    const { createUserRepository } = await import("@petrel/database");
+    const found = await createUserRepository(db).findByEmail("a@x.io");
+    expect(found?.tokenVersion).toBe(0);
   });
 
   it("新密码太短返回 400", async () => {
