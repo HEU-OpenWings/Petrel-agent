@@ -112,6 +112,9 @@ function booleanEnv(name: string, raw: string | undefined, fallback: boolean): b
   if (lower === "true") return true;
   if (lower === "false") return false;
   throw new Error(`环境变量 ${name} 非法：${raw}，应为 true 或 false`);
+}
+
+/**
  * 邮件传输通道。
  *
  * 开发与测试默认 `console`（邮件打到日志，含验证/重置链接），零外部依赖即可跑通；
@@ -178,6 +181,8 @@ export const env = {
   databaseUrl: process.env.DATABASE_URL ?? "postgres://petrel:petrel@localhost:5432/petrel",
   jwtSecret: jwtSecret(process.env.JWT_SECRET, nodeEnv),
   adminEmails: adminEmails(process.env.ADMIN_EMAILS),
+  // 邮箱验证开关。默认 true（安全默认）；开发/内网演示可关掉（注册即登录、不发验证邮件）
+  emailVerificationEnabled: bool("EMAIL_VERIFICATION_ENABLED", process.env.EMAIL_VERIFICATION_ENABLED, true),
   /** 邮件里的链接前缀。生产必须指到站点对外域名 */
   publicApiUrl: process.env.PUBLIC_API_URL?.trim() || "http://localhost:5050",
   /** 后端渲染 HTML 页里的「返回登录」链接（前端 SPA 地址） */

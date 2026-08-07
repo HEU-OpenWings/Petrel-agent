@@ -110,6 +110,7 @@ const normalUser = {
   email: TEST_USER_EMAIL,
   role: "user",
   disabled: false,
+  emailVerifiedAt: null,
   createdAt: new Date(),
 };
 const adminUser = { ...normalUser, role: "admin" };

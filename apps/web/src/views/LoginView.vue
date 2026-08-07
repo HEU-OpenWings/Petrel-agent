@@ -46,6 +46,15 @@
 
       <div v-if="!isRegister" class="login-forgot">
         <a href="/api/auth/forgot-password">忘记密码？</a>
+        <a-button
+          v-if="resendVisible"
+          type="link"
+          size="small"
+          :loading="resending"
+          @click="resendVerification"
+        >
+          重新发送验证邮件
+        </a-button>
       </div>
 
       <div class="login-switch">
@@ -59,8 +68,9 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { resendVerificationApi } from '@/apis/auth_api'
 import { useUserStore } from '@/stores/user'
 import { safeRedirect } from '@/utils/redirect'
 
@@ -70,9 +80,13 @@ const userStore = useUserStore()
 
 const isRegister = ref(false)
 const submitting = ref(false)
+const resending = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 const form = reactive({ email: '', password: '' })
+
+// 后端登录被拒的 403 文案（未验证邮箱）出现时，给「重新发送验证邮件」入口
+const resendVisible = computed(() => !isRegister.value && errorMessage.value.includes('邮箱尚未验证'))
 
 function toggleMode() {
   isRegister.value = !isRegister.value
@@ -86,9 +100,16 @@ async function handleSubmit() {
   successMessage.value = ''
   try {
     if (isRegister.value) {
-      await userStore.register(form.email, form.password)
-      // 验证邮件已发出、未自动登录：切回登录模式让用户去收信
-      successMessage.value = `验证邮件已发送到 ${form.email}，请查收后登录`
+      const data = await userStore.register(form.email, form.password)
+      // 注册不再自动登录：按后端返回区分三种情况，切回登录模式
+      if (data.verificationSent) {
+        successMessage.value = `验证邮件已发送到 ${form.email}，请查收后登录`
+      } else if (data.user?.emailVerifiedAt) {
+        // EMAIL_VERIFICATION_ENABLED=false（开发/内网演示）：注册即已验证
+        successMessage.value = '注册成功，请登录'
+      } else {
+        successMessage.value = '注册成功，但验证邮件发送失败，可点击「重新发送验证邮件」'
+      }
       isRegister.value = false
       return
     } else {
@@ -100,6 +121,19 @@ async function handleSubmit() {
     errorMessage.value = error.message || '操作失败，请重试'
   } finally {
     submitting.value = false
+  }
+}
+
+async function resendVerification() {
+  resending.value = true
+  try {
+    await resendVerificationApi(form.email)
+    successMessage.value = `验证邮件已重新发送到 ${form.email}，请查收`
+    errorMessage.value = ''
+  } catch (error) {
+    errorMessage.value = error.message || '重发失败，请稍后再试'
+  } finally {
+    resending.value = false
   }
 }
 </script>

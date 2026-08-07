@@ -54,7 +54,13 @@ passwordResetTokenExpiresAt: timestamp("password_reset_token_expires_at", { with
 | `POST /api/auth/forgot-password` | 邮箱 | 3 次 / 15 分钟 | `AUTH_MAIL_RATE_LIMIT_MAX` / `AUTH_MAIL_RATE_LIMIT_WINDOW_MINUTES` |
 | `POST /api/auth/resend-verification` | 邮箱 | 同上 | 同上 |
 
-客户端 IP 取 `X-Forwarded-For` 第一段（生产必须由反向代理写入），回退 `getConnInfo()` 的 socket 地址。
+客户端 IP **优先取 `X-Real-IP`**（nginx 的 `proxy_set_header` 是覆盖语义，客户端伪造不了）；
+兜底取 `X-Forwarded-For` 的**最后**一段（`$proxy_add_x_forwarded_for` 是追加语义，
+最后一跳才是代理写入的真实 IP——取第一段等于客户端任意伪造，注册限流可被绕过），
+再回退 `getConnInfo()` 的 socket 地址。
+
+限流 Map 有**容量上限**（默认 10 万条，满时逐出最旧 key），全表清理用**时间门控 sweep**
+（至多每 60s 一次，只在撞新 key 时触发），避免「逐请求 O(n) 全扫 + 无界增长」的 DoS 面。
 
 ## 5. 认证流程
 
@@ -64,7 +70,12 @@ passwordResetTokenExpiresAt: timestamp("password_reset_token_expires_at", { with
 
 - 先查注册限流（在 scrypt 之前，避免刷号打满 CPU）；
 - 建未验证用户 → 生成验证 token → 存哈希 + 过期时间 → 发验证邮件；
-- **不再自动登录**（种 cookie 会让「验证」形同虚设）：响应 `{ user, verificationSent: true }`。
+- **不再自动登录**（种 cookie 会让「验证」形同虚设）：响应 `{ user, verificationSent }`；
+- **邮件发送失败不使注册失败**：仍返回 201、`verificationSent: false`，
+  前端据此提示走 `/api/auth/resend-verification` 重发；
+- `EMAIL_VERIFICATION_ENABLED=false`（默认 true，安全默认）时直接建出**已验证**用户
+  （`userRepo.create` 支持 `emailVerifiedAt`，不产生中间态）、跳过发信与登录门禁；
+  仅用于开发 / 内网演示，生产关闭会打 `logger.warn` 醒目告警。
 
 ### 5.2 登录门禁
 
@@ -75,6 +86,7 @@ passwordResetTokenExpiresAt: timestamp("password_reset_token_expires_at", { with
 ```
 
 判定排在密码校验**之后**，与 `disabled` 同位置——不构成账号枚举（攻击者只有先知道正确密码才会看到 403）。
+`EMAIL_VERIFICATION_ENABLED=false` 时跳过这道闸。
 
 ### 5.3 验证邮箱
 
@@ -97,6 +109,7 @@ passwordResetTokenExpiresAt: timestamp("password_reset_token_expires_at", { with
 | `MAIL_FROM` | `Petrel <no-reply@petrel.local>` | 发件人 |
 | `PUBLIC_API_URL` | `http://localhost:5050` | 邮件里的链接前缀（生产为站点域名） |
 | `PUBLIC_WEB_URL` | `http://localhost:5173` | 后端 HTML 页里的「返回登录」链接 |
+| `EMAIL_VERIFICATION_ENABLED` | `true` | 关闭后注册即登录、不发验证邮件（仅开发/内网演示） |
 | `REGISTER_RATE_LIMIT_MAX` / `REGISTER_RATE_LIMIT_WINDOW_MINUTES` | 5 / 15 | 注册限流 |
 | `AUTH_MAIL_RATE_LIMIT_MAX` / `AUTH_MAIL_RATE_LIMIT_WINDOW_MINUTES` | 3 / 15 | 忘记密码 / 重发验证限流 |
 

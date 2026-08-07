@@ -37,7 +37,7 @@ function firstMail(): { to: string; subject: string; text: string } {
 
 /** 注册 + 用假邮件里的 token 验证，返回已验证用户 */
 async function registerVerified(email: string, password = PASSWORD) {
-  const user = await service.register(email, password);
+  const { user } = await service.register(email, password);
   await service.verifyEmail(lastToken());
   return user;
 }
@@ -64,19 +64,36 @@ afterAll(() => close?.());
 
 describe("register", () => {
   it("注册成功返回公开字段", async () => {
-    const user = await service.register("Alice@Example.com", PASSWORD);
+    const { user } = await service.register("Alice@Example.com", PASSWORD);
 
     expect(user.email).toBe("alice@example.com");
     expect(user.role).toBe("user");
     expect(user).not.toHaveProperty("passwordHash");
   });
 
-  it("注册即发验证邮件，收件人是注册邮箱", async () => {
-    await service.register("a@x.io", PASSWORD);
+  it("注册即发验证邮件并声明 verificationSent，收件人是注册邮箱", async () => {
+    const { verificationSent } = await service.register("a@x.io", PASSWORD);
 
+    expect(verificationSent).toBe(true);
     expect(mails).toHaveLength(1);
     expect(firstMail().to).toBe("a@x.io");
     expect(firstMail().text).toContain("/api/auth/verify-email?token=");
+  });
+
+  it("邮件发送失败时仍返回 201 语义（verificationSent=false）且用户已建出", async () => {
+    const broken = createAuthService(db, {
+      async send() {
+        throw new Error("smtp down");
+      },
+    });
+
+    const result = await broken.register("a@x.io", PASSWORD);
+
+    expect(result.verificationSent).toBe(false);
+    expect(result.user.email).toBe("a@x.io");
+    // 未验证（开关仍开启），可走重发验证 / 忘记密码自救
+    expect(result.user.emailVerifiedAt).toBeNull();
+    await expect(service.login("a@x.io", PASSWORD)).rejects.toMatchObject({ status: 403 });
   });
 
   it("邮箱大小写归一后重复注册返回 409", async () => {
@@ -108,10 +125,34 @@ describe("register", () => {
     vi.resetModules();
     const { createAuthService: freshFactory } = await import("./auth.ts");
 
-    const user = await freshFactory(db, fakeMailer()).register("Boss@X.io", PASSWORD);
+    const { user } = await freshFactory(db, fakeMailer()).register("Boss@X.io", PASSWORD);
 
     expect(user.role).toBe("admin");
     vi.unstubAllEnvs();
+  });
+});
+
+describe("EMAIL_VERIFICATION_ENABLED=false（开发/内网演示）", () => {
+  it("注册即已验证、不发邮件、可以直接登录", async () => {
+    vi.stubEnv("EMAIL_VERIFICATION_ENABLED", "false");
+    vi.resetModules();
+    const { createAuthService: freshFactory } = await import("./auth.ts");
+    const relaxed = freshFactory(db, fakeMailer());
+
+    const { user, verificationSent } = await relaxed.register("a@x.io", PASSWORD);
+
+    expect(verificationSent).toBe(false);
+    expect(user.emailVerifiedAt).toBeInstanceOf(Date);
+    expect(mails).toHaveLength(0);
+    await expect(relaxed.login("a@x.io", PASSWORD)).resolves.toMatchObject({ email: "a@x.io" });
+    vi.unstubAllEnvs();
+  });
+
+  it("默认 true：开关缺失时仍要求验证", async () => {
+    const { user } = await service.register("a@x.io", PASSWORD);
+
+    expect(user.emailVerifiedAt).toBeNull();
+    await expect(service.login("a@x.io", PASSWORD)).rejects.toMatchObject({ status: 403 });
   });
 });
 
@@ -365,6 +406,21 @@ describe("重置密码", () => {
 
     await expect(service.resetPassword(token, "brandnewpassword")).rejects.toMatchObject({
       status: 400,
+    });
+  });
+
+  it("重置成功后解除登录失败锁定", async () => {
+    await registerVerified("a@x.io");
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await service.login("a@x.io", "wrongpassword").catch(() => {});
+    }
+    await expect(service.login("a@x.io", PASSWORD)).rejects.toMatchObject({ status: 429 });
+
+    await service.forgotPassword("a@x.io");
+    await service.resetPassword(lastToken(), "brandnewpassword");
+
+    await expect(service.login("a@x.io", "brandnewpassword")).resolves.toMatchObject({
+      email: "a@x.io",
     });
   });
 

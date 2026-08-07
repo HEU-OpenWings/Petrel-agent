@@ -6,6 +6,8 @@ import { __resetAuthRateLimits } from "./auth.ts";
 const state = vi.hoisted(() => ({
   db: undefined as TestDb | undefined,
   mails: [] as { to: string; text: string }[],
+  /** 置 true 模拟 SMTP 挂掉：send 抛错 */
+  mailBroken: false,
 }));
 
 vi.mock("@petrel/database", async (importOriginal) => {
@@ -20,6 +22,9 @@ vi.mock("@petrel/database", async (importOriginal) => {
 vi.mock("../../services/mailer.ts", () => ({
   getMailer: () => ({
     send: async (input: { to: string; text: string }) => {
+      if (state.mailBroken) {
+        throw new Error("smtp down");
+      }
       state.mails.push(input);
     },
   }),
@@ -38,17 +43,20 @@ beforeAll(async () => {
 beforeEach(async () => {
   await reset();
   state.mails.length = 0;
+  state.mailBroken = false;
   __resetAuthRateLimits();
 });
 
 afterAll(() => close?.());
 
-function post(path: string, body: unknown, options?: { cookie?: string; ip?: string }) {
+function post(path: string, body: unknown, options?: { cookie?: string; ip?: string; xff?: string }) {
   return app.request(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(options?.ip ? { "x-forwarded-for": options.ip } : {}),
+      // clientIp 优先 X-Real-IP（nginx 覆盖语义，伪造不了）；xff 只留给伪造回归用例
+      ...(options?.ip ? { "x-real-ip": options.ip } : {}),
+      ...(options?.xff ? { "x-forwarded-for": options.xff } : {}),
       ...(options?.cookie ? { Cookie: options.cookie } : {}),
     },
     body: JSON.stringify(body),
@@ -97,16 +105,30 @@ describe("POST /api/auth/register", () => {
 
     expect(response.status).toBe(201);
     const body = (await response.json()) as {
-      user: { email: string; role: string };
+      user: { email: string; role: string; emailVerifiedAt: string | null };
       verificationSent: boolean;
     };
     expect(body.user).toEqual({
       id: expect.any(String),
       email: "a@x.io",
       role: "user",
+      emailVerifiedAt: null,
     });
     expect(body.verificationSent).toBe(true);
     expect(response.headers.get("Set-Cookie")).toBeNull();
+  });
+
+  it("邮件发送失败时仍返回 201，verificationSent=false", async () => {
+    state.mailBroken = true;
+
+    const response = await post("/api/auth/register", {
+      email: "a@x.io",
+      password: PASSWORD,
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { verificationSent: boolean };
+    expect(body.verificationSent).toBe(false);
   });
 
   it("注册即发验证邮件，收件人是注册邮箱且链接带 token", async () => {
@@ -167,7 +189,7 @@ describe("POST /api/auth/register", () => {
     await expect(response.json()).resolves.toEqual({ error: { message: "请求体必须是 JSON" } });
   });
 
-  it("同一 IP 第 6 次注册返回 429（默认 5 次/窗口）", async () => {
+  it("同一 X-Real-IP 第 6 次注册返回 429（默认 5 次/窗口）", async () => {
     for (let attempt = 0; attempt < 5; attempt++) {
       const response = await post(
         "/api/auth/register",
@@ -185,7 +207,7 @@ describe("POST /api/auth/register", () => {
     expect(response.status).toBe(429);
   });
 
-  it("不同 IP 互不影响", async () => {
+  it("不同 X-Real-IP 互不影响", async () => {
     for (let attempt = 0; attempt < 5; attempt++) {
       const response = await post(
         "/api/auth/register",
@@ -201,6 +223,26 @@ describe("POST /api/auth/register", () => {
       { ip: "203.0.113.9" },
     );
     expect(response.status).toBe(201);
+  });
+
+  it("XFF 伪造第一段不再生效：取最后一跳（追加语义下才是代理写的真实 IP）", async () => {
+    // 客户端发 X-Forwarded-For: 1.2.3.4，nginx 的 $proxy_add_x_forwarded_for
+    // 追加真实 IP 变成 "1.2.3.4, <真实IP>"。取最后一跳 = 真实 IP，轮换第一段无效
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const response = await post(
+        "/api/auth/register",
+        { email: `a${attempt}@x.io`, password: PASSWORD },
+        { xff: `1.2.3.${attempt}, 203.0.113.77` },
+      );
+      expect(response.status).toBe(201);
+    }
+
+    const response = await post(
+      "/api/auth/register",
+      { email: "a5@x.io", password: PASSWORD },
+      { xff: "9.9.9.9, 203.0.113.77" },
+    );
+    expect(response.status).toBe(429);
   });
 });
 

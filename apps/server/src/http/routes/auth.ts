@@ -40,19 +40,36 @@ function toHttpException(error: unknown): never {
 }
 
 /** 只把这几个字段吐给前端。createdAt 和 disabled 前端用不到 */
-function publicView(user: { id: string; email: string; role: string }) {
-  return { id: user.id, email: user.email, role: user.role };
+function publicView(user: { id: string; email: string; role: string; emailVerifiedAt?: Date | null }) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    emailVerifiedAt: user.emailVerifiedAt ?? null,
+  };
 }
 
 /**
- * 客户端 IP：优先取 X-Forwarded-For 第一段（生产必须由反向代理写入，否则可伪造），
- * 回退到 socket 地址；app.request 的测试环境没有真实 socket，走 XFF。
+ * 客户端 IP。
+ *
+ * 优先 X-Real-IP：nginx 的 `proxy_set_header X-Real-IP $remote_addr` 是**覆盖**语义，
+ * 客户端伪造不了（apps/web/docker/nginx/default.conf）。
+ * 兜底取 X-Forwarded-For 的**最后**一段：`$proxy_add_x_forwarded_for` 是**追加**语义，
+ * 最后一跳才是代理写进去的真实 IP——取第一段等于客户端任意伪造，注册限流可被绕过。
+ * 直连（绕过 nginx，含测试）时两者都可伪造，本函数只保证在既定部署拓扑下不可绕过。
  */
 function clientIp(c: Context): string {
+  const realIp = c.req.header("x-real-ip");
+  if (realIp?.trim()) return realIp.trim();
+
   const forwarded = c.req.header("x-forwarded-for");
   if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+    const parts = forwarded
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    const last = parts.at(-1);
+    if (last) return last;
   }
   try {
     return getConnInfo(c).remote.address ?? "unknown";
@@ -124,6 +141,8 @@ function verifyResultPage(ok: boolean, message: string): string {
   );
 }
 
+// 这些表单没有 CSRF token：不依赖登录态 cookie（重置还需要 URL 里的秘密 token），
+// 目前不可利用；若将来给这些页面加登录态或「记住我」，需要补 CSRF 防护
 function forgotFormPage(): string {
   return page(
     "忘记密码",
@@ -176,9 +195,12 @@ export const auth = new Hono<AppEnv>()
 
     const { email, password } = parseCredentials(await readJson(c));
 
-    const user = await getAuthService().register(email, password).catch(toHttpException);
-    // 不再自动登录：验证邮件发出前不种 cookie，否则「邮箱验证」形同虚设
-    return c.json({ user: publicView(user), verificationSent: true }, 201);
+    const { user, verificationSent } = await getAuthService()
+      .register(email, password)
+      .catch(toHttpException);
+    // 不再自动登录：验证邮件发出前不种 cookie，否则「邮箱验证」形同虚设。
+    // verificationSent=false 表示邮件发送失败（或验证开关关闭），前端据此提示重发
+    return c.json({ user: publicView(user), verificationSent }, 201);
   })
 
   .post("/login", async (c) => {

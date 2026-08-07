@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { env } from "@petrel/config";
 import { createUserRepository, type Database, getDb, type PublicUser } from "@petrel/database";
+import { logger } from "@petrel/logger";
 import { isUniqueViolation } from "./db-errors.ts";
 import { escapeHtml } from "./html.ts";
 import { getMailer, type Mailer } from "./mailer.ts";
@@ -88,6 +89,14 @@ const TOO_MANY_ATTEMPTS_MESSAGE = "尝试次数过多，请 15 分钟后再试";
 export function createAuthService(db: Database, mailer: Mailer = getMailer()) {
   const userRepo = createUserRepository(db);
 
+  // 关闭邮箱验证只服务于开发 / 内网演示：注册即登录等于放弃了邮箱所有权这道闸，
+  // 公开部署必须保持 true。醒目告警而非 throw（内网部署确实可能不需要它）。
+  if (!env.emailVerificationEnabled) {
+    logger.warn(
+      "EMAIL_VERIFICATION_ENABLED=false：注册即登录、不发送验证邮件（仅限开发/内网演示，公开部署请保持 true）",
+    );
+  }
+
   /**
    * 忘记密码 / 重发验证的限流（按邮箱）。单实例内存，与登录失败限流同一类
    * 实现与取舍；多副本共享计数在风控 issue。
@@ -158,7 +167,10 @@ export function createAuthService(db: Database, mailer: Mailer = getMailer()) {
   }
 
   return {
-    async register(rawEmail: string, password: string): Promise<PublicUser> {
+    async register(
+      rawEmail: string,
+      password: string,
+    ): Promise<{ user: PublicUser; verificationSent: boolean }> {
       const email = rawEmail.trim().toLowerCase();
 
       if (!EMAIL_PATTERN.test(email)) {
@@ -177,7 +189,13 @@ export function createAuthService(db: Database, mailer: Mailer = getMailer()) {
 
       let user: PublicUser;
       try {
-        user = await userRepo.create({ email, passwordHash, role });
+        // 验证开关关闭时直接建出已验证用户：不发邮件、注册即可登录（内网演示）
+        user = await userRepo.create({
+          email,
+          passwordHash,
+          role,
+          emailVerifiedAt: env.emailVerificationEnabled ? null : new Date(),
+        });
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new AuthError("该邮箱已注册", 409);
@@ -185,10 +203,20 @@ export function createAuthService(db: Database, mailer: Mailer = getMailer()) {
         throw error;
       }
 
-      // 注册即发验证邮件；在 create 成功之后发，避免「用户建出来但邮件发送失败」时
-      // 没有可恢复路径（用户还能走忘记密码 / 重发验证）
-      await sendVerificationEmail(user);
-      return user;
+      if (!env.emailVerificationEnabled) {
+        return { user, verificationSent: false };
+      }
+
+      // 注册即发验证邮件。邮件发送失败**不**让注册失败：
+      // 用户已建出，返回 201 + verificationSent=false，前端据此提示重发验证邮件
+      // （/api/auth/resend-verification）。
+      try {
+        await sendVerificationEmail(user);
+        return { user, verificationSent: true };
+      } catch (error) {
+        logger.warn({ err: error, email }, "验证邮件发送失败，注册仍成功（客户端可重发）");
+        return { user, verificationSent: false };
+      }
     },
 
     async login(rawEmail: string, password: string): Promise<PublicUser> {
@@ -225,8 +253,9 @@ export function createAuthService(db: Database, mailer: Mailer = getMailer()) {
       }
 
       // 与 disabled 同位置：排在密码校验之后，只有知道正确密码的人才看得到，
-      // 不构成账号枚举。未验证就放行等于邮箱验证形同虚设
-      if (!found.emailVerifiedAt) {
+      // 不构成账号枚举。未验证就放行等于邮箱验证形同虚设。
+      // EMAIL_VERIFICATION_ENABLED=false（开发/内网演示）时跳过这道闸
+      if (env.emailVerificationEnabled && !found.emailVerifiedAt) {
         throw new AuthError("邮箱尚未验证，请先查收验证邮件", 403);
       }
 
@@ -243,8 +272,9 @@ export function createAuthService(db: Database, mailer: Mailer = getMailer()) {
     },
 
     /**
-     * 验证邮箱。幂等：已验证的账号再带 token 访问也返回成功（清掉残留 token）。
-     * token 无效或过期走 400，页面显示统一文案。
+     * 验证邮箱。幂等：已验证的账号再带 token 访问也返回成功——
+     * token 哈希保留不删（见 users.ts setEmailVerified 的注释），
+     * 重复点击链接不会变成「链接无效」。token 无效或过期走 400。
      */
     async verifyEmail(rawToken: string): Promise<PublicUser> {
       const user = await userRepo.findByEmailVerifyToken(hashToken(rawToken.trim()));
@@ -313,6 +343,8 @@ export function createAuthService(db: Database, mailer: Mailer = getMailer()) {
         throw new AuthError("重置链接无效或已过期", 400);
       }
       await userRepo.resetPassword(user.id, await hashPassword(newPassword), new Date());
+      // 解除登录失败锁定：用户刚用重置邮件证明过身份，不该继续吃「尝试次数过多」
+      failures.delete(user.email);
     },
 
     /**

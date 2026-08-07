@@ -156,6 +156,9 @@ describe("quota", () => {
   // booleanEnv 大小写不敏感（toLowerCase），故 TRUE/false 等合法；只拒绝真非法值
   it.each(["yes", "1", "maybe", "on"])("QUOTA_ENFORCEMENT 非布尔字符串抛错：%s", async (raw) => {
     await expect(loadEnv({ QUOTA_ENFORCEMENT: raw })).rejects.toThrow("QUOTA_ENFORCEMENT");
+  });
+});
+
 describe("mail", () => {
   it("开发环境默认 console 传输，不要求 SMTP 配置", async () => {
     const { env } = await loadEnv({

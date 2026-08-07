@@ -36,13 +36,20 @@ const PUBLIC_COLUMNS = {
 
 export function createUserRepository(db: Database) {
   return {
-    async create(input: { email: string; passwordHash: string; role?: string }): Promise<PublicUser> {
+    async create(input: {
+      email: string;
+      passwordHash: string;
+      role?: string;
+      /** 验证开关关闭时直接建出已验证用户，避免「create 完再 update」的中间态 */
+      emailVerifiedAt?: Date | null;
+    }): Promise<PublicUser> {
       const inserted = await db
         .insert(users)
         .values({
           email: input.email,
           passwordHash: input.passwordHash,
           role: input.role ?? "user",
+          ...(input.emailVerifiedAt ? { emailVerifiedAt: input.emailVerifiedAt } : {}),
         })
         .returning();
       // 0 参 returning()：TS 在 NodePgDatabase | PgliteDatabase 联合上调用带泛型的

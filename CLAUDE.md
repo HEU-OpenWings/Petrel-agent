@@ -157,10 +157,14 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 重置成功会顺带把邮箱标记为已验证。验证/忘记/重置的浏览器页面由后端渲染最小 HTML
 （SPA 页面留后续），邮件通道是 nodemailer + SMTP，开发/测试默认 console 传输
 （邮件打到日志，含链接），生产强制 smtp（`MAIL_TRANSPORT=smtp` 缺配置即启动失败）。
+`EMAIL_VERIFICATION_ENABLED=false`（默认 true）可关闭邮箱验证：注册即登录、不发邮件，
+只用于开发 / 内网演示，公开部署必须保持 true。
 
 **限流全部是单实例内存的，进程重启即失效、多副本部署下无效（风控轮做 Redis）**：
 登录失败（同一邮箱 5 次锁 15 分钟）、注册（按 IP，默认 5 次/15 分钟）、
 忘记密码与重发验证（按邮箱，默认 3 次/15 分钟）。
+客户端 IP 优先取 `X-Real-IP`（nginx 覆盖语义，伪造不了），XFF 只取**最后一跳**
+（`$proxy_add_x_forwarded_for` 是追加语义）；限流 Map 有容量上限且 sweep 受时间门控。
 
 
 改密码是 `POST /api/account/password`（挂在 `requireAuth` 之下，不在公开的 `/api/auth`
