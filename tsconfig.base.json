@@ -18,7 +18,6 @@
     "baseUrl": ".",
     "paths": {
       "@petrel/agent": ["packages/agent/src/index.ts"],
-      "@petrel/ai": ["packages/ai/src/index.ts"],
       "@petrel/config": ["packages/config/src/index.ts"],
       "@petrel/database/testing": ["packages/database/src/testing.ts"],
       "@petrel/database": ["packages/database/src/index.ts"],

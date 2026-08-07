@@ -667,7 +667,7 @@ describe("模型选择", () => {
    * `model = rawModel ?? DEFAULT_MODEL_ID` 之类，这里就会拿到一个非 undefined 的
    * modelId 而变红。路由一旦自己兜默认，createHarness 里
    * 「modelId === undefined → defaultModel()」那条分支就永远走不到，
-   * 将来改 @petrel/ai 的 DEFAULT_MODEL_ID 会出现「改了却不生效」的怪问题。
+   * 将来改 packages/agent 的 DEFAULT_MODEL_ID 会出现「改了却不生效」的怪问题。
    * 别因为它「看起来是恒真的」就删掉。
    */
   it("不传 model 时路由不注入 modelId，默认值交给 createHarness 兜", async () => {

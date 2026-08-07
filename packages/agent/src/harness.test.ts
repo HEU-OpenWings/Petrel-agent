@@ -6,9 +6,9 @@ import {
   fauxText,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
-import { DEFAULT_MODEL_ID } from "@petrel/ai";
 import { describe, expect, it } from "vitest";
 import { createHarness, resolveModel } from "./harness.ts";
+import { DEFAULT_MODEL_ID } from "./models/index.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 

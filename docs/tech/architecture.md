@@ -125,10 +125,16 @@ app.route("/api/admin", admin);
   `createPgSession()` 给生产用，`createMemorySession()` 给降级与测试用。
 - `compaction.ts` — 上下文压缩策略，见 [context-compaction.md](context-compaction.md)。
 - `tools/` — 内置工具，目前只有 `current-time`。
+- `models/` — 模型 provider 注册，见下。
 
-### packages/ai
+#### models/
 
-模型 provider 注册。DeepSeek 官方与 SiliconFlow 都不在 pi 内置 provider 里，
+- `providers.ts` — provider 与 `Model` 定义（四家手写 + 七家 pi 内置），
+  导出注册顺序固定的 `PROVIDERS`。**加模型只改这里。**
+- `index.ts` — 注册表装配与查询 API：`models`、`defaultModel()`、`findModel()`、
+  `listModels()`、`listConfiguredModels()`、`ModelSummary`。
+
+DeepSeek 官方与 SiliconFlow 都不在 pi 内置 provider 里，
 用 `createProvider` 自行注册：
 
 | 模型 id | provider | 传输 | 窗口 | 备注 |
