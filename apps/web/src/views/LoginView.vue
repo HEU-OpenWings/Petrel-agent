@@ -85,8 +85,14 @@ const errorMessage = ref('')
 const successMessage = ref('')
 const form = reactive({ email: '', password: '' })
 
-// 后端登录被拒的 403 文案（未验证邮箱）出现时，给「重新发送验证邮件」入口
-const resendVisible = computed(() => !isRegister.value && errorMessage.value.includes('邮箱尚未验证'))
+// 两种情况都要给「重新发送验证邮件」入口：
+// 1) 登录被 403「邮箱尚未验证」拒绝；
+// 2) 注册成功但邮件发送失败（successMessage 里的提示文案）。
+const resendVisible = computed(
+  () =>
+    !isRegister.value &&
+    (errorMessage.value.includes('邮箱尚未验证') || successMessage.value.includes('验证邮件发送失败'))
+)
 
 function toggleMode() {
   isRegister.value = !isRegister.value
