@@ -16,6 +16,7 @@ import {
 import { createHarness } from "./harness.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
+const TEST_CONTEXT = () => ({ userId: "test-user", sessionId: SESSION_ID });
 
 /**
  * 窗口取 40000：阈值 = 40000 × 0.8 = 32000，而 pi 硬编码的 keepRecentTokens 是 20000。
@@ -41,7 +42,7 @@ async function fixture() {
   const models = createModels();
   models.setProvider(faux.provider);
   const session = await new InMemorySessionRepo().create({ id: SESSION_ID });
-  const harness = createHarness({ session, models, model: faux.getModel() });
+  const harness = createHarness({ session, models, model: faux.getModel(), toolContext: TEST_CONTEXT });
   return { faux, harness, session, state: createCompactionState() };
 }
 
