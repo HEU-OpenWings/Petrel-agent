@@ -161,3 +161,43 @@ describe("createHarness 的模型解析", () => {
     expect(harness.getModel().id).toBe("deepseek-ai/DeepSeek-V3");
   });
 });
+
+/**
+ * HEU-54 R1 per-session Models 的约束合同。
+ *
+ * per-user 凭据方案依赖：AgentHarness 在构造时绑定 models，且**没有 setModels()**。
+ * 因此 per-session Models 必须在 createHarness 时注入，不能在复用实例时换。
+ *
+ * 下方的类型断言用 @ts-expect-error 钉死 setModels 在类型层不存在：
+ * 若未来 pi 新增了 setModels，这行会编译失败（"Unused @ts-expect-error"），
+ * 强制重新审查「是否可以复用 Entry + setModels 简化装配」——而不是静默沿用旧设计。
+ */
+describe("AgentHarness 的 models 绑定合同（HEU-54 R1）", () => {
+  it("models 是构造时绑定的实例（注入的 models 等于 harness.models）", async () => {
+    const faux = fauxProvider({ tokensPerSecond: 10_000 });
+    const models = createModels();
+    models.setProvider(faux.provider);
+
+    const harness = createHarness({
+      session: await new InMemorySessionRepo().create({ id: SESSION_ID }),
+      models,
+      model: faux.getModel(),
+    });
+
+    // harness.models 必须是构造时传入的那个实例——per-session Models 装配后跟随实例
+    expect(harness.models).toBe(models);
+  });
+
+  it("setModel（单数）存在，setModels（复数）不存在", async () => {
+    const harness = createHarness({ session: await new InMemorySessionRepo().create({ id: SESSION_ID }) });
+
+    // 运行时确认：setModel（单数）是函数；setModels（复数）不是 harness 的属性
+    expect(typeof harness.setModel).toBe("function");
+    const anyHarness = harness as unknown as Record<string, unknown>;
+    expect(anyHarness.setModels).toBeUndefined();
+
+    // 类型层合同：下面两行访问 harness.setModels，TS 应报「Property 'setModels' does not exist」。
+    // @ts-expect-error — setModels 不存在；若 pi 新增它，此注释变成未使用，typecheck 失败
+    harness.setModels;
+  });
+});
