@@ -9,14 +9,14 @@
  * 审计与运行时改造，是独立的 issue。届时再加 saveProviderCredential /
  * testProviderCredential / deleteProviderCredential，且端点路径在 /api/admin/providers 下。
  */
-import { get } from '@/apis/http'
+import { get } from "@/apis/http";
 
 /** GET /api/providers → { defaultProviderId, defaultModelId, providers: ProviderStatus[] } */
 export function fetchProviders() {
-  return get('/api/providers')
+  return get("/api/providers");
 }
 
 /** GET /api/providers/:id/models → { provider, configured, runtimeStatus, statusMessage, models } */
 export function fetchProviderModels(id) {
-  return get(`/api/providers/${encodeURIComponent(id)}/models`)
+  return get(`/api/providers/${encodeURIComponent(id)}/models`);
 }

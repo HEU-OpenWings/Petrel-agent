@@ -138,6 +138,7 @@ describe("requireAuth", () => {
   // 旧 token 立即失效，不需要等 7 天过期
   it("tokenVersion 已自增时旧 token 返回 401", async () => {
     const cookie = await issue(userId);
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     await createUserRepository(state.db!).bumpTokenVersion(userId);
 
     const response = await app.request("/protected/whoami", { headers: { Cookie: cookie } });
@@ -157,6 +158,7 @@ describe("requireAuth", () => {
   });
 
   it("重新签发后（新 tokenVersion）恢复可用", async () => {
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     await createUserRepository(state.db!).bumpTokenVersion(userId);
     const cookie = await issue(userId);
 

@@ -124,9 +124,9 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
-import { message } from 'ant-design-vue'
-import { fetchProviderModels, fetchProviders } from '@/apis/provider_api'
+import { message } from "ant-design-vue";
+import { reactive, ref } from "vue";
+import { fetchProviderModels, fetchProviders } from "@/apis/provider_api";
 
 /**
  * 模型服务面板（R0 只读）。
@@ -140,74 +140,74 @@ import { fetchProviderModels, fetchProviders } from '@/apis/provider_api'
  * 文案红线（对应契约语义）：configured=true 只代表「凭据材料完整」，绝不写成「可用 /
  * 连接正常」——远端有效性需要真实模型调用才能证明，那超出 R0。
  */
-const loading = ref(false)
-const loadFailed = ref(false)
-const providers = ref([])
+const loading = ref(false);
+const loadFailed = ref(false);
+const providers = ref([]);
 
-const expandedId = ref(null)
+const expandedId = ref(null);
 // 展开某 provider 时懒加载它的模型目录，按 provider id 缓存
-const modelsState = reactive({}) // { [id]: { models: ProviderModelStatus[] } }
-const modelsLoading = reactive({})
-const modelsError = reactive({}) // { [id]: boolean } 详情请求失败标记（与「空目录」区分）
+const modelsState = reactive({}); // { [id]: { models: ProviderModelStatus[] } }
+const modelsLoading = reactive({});
+const modelsError = reactive({}); // { [id]: boolean } 详情请求失败标记（与「空目录」区分）
 
 async function load() {
-  loading.value = true
-  loadFailed.value = false
+  loading.value = true;
+  loadFailed.value = false;
   try {
-    const data = await fetchProviders()
-    providers.value = data.providers
+    const data = await fetchProviders();
+    providers.value = data.providers;
   } catch {
     // 加载失败要显式提示 + 重试，不能用空列表冒充「无 provider」
-    loadFailed.value = true
+    loadFailed.value = true;
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 
 async function loadModels(providerId) {
-  if (modelsLoading[providerId]) return
+  if (modelsLoading[providerId]) return;
   // 清掉旧的错误态，允许重试覆盖
-  delete modelsError[providerId]
-  delete modelsState[providerId]
-  modelsLoading[providerId] = true
+  delete modelsError[providerId];
+  delete modelsState[providerId];
+  modelsLoading[providerId] = true;
   try {
-    const data = await fetchProviderModels(providerId)
-    modelsState[providerId] = { models: data.models }
+    const data = await fetchProviderModels(providerId);
+    modelsState[providerId] = { models: data.models };
   } catch {
     // B3：详情请求失败用独立 error 状态，不静默缓存成空数组
-    modelsError[providerId] = true
+    modelsError[providerId] = true;
   } finally {
-    modelsLoading[providerId] = false
+    modelsLoading[providerId] = false;
   }
 }
 
 async function toggle(id) {
-  expandedId.value = expandedId.value === id ? null : id
+  expandedId.value = expandedId.value === id ? null : id;
   // 展开任何 provider 都懒加载模型目录（未配置也展示「已注册但不可选」）
   if (expandedId.value === id && !modelsState[id] && !modelsError[id]) {
-    loadModels(id)
+    loadModels(id);
   }
 }
 
 /** B3：按 available 三态选 tag 颜色。null（未知）用 orange 区别于 false（灰）。 */
 function modelTagColor(available) {
-  if (available === true) return 'blue'
-  if (available === null) return 'orange'
-  return 'default'
+  if (available === true) return "blue";
+  if (available === null) return "orange";
+  return "default";
 }
 
 async function copyEnv(envVar) {
-  const text = `${envVar}=<your-key>`
+  const text = `${envVar}=<your-key>`;
   try {
-    await navigator.clipboard.writeText(text)
-    message.success(`已复制：${text}`)
+    await navigator.clipboard.writeText(text);
+    message.success(`已复制：${text}`);
   } catch {
-    message.error('复制失败')
+    message.error("复制失败");
   }
 }
 
 // 挂载即加载（组件只在 SettingsModal 打开「模型服务」tab 时才渲染）
-load()
+load();
 </script>
 
 <style lang="less" scoped>
