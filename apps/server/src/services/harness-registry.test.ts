@@ -1,7 +1,7 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { createHarness, createMemorySession, resolveModel } from "@petrel/agent";
 import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 // HarnessNotice 定义在 registry 自己这里（它是 registry 与 route 之间的契约，
 // 不是 agent 包的概念），所以从本地模块导入，不是从 @petrel/agent
 import { createHarnessRegistry, type HarnessNotice, HarnessRegistryError } from "./harness-registry.ts";
@@ -251,7 +251,7 @@ describe("createHarnessRegistry", () => {
     expect(factory.created).toBe(2);
   });
 
-  it("运行中的后续消息都走 followUp，在同一个 run 内被消化", async () => {
+  it("运行中的后续消息进我们自己的队列，各自独立 run 消化且全部落库", async () => {
     // 慢速吐字，保证后续 send 进临界区时第一轮真的还在跑
     const factory = fauxFactory(true);
     const registry = createHarnessRegistry({ db, createHarness: factory.create });
@@ -273,9 +273,85 @@ describe("createHarnessRegistry", () => {
     expect(text).toContain("第一个问题");
     expect(text).toContain("第二个问题");
     expect(text).toContain("第三个问题");
-    // 这条才是真正区分 followUp 与 prompt 的断言：followUp 的消息在同一个 run 内，
-    // 所以整个过程只有一次 agent_end。两条都走 prompt 的话这里会是 2
-    expect(types.filter((type) => type === "agent_end")).toHaveLength(1);
+    // HEU-37：不再用 harness.followUp()（error/aborted 收尾会绕过它的抽干点），
+    // 每个排队消息各占一轮 run，所以是三次 agent_end——顺序仍然保持
+    expect(types.filter((type) => type === "agent_end")).toHaveLength(3);
+  });
+
+  it("首轮以 error 收尾时，排队中的第二条消息仍被回答并落库", async () => {
+    const factory = fauxFactory(true);
+    // 第一轮返回 stopReason: "error"，第二轮正常回答
+    factory.faux.setResponses([
+      fauxAssistantMessage([fauxText("答")], { stopReason: "error" }),
+      fauxAssistantMessage([fauxText("答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const types: string[] = [];
+    handle.harness.subscribe((event) => {
+      types.push(event.type);
+    });
+
+    const first = handle.send("第一个问题");
+    const second = handle.send("第二个问题");
+    await Promise.all([first, second]);
+    handle.release();
+
+    const text = JSON.stringify(await handle.session.getEntries());
+    expect(text).toContain("第一个问题");
+    expect(text).toContain("第二个问题");
+    // 两轮 run：首轮 error 收尾、第二轮消化排队消息
+    expect(types.filter((type) => type === "agent_end")).toHaveLength(2);
+  });
+
+  it("abort 只停当前轮，排队中的消息照常被回答并落库", async () => {
+    const factory = fauxFactory(true);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const types: string[] = [];
+    handle.harness.subscribe((event) => {
+      types.push(event.type);
+    });
+
+    const first = handle.send("第一个问题");
+    const second = handle.send("第二个问题");
+    await registry.abort(SESSION_ID, TEST_USER_ID);
+    await Promise.all([first, second]);
+    handle.release();
+
+    const text = JSON.stringify(await handle.session.getEntries());
+    expect(text).toContain("第一个问题");
+    expect(text).toContain("第二个问题");
+    // abort 的首轮 + 排队消息的第二轮
+    expect(types.filter((type) => type === "agent_end")).toHaveLength(2);
+  });
+
+  it("evict 时排队中的消息被 reject，不挂住连接（HEU-37）", async () => {
+    const factory = fauxFactory(true);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const types: string[] = [];
+    handle.harness.subscribe((event) => {
+      types.push(event.type);
+    });
+    const first = handle.send("第一个问题");
+    // 等首轮真正开始（避免 evict 落在 send 的装配阶段，那条路径的语义不同）
+    await vi.waitFor(() => expect(types).toContain("agent_start"));
+    const second = handle.send("第二个问题");
+    // 预挂 handler：evict 会同步 reject 排队条目，断言要等 evict 结束后才 attach，
+    // 不预挂的话这个拒绝在 attach 之前被判 unhandled
+    second.catch(() => undefined);
+
+    // evict 会 abort 正在跑的首轮（首轮 resolve），并 reject 排队中的消息
+    await registry.evict(SESSION_ID);
+    handle.release();
+
+    await expect(first).resolves.toBeUndefined();
+    // reject 让对应 SSE 流收到 event:error，而不是永远挂住
+    await expect(second).rejects.toMatchObject({ kind: "forbidden" });
   });
 
   it("abort 只对属于自己的会话生效", async () => {
