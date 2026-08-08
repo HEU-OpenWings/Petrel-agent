@@ -331,3 +331,35 @@ describe("mutex map 清理（B6）", () => {
     expect(__getCredentialMutexSize()).toBe(0);
   });
 });
+
+// B4 回归：DB 错误清洗成 db_unavailable，不含 SQL/参数/UUID，无 cause
+describe("DB 错误清洗（B4）", () => {
+  it("write FK 违反（不存在的 user）→ db_unavailable，错误不含 UUID/表名", async () => {
+    const NONEXISTENT_USER = "99999999-9999-9999-9999-999999999999";
+    const store = createDbCredentialStore(db, NONEXISTENT_USER, cipher);
+    let err: unknown;
+    try {
+      await store.modify(PROVIDER, async () => ({ type: "api_key", key: "sk-fk-violation-1234" }));
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ProviderCredentialStoreError);
+    const e = err as ProviderCredentialStoreError;
+    expect(e.kind).toBe("db_unavailable");
+    // 错误不含 UUID / 表名 / SQL 细节
+    expect(e.message).not.toContain(NONEXISTENT_USER);
+    expect(e.message).not.toContain("user_provider_credentials");
+    expect(e.message).not.toContain("foreign key");
+    // 无 cause（防 pi 把细节拼进 ModelsError）
+    expect(e.cause).toBeUndefined();
+  });
+
+  it("read 的 DB 错误也清洗（用会抛错的 store 不可直接造，改验证 FK 读路径）", async () => {
+    // 不存在的 user read：findByUserAndProvider 返 undefined（无行），不抛错 → read 返 undefined。
+    // 这条验证「无行」与「DB 错误」语义分离：无行=undefined 回落 env，DB 错=fail-closed。
+    const NONEXISTENT_USER = "99999999-9999-9999-9999-999999999999";
+    const store = createDbCredentialStore(db, NONEXISTENT_USER, cipher);
+    // read 不因 user 不存在而抛（它只 SELECT，无行返 undefined）
+    await expect(store.read(PROVIDER)).resolves.toBeUndefined();
+  });
+});

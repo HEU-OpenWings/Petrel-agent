@@ -497,7 +497,9 @@ describe("createHarnessRegistry 的自动压缩", () => {
 
     const second = await registry.acquire(SESSION_ID, TEST_USER_ID, "第二个问题", {
       systemPrompt: "第二个提示",
-      modelId: "deepseek-ai/DeepSeek-V3",
+      // 用 faux harness 自己 catalog 里有的 model id（B7 后 resolveModel 在 scoped models
+      // 严格查找，不再回落 global；faux models 只有 faux-compaction 这一个 model）
+      modelId: "faux-compaction",
     });
     expect(first.harness.getModel().id).toBe("faux-compaction");
     releaseSummary();
@@ -1142,30 +1144,36 @@ describe("HEU-54 R1 checkModelAuth 与 userId 防御", () => {
     await aAcquire.then((h) => h.release());
   });
 
-  // B5 回归：checkModelAuth 用 handle 捕获的 provider，不读共享 harness.getModel()。
-  // 构造两个 handle（不同 modelId → 不同 provider），spy models.checkAuth 验证各检各的。
-  it("B5：checkModelAuth 检查的是 handle 自己的 modelId 对应的 provider", async () => {
-    // 用两个 provider 的 models，让不同 modelId 解析到不同 provider
-    const models = createModels();
-    const fauxDeepseek = fauxProvider({ tokensPerSecond: 10_000 });
-    models.setProvider(fauxDeepseek.provider);
-    // 再注入一个第二个 provider（用 pi 的 faux，改 id）较复杂；
-    // 简化：验证 checkModelAuth 传入的 providerId 来自 handleModelId 而非 getModel()。
-    // 用 spy 拦截 models.checkAuth，验证它收到的 providerId 与 resolveModel(handleModelId) 一致。
-    const factory = fauxFactory();
-    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+  // B5 回归：checkModelAuth 用 handle 创建时捕获的 providerId，不读共享 harness.getModel()。
+  // 两个 handle（modelId 不同 → provider 不同），并发 acquire 后各调 checkModelAuth，
+  // spy models.checkAuth 验证每个 handle 检查的是自己的 provider，不是共享 harness 当前的。
+  it("B5：两个 handle 不同 model，checkModelAuth 各检查自己的 provider", async () => {
+    // 用真实 catalog（global models 有 deepseek + siliconflow），走默认 createHarness 装配
+    //（stored off，harness 用 global models）。不注入 createHarness，让 registry 走 createRealHarness。
+    const registry = createHarnessRegistry({ db });
+    const SESSION_B5 = "33333333-3333-3333-4444-555555555555";
 
-    // 不传 modelId（用默认）→ handleModelId=undefined → resolveModel 用默认 provider(deepseek)
-    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "你好");
-    const spy = vi.spyOn(handle.harness.models, "checkAuth");
-    await handle.checkModelAuth();
-    // checkAuth 被调用，参数应是默认 provider（faux provider 的 id）
-    expect(spy).toHaveBeenCalled();
-    const checkedProvider = spy.mock.calls[0]?.[0];
-    // faux provider 的 id 与 harness.getModel().provider 一致（默认场景），
-    // 关键是 checkModelAuth 走的是 resolveModel(handleModelId) 而非裸 getModel()
-    expect(typeof checkedProvider).toBe("string");
+    // H1：默认模型（deepseek）。H2：siliconflow 的模型
+    const h1 = await registry.acquire(SESSION_B5, TEST_USER_ID, "H1 默认", {});
+    const h2 = await registry.acquire(SESSION_B5, TEST_USER_ID, "H2", { modelId: "deepseek-ai/DeepSeek-V3" });
+
+    // 此时共享 harness 的 model 已被 H2 的 applyAssembly 切到 siliconflow（最后应用的）
+    // 用 getModel() 实现会让 H1 的 checkModelAuth 检查到 siliconflow（错）
+    const spy = vi.spyOn(h1.harness.models, "checkAuth");
+
+    await h1.checkModelAuth();
+    await h2.checkModelAuth();
+
+    // H1 检查的必须是 deepseek（默认），H2 必须是 siliconflow——不因共享 harness 当前 model 而串
+    const checkedByH1 = spy.mock.calls[0]?.[0];
+    const checkedByH2 = spy.mock.calls[1]?.[0];
+    expect(checkedByH1).toBe("deepseek");
+    expect(checkedByH2).toBe("siliconflow");
+    // 关键断言：H1 和 H2 检查的 provider 不同（若读 getModel() 则两者都是最后应用的 siliconflow）
+    expect(checkedByH1).not.toBe(checkedByH2);
+
     spy.mockRestore();
-    handle.release();
+    h1.release();
+    h2.release();
   });
 });

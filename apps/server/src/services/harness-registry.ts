@@ -117,6 +117,36 @@ function toFailedOutcome(error: unknown): CompactionOutcome {
 const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
 
 /**
+ * HEU-54 R1：系统默认 provider/model id（用于 checkModelAuth 的 undefined modelId 解析）。
+ * 与 packages/agent/src/models/providers.ts 的 DEFAULT_PROVIDER_ID / DEFAULT_MODEL_ID 保持一致；
+ * 这里局部定义避免跨包转出链依赖。改默认模型时两处要同步。
+ */
+const DEFAULT_PROVIDER_ID_FOR_CHECK = "deepseek";
+const DEFAULT_MODEL_ID_FOR_CHECK = "deepseek-v4-flash";
+
+/**
+ * HEU-54 R1（B5）：解析 handle 的目标 providerId，供 checkModelAuth 用。
+ * - 具体 modelId：从 scoped models 严格解析（B7：不回落 global catalog）
+ * - undefined：scoped 系统默认 provider；scoped 无默认（faux 测试）→ harness.getModel() fallback
+ * - resolveModel 在 scoped 找不到时不硬抛错（checkModelAuth 是 preflight，解析失败不该阻断
+ *   acquire）→ 回落 harness.getModel()。生产 per-session/global models 注册全部 PROVIDERS，modelId
+ *   必能解析；仅测试注入的收窄 catalog(faux)走到 fallback，此时无并发歧义。
+ */
+function resolveHandleProviderId(modelId: string | undefined, harness: AgentHarness): string {
+  const models = harness.models;
+  if (modelId === undefined) {
+    const scopedDefault = models.getModel(DEFAULT_PROVIDER_ID_FOR_CHECK, DEFAULT_MODEL_ID_FOR_CHECK);
+    if (scopedDefault) return scopedDefault.provider;
+    return harness.getModel().provider;
+  }
+  try {
+    return resolveModel({ modelId, models }).provider;
+  } catch {
+    return harness.getModel().provider;
+  }
+}
+
+/**
  * 同时常驻的会话上限。
  *
  * 200 是单副本内部使用的估值，不是实测值：每个实例常驻的是一颗上下文树的引用，
@@ -385,9 +415,13 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
 
     // B1：in-flight 命中必须校验 userId。sessionId 客户端可控，A 删会话后 B 用同 id 新建，
     // building 里 A 的 promise（绑了 A 的 per-user Models）绝不能给 B。userId 不一致 =
-    // 当作没命中，让本次请求走自己的 build（A 的旧 record 由 evict/finally 清理）。
+    // 不命中，让本次请求走自己的 build。
     const inFlight = building.get(sessionId);
     if (inFlight && inFlight.userId === userId && !inFlight.retired) return inFlight.promise;
+    // B1 残留修复：若存在旧 owner 的 in-flight record（userId 不一致或已 retired），
+    // 主动 retire 它——否则旧 build 完成时即便 publication fence 拦住 entries.set，
+    // 它仍会跑完昂贵的 build。retire 让它尽早短路（publication fence 处 throw）。
+    if (inFlight) inFlight.retired = true;
 
     const record: BuildingRecord = {
       userId,
@@ -406,10 +440,15 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       }
       const row = await sessionRepo.findById(sessionId, userId);
       const entry = await build(sessionId, userId, row?.createdAt ?? new Date(), assembly);
-      // B1：build 期间会话可能被 evict（删除/禁用）。retired 的 record 不进 entries，
-      // 其 promise reject——已 await 的调用方拿不到 stale Entry（含别人凭据的 Models）。
-      if (record.retired) {
-        throw new HarnessRegistryError("会话已被删除或禁用", "forbidden");
+      // B1 publication fence：build 期间会话可能被 evict（删除/禁用），或被另一个
+      // owner 的新 record 覆盖（删会话重建同 id）。两个条件任一成立都不能 entries.set：
+      //   retired=true —— 会话已删/禁用
+      //   building.get !== record —— 我已不是当前 owner 的 record（被新 owner 覆盖）
+      // 后者是 B1 残留的核心：旧 A build 完成时若已被新 B 覆盖，A 的 record.retired 仍可能
+      // 是 false（迟到的 evict 只 retire 了 B），但 building.get(sessionId) 已是 B 的 record，
+      // identity 不匹配 → A 拒绝 entries.set，拿不到 stale Entry（含别人凭据的 Models）。
+      if (record.retired || building.get(sessionId) !== record) {
+        throw new HarnessRegistryError("会话已被删除、禁用或替换", "forbidden");
       }
       entries.set(sessionId, entry);
       return entry;
@@ -455,6 +494,9 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
             session,
           };
         })();
+    // ephemeral 是一次性 handle（无并发），但 checkModelAuth 仍用捕获的 providerId，
+    // 与 acquire 的 handle 保持同一解析口径。
+    const ephemeralProviderId = resolveHandleProviderId(assembly.modelId, built.harness);
     return {
       harness: built.harness,
       session: built.session,
@@ -463,8 +505,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       // 降级实例不压缩：它是一次性内存会话，没有历史可压
       send: (message: string) => built.harness.prompt(message).then(() => undefined),
       async checkModelAuth(): Promise<boolean> {
-        const providerId = built.harness.getModel().provider;
-        const auth = await built.harness.models.checkAuth(providerId);
+        const auth = await built.harness.models.checkAuth(ephemeralProviderId);
         return auth !== undefined;
       },
       release: () => undefined,
@@ -529,9 +570,14 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       await configured;
 
       let released = false;
-      // B5：handle 捕获自己的 modelId，checkModelAuth 据此解析 provider，
-      // 不读共享 harness.getModel()（并发 handle 会互相覆盖当前 model，检查错 provider）。
-      const handleModelId = assembly.modelId;
+      // B5：handle 捕获自己的 providerId，checkModelAuth 用它，不读共享 harness.getModel()
+      //（并发 handle A/B 不同 model 会互相覆盖共享 harness 的当前 model）。
+      // 解析基于 assembly.modelId 与 scoped models（同步），不依赖共享 harness 状态：
+      //   具体 modelId → resolveModel 解析该 model 的 provider
+      //   undefined → scoped 系统默认 provider（生产是 deepseek）；scoped 无默认（faux 测试）
+      //                → 退到 harness.getModel() 作受控 fallback（此时 assembly 还未应用，getModel
+      //                   是装配时传入的初始 model，稳定无并发歧义）
+      const handleProviderId = resolveHandleProviderId(assembly.modelId, held.harness);
       return {
         harness: held.harness,
         session: held.session,
@@ -718,16 +764,10 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         },
         async checkModelAuth(): Promise<boolean> {
           // 走这个 harness 自己的 Models（per-user 时是用户凭据 store）。
-          // provider 来源（B5）：优先用「这个 handle 的 modelId」解析——并发 handle
-          // （A/B 不同 model）会互相覆盖共享 harness 的当前 model，用 getModel() 会让
-          // A 的 preflight 检查到 B 的 provider。modelId 具体时严格按它解析。
-          // modelId undefined = 跟随实例当前 model（applyAssembly 对 undefined 不改 model），
-          // 此时用 getModel() 是安全的（没有并发覆盖歧义）。
-          const providerId =
-            handleModelId === undefined
-              ? held.harness.getModel().provider
-              : resolveModel({ modelId: handleModelId, models: held.harness.models }).provider;
-          const auth = await held.harness.models.checkAuth(providerId);
+          // B5：providerId 用 handle 创建时捕获的值（基于 assembly.modelId 解析），
+          // 不读共享 harness.getModel()——并发 handle A/B 不同 model 会互相覆盖共享 model，
+          // 用 getModel() 会让 A 的 preflight 检查到 B 的 provider。
+          const auth = await held.harness.models.checkAuth(handleProviderId);
           return auth !== undefined;
         },
         release() {

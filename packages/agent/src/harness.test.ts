@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createHarness, resolveModel } from "./harness.ts";
-import { DEFAULT_MODEL_ID } from "./models/index.ts";
+import { DEFAULT_MODEL_ID, models as globalModels } from "./models/index.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -199,5 +199,49 @@ describe("AgentHarness 的 models 绑定合同（HEU-54 R1）", () => {
     // 类型层合同：下面两行访问 harness.setModels，TS 应报「Property 'setModels' does not exist」。
     // @ts-expect-error — setModels 不存在；若 pi 新增它，此注释变成未使用，typecheck 失败
     harness.setModels;
+  });
+});
+
+/**
+ * B7 回归：resolveModel 传了 scoped models 时不回落 global catalog。
+ * per-session Models 的 harness 必须只用自己的 catalog，否则会把 global model 塞进 user harness。
+ */
+describe("resolveModel 的 scoped 隔离（B7）", () => {
+  it("scoped 里查不到的 modelId 抛错，不回落 global findModel", () => {
+    // scoped 只注册 deepseek（从 global 取 provider 对象）
+    const scoped = createModels();
+    const deepseekProvider = globalModels.getProvider("deepseek");
+    if (!deepseekProvider) throw new Error("测试前提：global 应有 deepseek provider");
+    scoped.setProvider(deepseekProvider);
+
+    // "deepseek-ai/DeepSeek-V3" 在 global(siliconflow)有，但 scoped 没有 → 必须抛错
+    expect(() => resolveModel({ modelId: "deepseek-ai/DeepSeek-V3", models: scoped })).toThrow("模型未注册");
+    // 错误信息只列 scoped catalog，不泄露 global-only 的 model。
+    // 注意：错误必含请求的 modelId 本身（deepseek-ai/DeepSeek-V3），但「可选值为」之后
+    // 只能是 scoped catalog，不能把 global-only 的 DeepSeek-V3 列为可选。
+    try {
+      resolveModel({ modelId: "deepseek-ai/DeepSeek-V3", models: scoped });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const afterOptions = msg.split("可选值为")[1] ?? "";
+      expect(afterOptions).toContain("deepseek-v4-flash"); // scoped 有的
+      expect(afterOptions).not.toContain("deepseek-ai/DeepSeek-V3"); // global-only 不该列为可选
+    }
+  });
+
+  it("scoped 有该 modelId 时正常返回（不误拒）", () => {
+    const scoped = createModels();
+    const deepseekProvider = globalModels.getProvider("deepseek");
+    if (!deepseekProvider) throw new Error("测试前提");
+    scoped.setProvider(deepseekProvider);
+
+    const model = resolveModel({ modelId: "deepseek-v4-flash", models: scoped });
+    expect(model.id).toBe("deepseek-v4-flash");
+    expect(model.provider).toBe("deepseek");
+  });
+
+  it("未传 models 时仍走 global（R0 调用方向后兼容）", () => {
+    const model = resolveModel({ modelId: "deepseek-ai/DeepSeek-V3" });
+    expect(model.id).toBe("deepseek-ai/DeepSeek-V3");
   });
 });
