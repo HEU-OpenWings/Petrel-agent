@@ -68,7 +68,8 @@ function login(email: string, password: string) {
 /** 取一个真实的模型 id。白名单校验要求它必须是注册过的，不能随便编一个 */
 async function firstModelId(cookie: string): Promise<string> {
   const body = (await (await getPreferences(cookie)).json()) as { models: { id: string }[] };
-  return body.models[0]?.id;
+  // biome-ignore lint/style/noNonNullAssertion: 模型注册表非空，白名单校验依赖这一点
+  return body.models[0]!.id;
 }
 
 describe("GET /api/account/preferences", () => {
