@@ -138,12 +138,16 @@ interface Entry {
    * 是否正在跑一轮。
    *
    * AgentHarness.phase 是私有字段、没有 getter，所以只能自己跟：
-   * agent_start 置真、settled 置假（settled 在 agent_end 之后发，且整个 run
-   * 只发一次，followUp 排队的消息也在同一个 run 内，见 spec §2.3）。
+   * agent_start 置真、settled 置假（settled 在 agent_end 之后发，整个 run 只发一次）。
+   * HEU-37 之后每个排队消息各占一轮 run，settled 触发 drain 再起下一轮。
    */
   running: boolean;
   /** 同一会话的调用串行化，避免「判断 running 时空闲、调用时已在跑」的竞态。 */
   chain: Promise<unknown>;
+  /** HEU-37：运行中到达的消息先进这里，settled 后由 drain 逐个重新 prompt */
+  pending: PendingMessage[];
+  /** drain 互斥锁：settled 的调度与 drain 自身的循环都可能触发，防止并发消费 */
+  draining: boolean;
   /**
    * 正在进行的压缩。非 undefined 即「正在压缩」。
    *
@@ -175,6 +179,22 @@ export interface SendOptions {
   onNotice?: (notice: HarnessNotice) => void;
 }
 
+/**
+ * 我们自己维护的 followUp 队列条目（HEU-37：不再用 harness.followUp()）。
+ *
+ * pi 的 agent-loop 在 stopReason 为 error / aborted 时提前 return，绕过了
+ * getFollowUpMessages() 抽干点——error 情形消息留在 pi 的队列里等下一次 prompt
+ * 才被消化（顺序错乱），aborted 情形被 abort() 直接清空（永久丢失）。
+ * 自己的队列在 settled 后按需重新 prompt()，两条路径都不丢。
+ */
+interface PendingMessage {
+  message: string;
+  /** 该消息真正跑完（自己的那轮 settled）时 resolve，SSE 流才能收尾 */
+  resolve: () => void;
+  /** evict 等场景下让客户端收到 event:error，而不是挂住连接 */
+  reject: (error: unknown) => void;
+}
+
 export interface HarnessHandle {
   harness: AgentHarness;
   session: Session;
@@ -183,7 +203,7 @@ export interface HarnessHandle {
    * usage 双写不会落库，chat 路由据此拒绝调用模型，而不是「能聊但不计量」。
    */
   persistence: "postgres" | "memory";
-  /** 空闲则（必要时先压缩再）prompt，运行中则排进 followUp 队列。 */
+  /** 空闲则（必要时先压缩再）prompt，运行中则排进我们自己的队列（HEU-37）。 */
   send(message: string, options?: SendOptions): Promise<void>;
   /** 释放这个连接对实例的占用，允许它被回收。 */
   release(): void;
@@ -263,6 +283,67 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     return true;
   }
 
+  /**
+   * HEU-37：settled 后调度 drain，把排队消息逐个重新 prompt。
+   *
+   * 用 setImmediate 而不是同步调用：settled 之后旧 prompt() 的 promise 还要走
+   * finally 复位 running（兜「prompt 抛异常没走到 agent_end」），drain 若同步开始，
+   * 会把刚置真的 running 踩成 false。setImmediate 保证那条微任务链先跑完。
+   */
+  function kickDrain(entry: Entry): void {
+    setImmediate(() => {
+      void drain(entry);
+    });
+  }
+
+  /**
+   * 消费 pending 队列。每个排队消息各占一轮 run：running=true → prompt →
+   * running=false → resolve 该条目。settled 的调度与 drain 自身的循环都可能触发，
+   * 用 draining 互斥。
+   *
+   * abort 语义（HEU-37 明确定义）：abort 只停当前轮，排队消息照常处理——
+   * 它们是用户停止前已经表达过的意图，静默丢弃正是本 issue 要消灭的故障。
+   * evict（retired）则相反：会话已删，剩余条目 reject，让客户端收到 event:error
+   * 而不是挂住连接。
+   */
+  async function drain(entry: Entry): Promise<void> {
+    if (entry.draining) return;
+    entry.draining = true;
+    try {
+      while (entry.pending.length > 0) {
+        if (entry.retired) {
+          for (const item of entry.pending.splice(0)) {
+            item.reject(new HarnessRegistryError("会话不存在或无权访问", "forbidden"));
+          }
+          return;
+        }
+        const item = entry.pending[0];
+        if (!item) break;
+        entry.pending.shift();
+        entry.running = true;
+        let failed: unknown;
+        try {
+          // 排队消息的 run 不做预压缩：与旧 followUp 分支一致（那条分支本来也不压缩）。
+          // 上下文溢出时 pi 的静默溢出检测会给 error 回答（有回答、落库，不静默）
+          await entry.harness.prompt(item.message);
+        } catch (error) {
+          // 运输层失败：reject 而不是静默 resolve——否则这条 SSE 流会「正常收尾」
+          // 但消息没有答案也没落库，正是 HEU-37 要消灭的静默丢失。
+          // 路由层 catch 到 send() 的 rejection 会发 event:error 告知客户端。
+          logger.error({ err: error }, "排队消息 run 失败");
+          failed = error;
+        } finally {
+          entry.running = false;
+          entry.lastUsedAt = now();
+        }
+        if (failed) item.reject(failed);
+        else item.resolve();
+      }
+    } finally {
+      entry.draining = false;
+    }
+  }
+
   async function build(
     sessionId: string,
     userId: string,
@@ -295,6 +376,8 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       lastUsedAt: now(),
       running: false,
       chain: Promise.resolve(),
+      pending: [],
+      draining: false,
       compaction: undefined,
       compactionState: createCompactionState(),
       abortRequested: false,
@@ -310,6 +393,9 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       } else if (event.type === "settled") {
         entry.running = false;
         entry.lastUsedAt = now();
+        // HEU-37：error / aborted 收尾同样会发 settled（agent-loop.js:110 →
+        // agent_end → settled），在这里调度 drain，排队消息不会被丢
+        kickDrain(entry);
       }
     });
     // AgentHarness 没有 setSystemPrompt()，但这个 hook 会在每个新 run 开始时执行。
@@ -453,11 +539,12 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         session: held.session,
         persistence: "postgres",
         /**
-         * 空闲则（必要时先压缩再）prompt，运行中则 followUp。
+         * 空闲则（必要时先压缩再）prompt，运行中则进我们自己的 pending 队列
+         * （HEU-37：settled 后由 drain 逐个重新 prompt，见 kickDrain）。
          *
          * chain 保护的临界区**只有「判断 running/compaction + 发起调用」**，绝不能把
          * 「等整轮跑完」也串进去：那样第二个请求会排在第一轮结束之后才发起，
-         * 此时 running 已是 false，于是永远走 prompt，followUp 分支形同虚设。
+         * 此时 running 已是 false，于是永远走 prompt，排队分支形同虚设。
          * 压缩分支同理——held.compaction 必须在设值后立刻放行 chain，不能等
          * compact() 跑完才放行，否则几乎同时到达的第三个请求排进 chain 时
          * 压缩早已结束、看不到「正在压缩」这个事实。
@@ -500,29 +587,16 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
               throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
             }
             if (held.running) {
-              // followUp 只是 push 队列 + emit，是瞬时的，几乎立刻 resolve——
-              // 但调用方（SSE 路由）需要等本轮真正结束才能收尾，否则并发的第二个
-              // 连接会在自己那条消息还没被处理完时就关流。等 waitForIdle() 让
-              // send() 的语义与 prompt 分支一致：都在整轮结束时才 resolve。
-              // 它在 harness 内部 phase === "idle" 时会抛 invalid_state，而我们的 running
-              // 与那个私有字段之间可能有一瞬不同步（比如上一轮刚好在这两句之间跑完），
-              // 所以退回 prompt 而不是把错误抛给用户
-              outcome = held.harness
-                .followUp(message)
-                .then(() => held.harness.waitForIdle())
-                .catch((error) => {
-                  logger.warn({ err: error, sessionId }, "followUp rejected, falling back to prompt");
-                  held.running = true;
-                  return held.harness
-                    .prompt(message)
-                    .then(() => undefined)
-                    .finally(() => {
-                      held.running = false;
-                      held.lastUsedAt = now();
-                    });
-                });
-              // 只等 followUp 完成入队，不把 waitForIdle 串进 held.chain；否则第三个
-              // 并发请求会等整轮结束后才进入临界区，无法加入当前 run。
+              // HEU-37：不再用 harness.followUp()——pi 的 agent-loop 在
+              // stopReason 为 error / aborted 时提前 return，绕过抽干点，消息会丢。
+              // 改由我们自己的队列管理，settled 后 drain 逐个重新 prompt。
+              // send() 的 promise 在「这条消息自己那轮跑完」时才 resolve，
+              // 并发连接的 SSE 流因此能看到答案再收尾（与旧 followUp 语义一致）。
+              outcome = new Promise<void>((resolve, reject) => {
+                held.pending.push({ message, resolve, reject });
+              });
+              // 只 push 队列，不把等待串进 held.chain；否则第三个并发请求要等整轮
+              // 结束才进入临界区，无法加入当前 run。
               return undefined;
             }
 
@@ -737,6 +811,11 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       if (!entry) return;
       entry.retired = true;
       entries.delete(sessionId);
+      // HEU-37：排队消息随会话一起作废——reject 让对应 SSE 流收到 event:error，
+      // 而不是挂住连接（drain 的 retired 检查是兜底，这里直接清掉）
+      for (const item of entry.pending.splice(0)) {
+        item.reject(new HarnessRegistryError("会话不存在或无权访问", "forbidden"));
+      }
       if (entry.compaction) {
         await entry.compaction.catch((error: unknown) => {
           logger.warn({ err: error, sessionId }, "会话已被 evict，进行中的压缩以失败收场");
