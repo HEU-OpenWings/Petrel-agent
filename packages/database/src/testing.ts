@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import * as schema from "./schema.ts";
-import { sessionEntries, sessions, userPreferences, users } from "./schema.ts";
+import { sessionEntries, sessions, tokenUsage, userPreferences, userQuotaLimits, users } from "./schema.ts";
 
 /** migration 目录是包内的相对位置，测试从仓库根跑，所以要解析成绝对路径 */
 const MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
@@ -56,9 +56,11 @@ export async function createTestDb(): Promise<{
     async reset() {
       // CASCADE 是必需的：几张表之间有外键，单独 TRUNCATE users 会被拒绝。
       // RESTART IDENTITY 现在不再是空操作：session_entries.entry_seq 是 bigserial，
-      // 不复位的话跨用例的游标断言会依赖上一个用例留下的序号
+      // 不复位的话跨用例的游标断言会依赖上一个用例留下的序号。
+      // token_usage / user_quota_limits 也列入：HEU-40 的用量事实与配额覆盖若跨用例残留，
+      // 会让配额检查/聚合断言 flake。
       await db.execute(
-        sql`TRUNCATE ${users}, ${sessions}, ${sessionEntries}, ${userPreferences} RESTART IDENTITY CASCADE`,
+        sql`TRUNCATE ${users}, ${sessions}, ${sessionEntries}, ${userPreferences}, ${tokenUsage}, ${userQuotaLimits} RESTART IDENTITY CASCADE`,
       );
       await seedTestUser();
     },

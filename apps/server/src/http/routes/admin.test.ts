@@ -3,6 +3,7 @@ import type { CreateHarnessOptions } from "@petrel/agent";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
+import { __resetAuthRateLimits } from "./auth.ts";
 
 const state = vi.hoisted(() => ({
   db: undefined as TestDb | undefined,
@@ -42,6 +43,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await reset();
+  __resetAuthRateLimits();
   __resetRegistry();
   const faux = fauxProvider({ tokensPerSecond: 10_000 });
   faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
@@ -65,7 +67,7 @@ function cookieFrom(response: Response): string {
   return (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
 }
 
-/** 注册一个用户并返回它的 cookie 与 id */
+/** 注册一个用户并返回它的 cookie 与 id。验证流程本身在 routes/auth.test.ts 覆盖，这里直接置为已验证再登录 */
 async function registerUser(email: string): Promise<{ cookie: string; id: string }> {
   const response = await app.request("/api/auth/register", {
     method: "POST",
@@ -73,7 +75,14 @@ async function registerUser(email: string): Promise<{ cookie: string; id: string
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
-  return { cookie: cookieFrom(response), id: body.user.id };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+  await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
+  const login = await app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  return { cookie: cookieFrom(login), id: body.user.id };
 }
 
 /** 注册后直接改库提权，再重新登录拿到 admin 身份的 cookie */
@@ -201,5 +210,106 @@ describe("PATCH /api/admin/users/:id", () => {
     expect(response.status).toBe(200);
     // 实例已清：被禁用者的会话不再占着内存，正在跑的轮次也被 abort
     expect(getRegistry().size()).toBe(0);
+  });
+});
+
+describe("HEU-40 PUT/DELETE /api/admin/users/:id/quota", () => {
+  function putQuota(id: string, tokenLimit: unknown, cookie: string) {
+    return app.request(`/api/admin/users/${id}/quota`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ tokenLimit }),
+    });
+  }
+  function deleteQuota(id: string, cookie: string) {
+    return app.request(`/api/admin/users/${id}/quota`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+  }
+
+  it("admin 设置覆盖额度，普通用户随后按它被拦", async () => {
+    const admin = await registerAdmin("boss@x.io");
+    const victim = await registerUser("victim@x.io");
+
+    // 设为 0：禁止该用户调用模型
+    const put = await putQuota(victim.id, 0, admin.cookie);
+    expect(put.status).toBe(200);
+
+    // 直接读库确认覆盖生效（quota-limits repository）
+    const { createQuotaLimitsRepository } = await import("@petrel/database");
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+    const limit = await createQuotaLimitsRepository(state.db!).getLimit(victim.id);
+    expect(limit).toBe(0);
+  });
+
+  it("tokenLimit 为 null 时恢复系统默认（删除覆盖）", async () => {
+    const admin = await registerAdmin("boss@x.io");
+    const victim = await registerUser("victim@x.io");
+    await putQuota(victim.id, 500, admin.cookie);
+    expect(
+      // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+      await (await import("@petrel/database")).createQuotaLimitsRepository(state.db!).getLimit(victim.id),
+    ).toBe(500);
+
+    const putNull = await putQuota(victim.id, null, admin.cookie);
+    expect(putNull.status).toBe(200);
+    // 删除覆盖后 getLimit 返回 undefined（跟随系统默认）
+    expect(
+      // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+      await (await import("@petrel/database")).createQuotaLimitsRepository(state.db!).getLimit(victim.id),
+    ).toBeUndefined();
+  });
+
+  it("DELETE 删除覆盖，无覆盖时幂等成功", async () => {
+    const admin = await registerAdmin("boss@x.io");
+    const victim = await registerUser("victim@x.io");
+
+    const del = await deleteQuota(victim.id, admin.cookie);
+    expect(del.status).toBe(200);
+  });
+
+  it("目标用户不存在返回 404", async () => {
+    const admin = await registerAdmin("boss@x.io");
+    const ghost = "00000000-0000-0000-0000-000000000099";
+
+    const put = await putQuota(ghost, 1000, admin.cookie);
+    expect(put.status).toBe(404);
+  });
+
+  it.each([
+    { name: "tokenLimit 是负数", value: -1 },
+    { name: "tokenLimit 是小数", value: 1.5 },
+    { name: "tokenLimit 是字符串", value: "1000" },
+    { name: "缺 tokenLimit 字段", value: undefined },
+  ])("$name 返回 400", async ({ value }) => {
+    const admin = await registerAdmin("boss@x.io");
+    const victim = await registerUser("victim@x.io");
+    // value 为 undefined 时 body 不含 tokenLimit 字段
+    const body = value === undefined ? {} : { tokenLimit: value };
+    const response = await app.request(`/api/admin/users/${victim.id}/quota`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: admin.cookie },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it("普通用户不能设置配额（403）", async () => {
+    const attacker = await registerUser("a@x.io");
+    const victim = await registerUser("b@x.io");
+
+    const response = await putQuota(victim.id, 1000, attacker.cookie);
+    expect(response.status).toBe(403);
+  });
+
+  it("未登录返回 401", async () => {
+    const victim = await registerUser("a@x.io");
+    const response = await app.request(`/api/admin/users/${victim.id}/quota`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tokenLimit: 1000 }),
+    });
+    expect(response.status).toBe(401);
   });
 });

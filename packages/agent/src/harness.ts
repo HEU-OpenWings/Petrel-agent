@@ -5,8 +5,8 @@ import {
   Session,
 } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
-import { defaultModel, models as defaultModels, findModel, listModels } from "@petrel/ai";
 import type { Database } from "@petrel/database";
+import { defaultModel, models as defaultModels, findModel, listModels } from "./models/index.ts";
 import { PgSessionStorage } from "./session/pg-storage.ts";
 import { currentTime } from "./tools/current-time.ts";
 
@@ -17,9 +17,12 @@ export const DEFAULT_SYSTEM_PROMPT = "你是 Petrel 智能助手。回答简洁�
  *
  * 与 createHarness 分开导出，是为了让 harness 的装配可以脱离数据库测试：
  * 测试注入 pi 自带的内存 session，生产注入这一个。
+ *
+ * userId 用于 HEU-40 的用量归属：每条 usage-bearing entry 双写 token_usage 时带上它。
+ * 调用方（harness-registry）在通过归属校验、确认 currentUser 后传入。
  */
-export function createPgSession(db: Database, sessionId: string, createdAt: Date): Session {
-  return new Session(new PgSessionStorage(db, sessionId, createdAt));
+export function createPgSession(db: Database, sessionId: string, createdAt: Date, userId: string): Session {
+  return new Session(new PgSessionStorage(db, sessionId, createdAt, userId));
 }
 
 export interface CreateHarnessOptions {
@@ -32,10 +35,10 @@ export interface CreateHarnessOptions {
   models?: Models;
   model?: Model<Api>;
   /**
-   * 按 id 选模型，从 @petrel/ai 的注册表里查。
+   * 按 id 选模型，从 models/ 的注册表里查。
    *
    * 上层（apps/server）只传字符串、不碰 pi 的 Model 类型——依赖方向是
-   * server → agent → ai，且 pi 的接线只允许出现在 agent 与 ai 两个 package。
+   * server → agent，且 pi 的接线只允许出现在 agent 这个 package。
    */
   modelId?: string;
 }

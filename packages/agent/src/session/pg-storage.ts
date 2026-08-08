@@ -6,7 +6,13 @@ import {
   uuidv7,
 } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
-import { createEntryRepository, type Database, type StoredEntry } from "@petrel/database";
+import {
+  createEntryRepository,
+  createTokenUsageRepository,
+  type Database,
+  type StoredEntry,
+} from "@petrel/database";
+import { extractFact } from "./usage.ts";
 
 /**
  * 条目在表里的存法：id / parent_id / timestamp / type 各占一列，其余字段进 payload。
@@ -59,18 +65,24 @@ function hasCountableUsage(usage: unknown): usage is Usage {
  */
 export class PgSessionStorage implements SessionStorage {
   private readonly entries: ReturnType<typeof createEntryRepository>;
+  private readonly usageRepo: ReturnType<typeof createTokenUsageRepository>;
 
   /**
    * @param createdAt 会话行的创建时间。由调用方（PgSessionRepo）在打开会话时读到后传入，
    *   这样 getMetadata() 不需要任何查询——它在 pi 内部被频繁调用，
    *   而「会话什么时候建的」在实例存活期间不会变。
+   * @param userId HEU-40 用量归属。由调用方（harness-registry）在通过归属校验后传入——
+   *   storage 层信任这个 userId（它来自 currentUser.id，不是 payload 推导）。每条
+   *   usage-bearing entry 双写 token_usage 时带上它。
    */
   constructor(
-    db: Database,
+    private readonly db: Database,
     private readonly sessionId: string,
     private readonly createdAt: Date,
+    private readonly userId: string,
   ) {
     this.entries = createEntryRepository(db);
+    this.usageRepo = createTokenUsageRepository(db);
   }
 
   async getMetadata(): Promise<SessionMetadata> {
@@ -109,12 +121,39 @@ export class PgSessionStorage implements SessionStorage {
   }
 
   async appendEntry(entry: SessionTreeEntry): Promise<void> {
-    await this.entries.append({
-      id: entry.id,
-      sessionId: this.sessionId,
-      parentId: entry.parentId,
-      type: entry.type,
-      payload: toPayload(entry),
+    // HEU-40：session_entries 与 token_usage 在同一事务里双写。
+    // 必须同成同败——usage 事实缺一条，下一轮上下文与配额口径就对不上。
+    // 这里是 pi 的 SessionStorage 方法（pi agent loop 内 await session.appendEntry），
+    // 不是 harness 订阅回调，所以不受「订阅回调禁止网络 I/O」的约束（见 CLAUDE.md 第14/15条）。
+    //
+    // 任何 SessionTreeEntry 都写 session_entries；只有 usage-bearing 的（message/compaction/
+    // branch_summary 且字段齐全）才额外写 token_usage。extractFact 负责判断，不携带 usage 的返回 undefined。
+    const fact = extractFact(entry, this.userId, this.sessionId);
+    // 无 usage 的条目（user message / leaf / model_change / tool 结果……，占绝大多数）
+    // 不需要双写：只写 session_entries，省一次 BEGIN/COMMIT 往返。事务只在「要双写」时才开。
+    if (!fact) {
+      await this.entries.append({
+        id: entry.id,
+        sessionId: this.sessionId,
+        parentId: entry.parentId,
+        type: entry.type,
+        payload: toPayload(entry),
+      });
+      return;
+    }
+    await this.db.transaction(async (tx) => {
+      await this.entries.append(
+        {
+          id: entry.id,
+          sessionId: this.sessionId,
+          parentId: entry.parentId,
+          type: entry.type,
+          payload: toPayload(entry),
+        },
+        tx as Database,
+      );
+      // entry_id 幂等：pi 重试/并发都不会重复计。onConflictDoNothing 在 repository 里。
+      await this.usageRepo.insertFact(fact, tx as Database);
     });
   }
 

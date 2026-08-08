@@ -5,6 +5,7 @@
     "noEmit": true,
     "rootDir": "../.."
   },
+  "include": ["src", "scripts"],
   "references": [],
   "exclude": []
 }

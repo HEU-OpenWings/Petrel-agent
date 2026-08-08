@@ -10,6 +10,7 @@ import {
   type HarnessNotice,
   HarnessRegistryError,
 } from "../../services/harness-registry.ts";
+import { getQuotaService, isEnforcementEnabled, QuotaError } from "../../services/quota.ts";
 import type { AppEnv } from "../../types.ts";
 import { createSseQueue } from "../sse-queue.ts";
 
@@ -144,6 +145,32 @@ export const chat = new Hono<AppEnv>()
     const handle = await getRegistry()
       .acquire(sessionId, c.get("currentUser").id, message, { systemPrompt, modelId: model })
       .catch(toHttpException);
+
+    // HEU-40：配额检查。挂在 acquire 之后、streamSSE 之前——
+    // acquire 之后：归属校验已完成（不会把越权也当超配额拒绝，泄漏会话是否存在）；
+    // streamSSE 之前：开流后只能用 event:error，无法用 HTTP 状态码区分「超配额」与「错误」。
+    //
+    // 任何拒绝都必须先 release：acquire 内部已经 refCount+=1，不释放会泄漏，最终耗尽容量（registry 503）。
+    // memory 降级（会话表故障）与配额查询失败的 fail-closed（→ unavailable → 503）**整体受
+    // QUOTA_ENFORCEMENT 开关控制**：enforcement=false（纯计量阶段）时，memory 降级也放行，
+    // 恢复配额引入前的「能聊不落库」行为——这样 enforcement 才是真正的 kill switch，
+    // 可随时回滚到配额功能上线前的可用性。check() 内部对 enforcement=false 直接 return，
+    // 所以这里的 memory 检查也要用同一开关守卫，否则开关关了仍会因会话表抖动 503。
+    try {
+      if (handle.persistence === "memory") {
+        throw new QuotaError("配额服务暂不可用，请稍后重试", "unavailable");
+      }
+      await getQuotaService().check(c.get("currentUser"));
+    } catch (error) {
+      // enforcement 关闭时，memory 降级不再阻塞：放过本轮（usage 不落库，但用户能继续对话）。
+      // 这是把「kill switch 可回滚」贯彻到底：关掉配额 = 完整恢复旧行为，包括降级容忍。
+      if (error instanceof QuotaError && error.kind === "unavailable" && !isEnforcementEnabled()) {
+        // 不 release：继续走 streamSSE。memory 降级实例本来就不落库，放行不增加风险。
+      } else {
+        handle.release();
+        throw error;
+      }
+    }
 
     return streamSSE(c, async (stream) => {
       const queue = createSseQueue();

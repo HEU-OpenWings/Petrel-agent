@@ -44,9 +44,14 @@ export function createEntryRepository(db: Database) {
      * 线性模型要在事务里 SELECT ... FOR UPDATE 再算 MAX(seq)+1（读-改-写序列），
      * 而树模型的 parent_id 由调用方（harness 的当前 leaf）在插入前就已知，
      * entry_seq 由数据库序列给，两者都不需要读旧数据。
+     *
+     * 可选的 `tx` 参数用于 HEU-40 的 usage 双写：调用方在一个 db.transaction 内
+     * 同时写 session_entries 与 token_usage，两者必须同成同败，于是复用同一个
+     * 事务 handle。不传 tx 时走 repository 自己的 db 连接（向后兼容既有调用方）。
      */
-    async append(entry: NewEntry): Promise<void> {
-      await db.insert(sessionEntries).values({
+    async append(entry: NewEntry, tx?: Database): Promise<void> {
+      const conn = tx ?? db;
+      await conn.insert(sessionEntries).values({
         id: entry.id,
         sessionId: entry.sessionId,
         parentId: entry.parentId,

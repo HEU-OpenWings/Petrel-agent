@@ -178,6 +178,11 @@ export interface SendOptions {
 export interface HarnessHandle {
   harness: AgentHarness;
   session: Session;
+  /**
+   * 持久化状态。HEU-40 配额 fail-closed：memory 降级时（会话表故障），
+   * usage 双写不会落库，chat 路由据此拒绝调用模型，而不是「能聊但不计量」。
+   */
+  persistence: "postgres" | "memory";
   /** 空闲则（必要时先压缩再）prompt，运行中则排进 followUp 队列。 */
   send(message: string, options?: SendOptions): Promise<void>;
   /** 释放这个连接对实例的占用，允许它被回收。 */
@@ -260,13 +265,14 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
 
   async function build(
     sessionId: string,
+    userId: string,
     createdAt: Date,
     assembly: HarnessAssemblyOptions = {},
   ): Promise<Entry> {
     const built = options.createHarness
       ? await options.createHarness(sessionId)
       : (() => {
-          const session = createPgSession(db, sessionId, createdAt);
+          const session = createPgSession(db, sessionId, createdAt, userId);
           // 首次装配先给初始值；缓存命中后的 systemPrompt 由 before_agent_start
           // hook 注入，modelId 通过 setModel() 更新，见 acquire()。
           return {
@@ -343,7 +349,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         throw new HarnessRegistryError("服务繁忙，请稍后重试（会话容量已满）", "capacity");
       }
       const row = await sessionRepo.findById(sessionId, userId);
-      const entry = await build(sessionId, row?.createdAt ?? new Date(), assembly);
+      const entry = await build(sessionId, userId, row?.createdAt ?? new Date(), assembly);
       entries.set(sessionId, entry);
       return entry;
     })();
@@ -378,6 +384,8 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     return {
       harness: built.harness,
       session: built.session,
+      // 降级实例是内存会话，usage 不落库——chat 路由据此 fail-closed 拒绝
+      persistence: "memory",
       // 降级实例不压缩：它是一次性内存会话，没有历史可压
       send: (message: string) => built.harness.prompt(message).then(() => undefined),
       release: () => undefined,
@@ -443,6 +451,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       return {
         harness: held.harness,
         session: held.session,
+        persistence: "postgres",
         /**
          * 空闲则（必要时先压缩再）prompt，运行中则 followUp。
          *

@@ -23,9 +23,9 @@ export const useUserStore = defineStore("user", () => {
   }
 
   async function register(email, password) {
-    const data = await registerApi(email, password);
-    user.value = data.user;
-    return data.user;
+    // 注册后不再自动登录：后端发出验证邮件、不种 cookie（见 auth 设计文档 2026-08-06）。
+    // 由登录页提示「查收验证邮件」，用户验证后再登录
+    return registerApi(email, password);
   }
 
   async function logout() {

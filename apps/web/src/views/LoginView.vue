@@ -31,11 +31,31 @@
           show-icon
           class="login-error"
         />
+        <a-alert
+          v-if="successMessage"
+          type="success"
+          :message="successMessage"
+          show-icon
+          class="login-error"
+        />
 
         <a-button type="primary" html-type="submit" size="large" block :loading="submitting">
           {{ isRegister ? '注册' : '登录' }}
         </a-button>
       </a-form>
+
+      <div v-if="!isRegister" class="login-forgot">
+        <a href="/api/auth/forgot-password">忘记密码？</a>
+        <a-button
+          v-if="resendVisible"
+          type="link"
+          size="small"
+          :loading="resending"
+          @click="resendVerification"
+        >
+          重新发送验证邮件
+        </a-button>
+      </div>
 
       <div class="login-switch">
         <span>{{ isRegister ? '已经有账号了？' : '还没有账号？' }}</span>
@@ -48,8 +68,9 @@
 </template>
 
 <script setup>
-import { reactive, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { resendVerificationApi } from "@/apis/auth_api";
 import { useUserStore } from "@/stores/user";
 import { safeRedirect } from "@/utils/redirect";
 
@@ -59,20 +80,44 @@ const userStore = useUserStore();
 
 const isRegister = ref(false);
 const submitting = ref(false);
+const resending = ref(false);
 const errorMessage = ref("");
+const successMessage = ref("");
 const form = reactive({ email: "", password: "" });
+
+// 两种情况都要给「重新发送验证邮件」入口：
+// 1) 登录被 403「邮箱尚未验证」拒绝；
+// 2) 注册成功但邮件发送失败（successMessage 里的提示文案）。
+const resendVisible = computed(
+  () =>
+    !isRegister.value &&
+    (errorMessage.value.includes("邮箱尚未验证") || successMessage.value.includes("验证邮件发送失败")),
+);
 
 function toggleMode() {
   isRegister.value = !isRegister.value;
   errorMessage.value = "";
+  successMessage.value = "";
 }
 
 async function handleSubmit() {
   submitting.value = true;
   errorMessage.value = "";
+  successMessage.value = "";
   try {
     if (isRegister.value) {
-      await userStore.register(form.email, form.password);
+      const data = await userStore.register(form.email, form.password);
+      // 注册不再自动登录：按后端返回区分三种情况，切回登录模式
+      if (data.verificationSent) {
+        successMessage.value = `验证邮件已发送到 ${form.email}，请查收后登录`;
+      } else if (data.user?.emailVerifiedAt) {
+        // EMAIL_VERIFICATION_ENABLED=false（开发/内网演示）：注册即已验证
+        successMessage.value = "注册成功，请登录";
+      } else {
+        successMessage.value = "注册成功，但验证邮件发送失败，可点击「重新发送验证邮件」";
+      }
+      isRegister.value = false;
+      return;
     } else {
       await userStore.login(form.email, form.password);
     }
@@ -82,6 +127,19 @@ async function handleSubmit() {
     errorMessage.value = error.message || "操作失败，请重试";
   } finally {
     submitting.value = false;
+  }
+}
+
+async function resendVerification() {
+  resending.value = true;
+  try {
+    await resendVerificationApi(form.email);
+    successMessage.value = `验证邮件已重新发送到 ${form.email}，请查收`;
+    errorMessage.value = "";
+  } catch (error) {
+    errorMessage.value = error.message || "重发失败，请稍后再试";
+  } finally {
+    resending.value = false;
   }
 }
 </script>
@@ -122,6 +180,16 @@ async function handleSubmit() {
 
 .login-error {
   margin-bottom: 16px;
+}
+
+.login-forgot {
+  margin-top: 12px;
+  text-align: right;
+  font-size: 14px;
+}
+
+.login-forgot a {
+  color: var(--main-color);
 }
 
 .login-switch {

@@ -72,6 +72,7 @@ describe("findById", () => {
       email: "a@x.io",
       role: "user",
       disabled: false,
+      emailVerifiedAt: null,
       createdAt: expect.any(Date),
     });
   });
@@ -133,5 +134,59 @@ describe("setPasswordHash", () => {
 
   it("用户不存在时返回 false", async () => {
     await expect(repo.setPasswordHash("00000000-0000-0000-0000-0000000000ff", "new")).resolves.toBe(false);
+  });
+});
+
+describe("邮箱验证 token", () => {
+  it("setEmailVerified 置位，保留 token 让重复点击幂等成功", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "scrypt$a$b" });
+    const expiresAt = new Date(Date.now() + 60_000);
+    await repo.setEmailVerifyToken(user.id, "hash1", expiresAt);
+
+    await expect(repo.setEmailVerified(user.id, new Date())).resolves.toBe(true);
+
+    expect((await repo.findByEmailVerifyToken("hash1"))?.id).toBe(user.id);
+    expect((await repo.findById(user.id))?.emailVerifiedAt).toBeInstanceOf(Date);
+  });
+
+  it("findByEmailVerifyToken 按哈希精确命中", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "scrypt$a$b" });
+    const expiresAt = new Date(Date.now() + 60_000);
+    await repo.setEmailVerifyToken(user.id, "hash-verify", expiresAt);
+
+    const found = await repo.findByEmailVerifyToken("hash-verify");
+    expect(found?.id).toBe(user.id);
+    expect(await repo.findByEmailVerifyToken("hash-other")).toBeUndefined();
+  });
+});
+
+describe("密码重置 token 与 resetPassword", () => {
+  it("findByPasswordResetToken 按哈希命中，resetPassword 换哈希并清 token", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+    const expiresAt = new Date(Date.now() + 60_000);
+    await repo.setPasswordResetToken(user.id, "hash-reset", expiresAt);
+
+    await expect(repo.resetPassword(user.id, "new", new Date())).resolves.toBe(true);
+
+    expect(await repo.findByPasswordResetToken("hash-reset")).toBeUndefined();
+    expect((await repo.findByEmail("a@x.io"))?.passwordHash).toBe("new");
+  });
+
+  it("resetPassword 把未验证邮箱顺带标记为已验证", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+
+    await repo.resetPassword(user.id, "new", new Date("2026-08-06T00:00:00Z"));
+
+    expect((await repo.findById(user.id))?.emailVerifiedAt).toEqual(new Date("2026-08-06T00:00:00Z"));
+  });
+
+  it("resetPassword 不覆盖已验证时间", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+    const verifiedAt = new Date("2026-08-01T00:00:00Z");
+    await repo.setEmailVerified(user.id, verifiedAt);
+
+    await repo.resetPassword(user.id, "new", new Date("2026-08-06T00:00:00Z"));
+
+    expect((await repo.findById(user.id))?.emailVerifiedAt).toEqual(verifiedAt);
   });
 });

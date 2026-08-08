@@ -1,6 +1,8 @@
+import { createUserRepository } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
+import { __resetAuthRateLimits } from "./auth.ts";
 
 /** state 用 vi.hoisted：vi.mock 会被提升到 import 之上，工厂里不能引用普通顶层变量 */
 const state = vi.hoisted(() => ({ db: undefined as TestDb | undefined }));
@@ -22,19 +24,39 @@ beforeAll(async () => {
   close = testDb.close;
 });
 
-beforeEach(() => reset());
+// GET /preferences 的模型清单来自 listConfiguredModels()——只列「已配置」的 provider。
+// 测试环境不配真实 key，每个用例前 stub 一个让 DeepSeek 被判为已配置，模型清单才非空
+// （firstModelId 与「带回可用模型清单」两条断言依赖它）。pi 的 envApiKeyAuth 实时读
+// process.env。用例后清理，避免污染同进程其他测试文件（与 models.test.ts 同口径）。
+beforeEach(() => {
+  vi.stubEnv("DEEPSEEK_API_KEY", "test-stub");
+  __resetAuthRateLimits();
+  return reset();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
 
-/** 注册一个用户并返回它的 cookie（同 admin.test.ts 的 registerUser） */
+/** 注册一个用户并返回它的 cookie（验证流程本身在 routes/auth.test.ts 覆盖，这里直接置为已验证再登录） */
 async function registerUser(email: string): Promise<string> {
   const response = await app.request("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
-  return (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+  const body = (await response.json()) as { user: { id: string } };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+  await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
+  const login = await app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  return (login.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
 }
 
 function getPreferences(cookie: string) {
@@ -152,6 +174,19 @@ describe("PUT /api/account/preferences", () => {
     const cookie = await registerUser("a@x.io");
 
     const response = await putPreferences({ defaultModel: "gpt-does-not-exist" }, cookie);
+
+    expect(response.status).toBe(400);
+  });
+
+  // review 🟡#4：GET 用 configured 过滤，PUT 也必须同口径，否则能存一个选择器里看不到、
+  // 必然运行时失败的 model id。gpt-4 已注册（openai provider）但测试环境没配 OPENAI_API_KEY，
+  // 属于「已注册但未配置」——旧代码用 listModels（全部）会接受它，新代码按 configured 拒绝。
+  // 这条钉住读写两侧白名单一致。stubEnv 清掉 OPENAI_API_KEY 确保它确实未配置。
+  it("已注册但未配置 key 的模型也返回 400（PUT 与 GET 白名单同口径）", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "");
+    const cookie = await registerUser("a@x.io");
+
+    const response = await putPreferences({ defaultModel: "gpt-4" }, cookie);
 
     expect(response.status).toBe(400);
   });

@@ -3,6 +3,7 @@ import type { CreateHarnessOptions } from "@petrel/agent";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
+import { __resetAuthRateLimits } from "./auth.ts";
 
 const state = vi.hoisted(() => ({
   db: undefined as TestDb | undefined,
@@ -59,6 +60,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await reset();
+  __resetAuthRateLimits();
   __resetRegistry();
   faux = fauxProvider({ tokensPerSecond: 10_000 });
   const models = createModels();
@@ -69,7 +71,7 @@ beforeEach(async () => {
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
 
-/** 注册一个用户并返回它的 cookie 与 id（同 admin.test.ts 的 registerUser） */
+/** 注册一个用户并返回它的 cookie 与 id（同 admin.test.ts 的 registerUser；验证流程本身在 auth.test.ts 覆盖） */
 async function register(email: string): Promise<{ cookie: string; id: string }> {
   const response = await app.request("/api/auth/register", {
     method: "POST",
@@ -77,7 +79,14 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
-  return { cookie: (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+  await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
+  const login = await app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  return { cookie: (login.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
 }
 
 /** 注册后直接改库提权，再重新登录拿到 admin 身份的 cookie（同 admin.test.ts） */
