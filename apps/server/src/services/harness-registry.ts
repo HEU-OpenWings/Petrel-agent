@@ -117,6 +117,36 @@ function toFailedOutcome(error: unknown): CompactionOutcome {
 const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
 
 /**
+ * HEU-54 R1：系统默认 provider/model id（用于 checkModelAuth 的 undefined modelId 解析）。
+ * 与 packages/agent/src/models/providers.ts 的 DEFAULT_PROVIDER_ID / DEFAULT_MODEL_ID 保持一致；
+ * 这里局部定义避免跨包转出链依赖。改默认模型时两处要同步。
+ */
+const DEFAULT_PROVIDER_ID_FOR_CHECK = "deepseek";
+const DEFAULT_MODEL_ID_FOR_CHECK = "deepseek-v4-flash";
+
+/**
+ * HEU-54 R1（B5）：解析 handle 的目标 providerId，供 checkModelAuth 用。
+ * - 具体 modelId：从 scoped models 严格解析（B7：不回落 global catalog）
+ * - undefined：scoped 系统默认 provider；scoped 无默认（faux 测试）→ harness.getModel() fallback
+ * - resolveModel 在 scoped 找不到时不硬抛错（checkModelAuth 是 preflight，解析失败不该阻断
+ *   acquire）→ 回落 harness.getModel()。生产 per-session/global models 注册全部 PROVIDERS，modelId
+ *   必能解析；仅测试注入的收窄 catalog(faux)走到 fallback，此时无并发歧义。
+ */
+function resolveHandleProviderId(modelId: string | undefined, harness: AgentHarness): string {
+  const models = harness.models;
+  if (modelId === undefined) {
+    const scopedDefault = models.getModel(DEFAULT_PROVIDER_ID_FOR_CHECK, DEFAULT_MODEL_ID_FOR_CHECK);
+    if (scopedDefault) return scopedDefault.provider;
+    return harness.getModel().provider;
+  }
+  try {
+    return resolveModel({ modelId, models }).provider;
+  } catch {
+    return harness.getModel().provider;
+  }
+}
+
+/**
  * 同时常驻的会话上限。
  *
  * 200 是单副本内部使用的估值，不是实测值：每个实例常驻的是一颗上下文树的引用，
@@ -127,6 +157,14 @@ const DEFAULT_MAX_SESSIONS = 200;
 interface Entry {
   harness: AgentHarness;
   session: Session;
+  /**
+   * HEU-54 R1：这个常驻实例所属的用户（非秘密）。
+   *
+   * 缓存 key 是 sessionId，而一个 session 永属一个 user（upsert 已守归属校验）。
+   * 存它是为了防御性不变量：万一 session 归属逻辑将来被改坏，缓存命中时断言
+   * userId 一致能在「越权拿到别人的活实例」之前拦住。per-user Models 的装配也用它。
+   */
+  userId: string;
   /** 下一次新 run 使用的系统提示；before_agent_start hook 会读取它。 */
   systemPrompt: string;
   /** 当前 harness 对应的模型偏好；undefined 表示跟随系统默认。 */
@@ -187,6 +225,16 @@ export interface HarnessHandle {
   send(message: string, options?: SendOptions): Promise<void>;
   /** 释放这个连接对实例的占用，允许它被回收。 */
   release(): void;
+  /**
+   * HEU-54 R1：检查当前 model 的 provider 是否配了可用凭据（开 SSE 前的 preflight）。
+   *
+   * 走 harness 自己的 Models（per-user 时是用户凭据 store）：checkAuth 返 undefined=未配置，
+   * 返对象=已配置；DB/解密失败时抛错（fail-closed，不回落 env）。返回 boolean，
+   * 不暴露 AuthResult（含 source/keyId 等）。错误向上抛，由 chat 路由翻译成 503。
+   *
+   * storedCredentialsEnabled=false 时走 global Models，等价 R0 的 env 检查。
+   */
+  checkModelAuth(): Promise<boolean>;
 }
 
 export interface HarnessRegistryOptions {
@@ -207,6 +255,12 @@ export interface HarnessRegistryOptions {
    * 路径在测试里根本构造不出来（改进程 env 会影响同一进程里的其他用例）。
    */
   compaction?: Omit<CompactionPolicy, "summaryInstructions">;
+  /**
+   * HEU-54 R1：是否给每个常驻 harness 装配 per-user Models（读用户 DB 凭据）。
+   * 默认取 `env.providerCredentials.storedEnabled`。false 时 harness 用全局 Models
+   * （行为与 R0 完全一致）。作为 kill switch 的装配侧，可测性同 compaction。
+   */
+  storedCredentialsEnabled?: boolean;
 }
 
 export function createHarnessRegistry(options: HarnessRegistryOptions) {
@@ -218,6 +272,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
   };
   const idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
+  const storedCredentialsEnabled = options.storedCredentialsEnabled ?? env.providerCredentials.storedEnabled;
   const sessionRepo = createSessionRepository(db);
   const entries = new Map<string, Entry>();
   /**
@@ -228,8 +283,19 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
    * 缓存为空、各自 build 一个 harness——`entries.set` 只留下后者，前者成为
    * 孤儿实例但仍持有 session 引用，继续往同一份历史写，就是「会话意外分叉」。
    * 用这个 Map 去重：第二个请求直接 await 第一个的装配 promise，拿到同一个实例。
+   *
+   * HEU-54 R1（B1）：record 带 userId 与 retired 标志。一个 session 永属一个 user，
+   * 但 sessionId 客户端可控——用户 A 删会话后、用户 B 用同一个 sessionId 新建，
+   * building 里 A 的 in-flight promise 不能被 B 命中（否则 B 拿到绑了 A 凭据的 Models）。
+   * 命中时校验 userId 一致；evict（会话删除/用户禁用）标记 retired，构建完成后
+   * retired 的 record 不进 entries、其 promise reject，已 await 的调用方拿不到 stale Entry。
    */
-  const building = new Map<string, Promise<Entry>>();
+  interface BuildingRecord {
+    userId: string;
+    retired: boolean;
+    promise: Promise<Entry>;
+  }
+  const building = new Map<string, BuildingRecord>();
 
   /**
    * 惰性清理，不用 setInterval：定时器要管生命周期（测试里要 unref、进程退出要 clear），
@@ -280,6 +346,9 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
               session,
               systemPrompt: assembly.systemPrompt,
               modelId: assembly.modelId,
+              // storedCredentialsEnabled=true 时装配 per-user Models（读用户 DB 凭据）；
+              // false 时用全局 Models，行为与 R0 完全一致。
+              ...(storedCredentialsEnabled ? { userCredentialScope: { db, userId } } : {}),
             }),
             session,
           };
@@ -289,6 +358,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     const entry: Entry = {
       harness,
       session,
+      userId,
       systemPrompt: assembly.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       modelId: assembly.modelId,
       refCount: 0,
@@ -333,11 +403,31 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     assembly: HarnessAssemblyOptions = {},
   ): Promise<Entry> {
     const cached = entries.get(sessionId);
-    if (cached) return cached;
+    if (cached) {
+      // HEU-54 R1 防御性不变量：一个 session 永属一个 user，缓存命中的 entry 必须属于
+      // 当前请求的 user。归属校验（upsert）已在上游拦截越权，这里再断言一次：
+      // 万一 session 归属逻辑将来被改坏，这里能先于「拿到别人的活实例（含别人凭据的 Models）」拦住。
+      if (cached.userId !== userId) {
+        throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
+      }
+      return cached;
+    }
 
+    // B1：in-flight 命中必须校验 userId。sessionId 客户端可控，A 删会话后 B 用同 id 新建，
+    // building 里 A 的 promise（绑了 A 的 per-user Models）绝不能给 B。userId 不一致 =
+    // 不命中，让本次请求走自己的 build。
     const inFlight = building.get(sessionId);
-    if (inFlight) return inFlight;
+    if (inFlight && inFlight.userId === userId && !inFlight.retired) return inFlight.promise;
+    // B1 残留修复：若存在旧 owner 的 in-flight record（userId 不一致或已 retired），
+    // 主动 retire 它——否则旧 build 完成时即便 publication fence 拦住 entries.set，
+    // 它仍会跑完昂贵的 build。retire 让它尽早短路（publication fence 处 throw）。
+    if (inFlight) inFlight.retired = true;
 
+    const record: BuildingRecord = {
+      userId,
+      retired: false,
+      promise: undefined as unknown as Promise<Entry>,
+    };
     const promise = (async () => {
       // building 里的实例已经占用了容量名额。不同 sessionId 的并发装配会在
       // 第一个 await 处交错；只看 entries.size 会让它们全部通过检查并突破上限。
@@ -350,15 +440,30 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       }
       const row = await sessionRepo.findById(sessionId, userId);
       const entry = await build(sessionId, userId, row?.createdAt ?? new Date(), assembly);
+      // B1 publication fence：build 期间会话可能被 evict（删除/禁用），或被另一个
+      // owner 的新 record 覆盖（删会话重建同 id）。两个条件任一成立都不能 entries.set：
+      //   retired=true —— 会话已删/禁用
+      //   building.get !== record —— 我已不是当前 owner 的 record（被新 owner 覆盖）
+      // 后者是 B1 残留的核心：旧 A build 完成时若已被新 B 覆盖，A 的 record.retired 仍可能
+      // 是 false（迟到的 evict 只 retire 了 B），但 building.get(sessionId) 已是 B 的 record，
+      // identity 不匹配 → A 拒绝 entries.set，拿不到 stale Entry（含别人凭据的 Models）。
+      if (record.retired || building.get(sessionId) !== record) {
+        throw new HarnessRegistryError("会话已被删除、禁用或替换", "forbidden");
+      }
       entries.set(sessionId, entry);
       return entry;
     })();
-
-    building.set(sessionId, promise);
+    record.promise = promise;
+    building.set(sessionId, record);
     // 无论成功失败都要清掉：失败不清会让这个会话永久卡住（下次 acquire 会
     // await 一个已经 reject 的 promise）；成功则已经 entries.set 过，缓存
     // 命中会走上面的 cached 分支，不再需要 building 里的记录。
-    promise.catch(() => undefined).finally(() => building.delete(sessionId));
+    // 只清自己这条 record（identity 比对），避免清掉后来者的 record。
+    promise
+      .catch(() => undefined)
+      .finally(() => {
+        if (building.get(sessionId) === record) building.delete(sessionId);
+      });
 
     return promise;
   }
@@ -366,8 +471,15 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
   /**
    * 降级用的一次性 handle：内存会话、不进缓存、不需要 running 标记与 chain
    * （它只服务当前这一个请求，不存在第二个请求撞上来的可能）。
+   *
+   * HEU-54 R1：降级实例也要按 storedCredentialsEnabled 装 per-user Models——否则
+   * 会话表故障降级期间会用 global env key，违反多租户隔离（fail-closed）。
    */
-  async function ephemeral(sessionId: string, assembly: HarnessAssemblyOptions = {}): Promise<HarnessHandle> {
+  async function ephemeral(
+    sessionId: string,
+    userId: string,
+    assembly: HarnessAssemblyOptions = {},
+  ): Promise<HarnessHandle> {
     const built = options.createHarness
       ? await options.createHarness(sessionId)
       : await (async () => {
@@ -377,10 +489,14 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
               session,
               systemPrompt: assembly.systemPrompt,
               modelId: assembly.modelId,
+              ...(storedCredentialsEnabled ? { userCredentialScope: { db, userId } } : {}),
             }),
             session,
           };
         })();
+    // ephemeral 是一次性 handle（无并发），但 checkModelAuth 仍用捕获的 providerId，
+    // 与 acquire 的 handle 保持同一解析口径。
+    const ephemeralProviderId = resolveHandleProviderId(assembly.modelId, built.harness);
     return {
       harness: built.harness,
       session: built.session,
@@ -388,6 +504,10 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       persistence: "memory",
       // 降级实例不压缩：它是一次性内存会话，没有历史可压
       send: (message: string) => built.harness.prompt(message).then(() => undefined),
+      async checkModelAuth(): Promise<boolean> {
+        const auth = await built.harness.models.checkAuth(ephemeralProviderId);
+        return auth !== undefined;
+      },
       release: () => undefined,
     };
   }
@@ -417,7 +537,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         // 注意与 owned === false 的区别：那是越权（必须 403），这是故障（可以降级）。
         // 降级实例不进缓存——它没有经过归属校验，留在 Map 里会被后续请求错误复用
         logger.error({ err: error, sessionId }, "session store unavailable, degrading to memory session");
-        return ephemeral(sessionId, assembly);
+        return ephemeral(sessionId, userId, assembly);
       }
       if (!owned) {
         throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
@@ -433,7 +553,9 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       async function applyAssembly(): Promise<void> {
         held.systemPrompt = assembly.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
         if (held.modelId === assembly.modelId) return;
-        const desired = resolveModel({ modelId: assembly.modelId });
+        // 从这个 harness 自己的 Models 解析 model（per-session Models 场景下必须是它自己的实例，
+        // 否则会把 global Models 的 model 对象塞进 user harness，catalog/状态错配）
+        const desired = resolveModel({ modelId: assembly.modelId, models: held.harness.models });
         await held.harness.setModel(desired);
         held.modelId = assembly.modelId;
       }
@@ -448,6 +570,14 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       await configured;
 
       let released = false;
+      // B5：handle 捕获自己的 providerId，checkModelAuth 用它，不读共享 harness.getModel()
+      //（并发 handle A/B 不同 model 会互相覆盖共享 harness 的当前 model）。
+      // 解析基于 assembly.modelId 与 scoped models（同步），不依赖共享 harness 状态：
+      //   具体 modelId → resolveModel 解析该 model 的 provider
+      //   undefined → scoped 系统默认 provider（生产是 deepseek）；scoped 无默认（faux 测试）
+      //                → 退到 harness.getModel() 作受控 fallback（此时 assembly 还未应用，getModel
+      //                   是装配时传入的初始 model，稳定无并发歧义）
+      const handleProviderId = resolveHandleProviderId(assembly.modelId, held.harness);
       return {
         harness: held.harness,
         session: held.session,
@@ -632,6 +762,14 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
           held.chain = started.catch(() => undefined);
           return started.then(() => outcome);
         },
+        async checkModelAuth(): Promise<boolean> {
+          // 走这个 harness 自己的 Models（per-user 时是用户凭据 store）。
+          // B5：providerId 用 handle 创建时捕获的值（基于 assembly.modelId 解析），
+          // 不读共享 harness.getModel()——并发 handle A/B 不同 model 会互相覆盖共享 model，
+          // 用 getModel() 会让 A 的 preflight 检查到 B 的 provider。
+          const auth = await held.harness.models.checkAuth(handleProviderId);
+          return auth !== undefined;
+        },
         release() {
           // 幂等：SSE 的正常收尾与 onAbort 都会调它
           if (released) return;
@@ -733,6 +871,12 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
      * 必然撞外键约束，那不是调用方需要知道的失败。
      */
     async evict(sessionId: string): Promise<void> {
+      // B1：会话被删除/禁用时，正在装配（building）中的 record 也要标记 retired——
+      // 否则 build 完成后会 entries.set 一个已被删除会话的实例，且后续同 sessionId 的
+      // 新 owner 可能在 record 清理前命中它。retired 让 build 完成时拒绝进 entries。
+      const buildingRecord = building.get(sessionId);
+      if (buildingRecord) buildingRecord.retired = true;
+
       const entry = entries.get(sessionId);
       if (!entry) return;
       entry.retired = true;
@@ -749,6 +893,11 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     /** 仅供测试与监控。 */
     size(): number {
       return entries.size;
+    },
+
+    /** 仅供测试：正在装配中的会话数（B1 回归用，验证 in-flight record 的生命周期）。 */
+    __buildingSize(): number {
+      return building.size;
     },
 
     /**

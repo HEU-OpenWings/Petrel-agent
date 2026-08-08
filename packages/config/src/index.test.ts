@@ -224,18 +224,24 @@ describe("mail", () => {
 });
 
 describe("rateLimit", () => {
-  it("默认值：注册 5 次/15 分钟，邮件 3 次/15 分钟", async () => {
+  it("默认值：注册 5 次/15 分钟，邮件 3 次/15 分钟，凭据写 10 次/test 5 次/15 分钟", async () => {
     const { env } = await loadEnv({
       REGISTER_RATE_LIMIT_MAX: undefined,
       REGISTER_RATE_LIMIT_WINDOW_MINUTES: undefined,
       AUTH_MAIL_RATE_LIMIT_MAX: undefined,
       AUTH_MAIL_RATE_LIMIT_WINDOW_MINUTES: undefined,
+      PROVIDER_CREDENTIAL_WRITE_RATE_LIMIT_MAX: undefined,
+      PROVIDER_CREDENTIAL_TEST_RATE_LIMIT_MAX: undefined,
+      PROVIDER_CREDENTIAL_RATE_LIMIT_WINDOW_MINUTES: undefined,
     });
     expect(env.rateLimit).toEqual({
       registerMax: 5,
       registerWindowMs: 15 * 60_000,
       authMailMax: 3,
       authMailWindowMs: 15 * 60_000,
+      providerCredentialWriteMax: 10,
+      providerCredentialTestMax: 5,
+      providerCredentialWindowMs: 15 * 60_000,
     });
   });
 
@@ -260,5 +266,88 @@ describe("rateLimit", () => {
     await expect(loadEnv({ REGISTER_RATE_LIMIT_WINDOW_MINUTES: raw })).rejects.toThrow(
       "REGISTER_RATE_LIMIT_WINDOW_MINUTES",
     );
+  });
+});
+
+describe("providerCredentials（HEU-54 kill switch + 加密密钥）", () => {
+  // 生成一个合法的 32 字节 base64 密钥（44 字符）
+  const VALID_KEY = Buffer.from(new Uint8Array(32).fill(7)).toString("base64");
+
+  it("默认两开关都 false，且不要求加密密钥（完整 R0 行为）", async () => {
+    const { env } = await loadEnv({
+      PROVIDER_STORED_CREDENTIALS_ENABLED: undefined,
+      PROVIDER_CREDENTIAL_MANAGEMENT_ENABLED: undefined,
+      PROVIDER_CREDENTIAL_ENCRYPTION_KEY: undefined,
+    });
+    expect(env.providerCredentials.storedEnabled).toBe(false);
+    expect(env.providerCredentials.managementEnabled).toBe(false);
+    expect(env.providerCredentials.encryptionKey).toBeUndefined();
+  });
+
+  it("两开关都 false 时，即使加密密钥非法也不报错（kill switch 完整回退）", async () => {
+    await expect(
+      loadEnv({
+        PROVIDER_STORED_CREDENTIALS_ENABLED: "false",
+        PROVIDER_CREDENTIAL_MANAGEMENT_ENABLED: "false",
+        PROVIDER_CREDENTIAL_ENCRYPTION_KEY: "not-base64-garbage",
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("storedEnabled=true 但缺密钥 → 启动失败", async () => {
+    await expect(
+      loadEnv({
+        PROVIDER_STORED_CREDENTIALS_ENABLED: "true",
+        PROVIDER_CREDENTIAL_MANAGEMENT_ENABLED: "false",
+        PROVIDER_CREDENTIAL_ENCRYPTION_KEY: undefined,
+      }),
+    ).rejects.toThrow("PROVIDER_CREDENTIAL_ENCRYPTION_KEY");
+  });
+
+  it("managementEnabled=true 但缺密钥 → 启动失败", async () => {
+    await expect(
+      loadEnv({
+        PROVIDER_STORED_CREDENTIALS_ENABLED: "false",
+        PROVIDER_CREDENTIAL_MANAGEMENT_ENABLED: "true",
+        PROVIDER_CREDENTIAL_ENCRYPTION_KEY: undefined,
+      }),
+    ).rejects.toThrow("PROVIDER_CREDENTIAL_ENCRYPTION_KEY");
+  });
+
+  it("开关开 + 合法密钥 → 返回 32 字节 Uint8Array", async () => {
+    const { env } = await loadEnv({
+      PROVIDER_STORED_CREDENTIALS_ENABLED: "true",
+      PROVIDER_CREDENTIAL_ENCRYPTION_KEY: VALID_KEY,
+    });
+    expect(env.providerCredentials.encryptionKey).toBeInstanceOf(Uint8Array);
+    expect(env.providerCredentials.encryptionKey?.length).toBe(32);
+  });
+
+  it.each([
+    ["空串", ""],
+    ["长度不对（10 字节）", Buffer.from(new Uint8Array(10)).toString("base64")],
+    ["含非法字符（空格）", `${VALID_KEY.slice(0, -1)} `],
+    ["base64url 而非标准 base64", Buffer.from(new Uint8Array(32).fill(7)).toString("base64url")],
+  ])("开关开 + 非法密钥（%s）→ 启动失败", async (_label, badKey) => {
+    await expect(
+      loadEnv({
+        PROVIDER_STORED_CREDENTIALS_ENABLED: "true",
+        PROVIDER_CREDENTIAL_ENCRYPTION_KEY: badKey,
+      }),
+    ).rejects.toThrow("PROVIDER_CREDENTIAL_ENCRYPTION_KEY");
+  });
+
+  it("错误信息不含密钥值（不回显）", async () => {
+    const SECRET = "a-very-unique-secret-value-not-base64!!";
+    let message = "";
+    try {
+      await loadEnv({
+        PROVIDER_STORED_CREDENTIALS_ENABLED: "true",
+        PROVIDER_CREDENTIAL_ENCRYPTION_KEY: SECRET,
+      });
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).not.toContain(SECRET);
   });
 });
