@@ -434,9 +434,11 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
   密码重置、邮件通道（nodemailer + SMTP / dev 用 console）。剩余两项单列：
   限流计数仍是单实例内存（多副本共享在风控轮做 Redis）、验证/重置的浏览器页面还是
   后端渲染的最小 HTML（SPA 页面待补）。
-- **token 版本号**：改密码不会失效其他设备上的旧 token。给 `users` 加 `tokenVersion`，
-  签发时写进 payload、`requireAuth` 比对，改密码时自增。同一个机制也能实现
-  「登出所有设备」。
+- ~~**token 版本号**：改密码不会失效其他设备上的旧 token~~ —— **已交付**：
+  `users.token_version` 签发时写进 JWT payload 的 `tv`，`requireAuth` 每请求比对
+  （复用既有查库，不增加查询）；改密码（`changePassword`）与重置密码
+  （`resetPassword`）都自增；`POST /api/account/logout-all` 自增实现「退出所有设备」。
+  migration `0008_tiny_the_order`。
 - **`toHttpException` 有两份**：`routes/auth.ts` 与 `routes/account.ts` 各写了一个同名
   同作用的函数。等第三处重复出现时提取到共享位置（现在提取牵动两个既有文件，
   收益不足）。

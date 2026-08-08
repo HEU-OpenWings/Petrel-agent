@@ -389,7 +389,8 @@ export function createAuthService(db: Database, mailer: Mailer = getMailer()) {
       }
 
       failures.delete(email);
-      await userRepo.setPasswordHash(found.id, await hashPassword(newPassword));
+      // 换哈希 + 会话版本号自增一次完成：其他设备上的旧 token 立即失效（见 users.ts）
+      await userRepo.changePassword(found.id, await hashPassword(newPassword));
     },
   };
 }

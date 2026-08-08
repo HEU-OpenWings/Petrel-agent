@@ -24,27 +24,31 @@
       <a-button type="primary" html-type="submit" :loading="submitting">修改密码</a-button>
     </a-form>
 
-    <!--
-      写清这条局限：改完密码其他设备上的旧 token 在 7 天内仍然有效。
-      JWT 无状态，彻底解决要 tokenVersion，见 CLAUDE.md「尚未实现」。
-      不写的话用户会以为「改密码 = 把别人踢下线」
-    -->
-    <p class="note">修改密码后，其他设备上已登录的会话最长 7 天后才会失效。</p>
+    <p class="note">修改密码后，其他设备上的会话会立即失效（tokenVersion 机制）。</p>
+
+    <a-divider />
+
+    <h4 class="title">退出所有设备</h4>
+    <a-button danger :loading="loggingOutAll" @click="onLogoutAll">退出所有设备</a-button>
+    <p class="note">会让所有设备（包括当前这台）立即回到登录页。</p>
   </div>
 </template>
 
 <script setup>
-import { message } from "ant-design-vue";
-import { reactive, ref } from "vue";
-import { changePassword } from "@/apis/account_api";
-import { useUserStore } from "@/stores/user";
+import { reactive, ref } from 'vue'
+import { message } from 'ant-design-vue'
+import { useRouter } from 'vue-router'
+import { changePassword, logoutAllDevices } from '@/apis/account_api'
+import { useUserStore } from '@/stores/user'
 
 /** 与后端 apps/server/src/services/auth.ts 的 PASSWORD_MIN_LENGTH 对齐，改一处要改两处 */
 const PASSWORD_MIN_LENGTH = 8;
 
-const userStore = useUserStore();
-const formRef = ref(null);
-const submitting = ref(false);
+const userStore = useUserStore()
+const router = useRouter()
+const formRef = ref(null)
+const submitting = ref(false)
+const loggingOutAll = ref(false)
 
 const form = reactive({
   currentPassword: "",
@@ -82,6 +86,21 @@ async function onSubmit() {
     message.error(error.message || "修改失败，请重试");
   } finally {
     submitting.value = false;
+  }
+}
+
+async function onLogoutAll() {
+  loggingOutAll.value = true
+  try {
+    await logoutAllDevices()
+    message.success('已退出所有设备')
+    // 后端已把当前 cookie 清掉（tokenVersion 也自增了），本地状态同步清空并回登录页
+    await userStore.logout()
+    router.push('/login')
+  } catch (error) {
+    message.error(error.message || '退出失败，请重试')
+  } finally {
+    loggingOutAll.value = false
   }
 }
 </script>
