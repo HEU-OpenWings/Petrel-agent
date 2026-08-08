@@ -342,23 +342,23 @@
 </template>
 
 <script setup>
-import { computed, reactive, watch, h, ref } from 'vue'
-import { message } from 'ant-design-vue';
 import {
-  InfoCircleOutlined, // Keep if still used for other things, if not, remove. For now assume it might be used elsewhere.
-  SettingOutlined,
-  DownCircleOutlined,
-  LoadingOutlined,
-  SearchOutlined,
-  PlusOutlined,
-  EditOutlined,
+  ApiOutlined,
   DeleteOutlined,
-  ApiOutlined
-} from '@ant-design/icons-vue';
-import { useConfigStore } from '@/stores/config';
-import { modelIcons } from '@/utils/modelIcon';
-import { agentApi } from '@/apis/agent_api';
-import { customProviderApi } from '@/apis/system_api';
+  DownCircleOutlined,
+  EditOutlined,
+  InfoCircleOutlined, // Keep if still used for other things, if not, remove. For now assume it might be used elsewhere.
+  LoadingOutlined,
+  PlusOutlined,
+  SearchOutlined,
+  SettingOutlined,
+} from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { computed, h, reactive, ref, watch } from "vue";
+import { agentApi } from "@/apis/agent_api";
+import { customProviderApi } from "@/apis/system_api";
+import { useConfigStore } from "@/stores/config";
+import { modelIcons } from "@/utils/modelIcon";
 
 const configStore = useConfigStore();
 
@@ -369,46 +369,48 @@ const modelStatus = computed(() => configStore.config?.model_provider_status);
 // 自定义供应商计算属性
 const customProviders = computed(() => {
   const providers = configStore.config?.model_names || {};
-  return Object.fromEntries(
-    Object.entries(providers).filter(([key, value]) => value.custom === true)
-  );
+  return Object.fromEntries(Object.entries(providers).filter(([_key, value]) => value.custom === true));
 });
-
 
 // 提供商配置相关状态
 const providerConfig = reactive({
   visible: false,
-  provider: '',
-  providerName: '',
+  provider: "",
+  providerName: "",
   models: [],
   allModels: [], // 所有可用的模型
   selectedModels: [], // 用户选择的模型
   loading: false,
-  searchQuery: '',
+  searchQuery: "",
 });
 
 // 筛选 modelStatus 中为真的key
 const modelKeys = computed(() => {
-  return Object.keys(modelStatus.value || {}).filter(key => modelStatus.value[key] && !customProviders.value[key]);
+  return Object.keys(modelStatus.value || {}).filter(
+    (key) => modelStatus.value[key] && !customProviders.value[key],
+  );
 });
 
 // 筛选 modelStatus 中为假的key
 const notModelKeys = computed(() => {
-  return Object.keys(modelStatus.value || {}).filter(key => !modelStatus.value[key]);
+  return Object.keys(modelStatus.value || {}).filter((key) => !modelStatus.value[key]);
 });
 
 // 模型展开状态管理
 const expandedModels = reactive({});
 
 // 监听 modelKeys 变化，确保新添加的模型也是默认展开状态
-watch(modelKeys, (newKeys) => {
-  newKeys.forEach(key => {
-    if (expandedModels[key] === undefined) {
-      expandedModels[key] = true;
-    }
-  });
-}, { immediate: true });
-
+watch(
+  modelKeys,
+  (newKeys) => {
+    newKeys.forEach((key) => {
+      if (expandedModels[key] === undefined) {
+        expandedModels[key] = true;
+      }
+    });
+  },
+  { immediate: true },
+);
 
 // 切换展开状态
 const toggleExpand = (item) => {
@@ -434,7 +436,7 @@ const openProviderConfig = (provider) => {
   providerConfig.allModels = [];
   providerConfig.visible = true;
   providerConfig.loading = true;
-  providerConfig.searchQuery = ''; // 重置搜索关键词
+  providerConfig.searchQuery = ""; // 重置搜索关键词
 
   // 获取当前选择的模型作为初始选中值
   const currentModels = modelNames.value[provider]?.models || [];
@@ -447,8 +449,9 @@ const openProviderConfig = (provider) => {
 // 获取模型提供商的模型列表
 const fetchProviderModels = (provider) => {
   providerConfig.loading = true;
-  agentApi.getProviderModels(provider)
-    .then(data => {
+  agentApi
+    .getProviderModels(provider)
+    .then((data) => {
       console.log(`${provider} 模型列表:`, data);
 
       // 处理各种可能的API返回格式
@@ -460,10 +463,10 @@ const fetchProviderModels = (provider) => {
       }
       // 情况2: { models: [...] } (字符串数组)
       else if (data.models && Array.isArray(data.models)) {
-        modelsList = data.models.map(model => typeof model === 'string' ? { id: model } : model);
+        modelsList = data.models.map((model) => (typeof model === "string" ? { id: model } : model));
       }
       // 情况3: { models: { data: [...] } }
-      else if (data.models && data.models.data && Array.isArray(data.models.data)) {
+      else if (data.models?.data && Array.isArray(data.models.data)) {
         modelsList = data.models.data;
       }
 
@@ -471,7 +474,7 @@ const fetchProviderModels = (provider) => {
       providerConfig.allModels = modelsList;
       providerConfig.loading = false;
     })
-    .catch(error => {
+    .catch((error) => {
       console.error(`获取${provider}模型列表失败:`, error);
       message.error({ content: `获取${modelNames.value[provider].name}模型列表失败`, duration: 2 });
       providerConfig.loading = false;
@@ -481,28 +484,27 @@ const fetchProviderModels = (provider) => {
 // 保存提供商配置
 const saveProviderConfig = async () => {
   if (!modelStatus.value[providerConfig.provider]) {
-    message.error('请在 .env 中配置对应的 APIKEY，并重新启动服务');
+    message.error("请在 .env 中配置对应的 APIKEY，并重新启动服务");
     return;
   }
 
-  message.loading({ content: '保存配置中...', key: 'save-config', duration: 0 });
+  message.loading({ content: "保存配置中...", key: "save-config", duration: 0 });
 
   try {
     // 发送选择的模型列表到后端
     const data = await agentApi.updateProviderModels(providerConfig.provider, providerConfig.selectedModels);
-    console.log('更新后的模型列表:', data.models);
+    console.log("更新后的模型列表:", data.models);
 
-    message.success({ content: '模型配置已保存!', key: 'save-config', duration: 2 });
+    message.success({ content: "模型配置已保存!", key: "save-config", duration: 2 });
 
     // 关闭弹窗
     providerConfig.visible = false;
 
     // 刷新配置
     configStore.refreshConfig();
-
   } catch (error) {
-    console.error('保存配置失败:', error);
-    message.error({ content: '保存配置失败: ' + error.message, key: 'save-config', duration: 2 });
+    console.error("保存配置失败:", error);
+    message.error({ content: `保存配置失败: ${error.message}`, key: "save-config", duration: 2 });
   }
 };
 
@@ -515,18 +517,18 @@ const cancelProviderConfig = () => {
 const filteredModels = computed(() => {
   const allModels = providerConfig.allModels || [];
   const searchQuery = providerConfig.searchQuery.toLowerCase();
-  return allModels.filter(model => model.id.toLowerCase().includes(searchQuery));
+  return allModels.filter((model) => model.id.toLowerCase().includes(searchQuery));
 });
 
 // 计算不支持/已失效的模型
 const unsupportedModels = computed(() => {
   if (providerConfig.allModels.length === 0) return [];
-  const availableIds = new Set(providerConfig.allModels.map(m => m.id));
-  return providerConfig.selectedModels.filter(id => !availableIds.has(id));
+  const availableIds = new Set(providerConfig.allModels.map((m) => m.id));
+  return providerConfig.selectedModels.filter((id) => !availableIds.has(id));
 });
 
 // 手动管理相关
-const manualModelInput = ref('');
+const manualModelInput = ref("");
 
 // 添加手动输入的模型
 const addManualModel = () => {
@@ -534,13 +536,13 @@ const addManualModel = () => {
   if (!val) return;
 
   if (providerConfig.selectedModels.includes(val)) {
-    message.warning('该模型已存在');
+    message.warning("该模型已存在");
     return;
   }
 
   providerConfig.selectedModels.push(val);
-  manualModelInput.value = '';
-  message.success('添加成功');
+  manualModelInput.value = "";
+  message.success("添加成功");
 };
 
 // 移除模型
@@ -554,7 +556,7 @@ const removeModel = (modelId) => {
 // 移除所有不支持的模型
 const removeAllUnsupported = () => {
   const toRemove = unsupportedModels.value;
-  providerConfig.selectedModels = providerConfig.selectedModels.filter(id => !toRemove.includes(id));
+  providerConfig.selectedModels = providerConfig.selectedModels.filter((id) => !toRemove.includes(id));
   message.success(`已移除 ${toRemove.length} 个失效模型`);
 };
 
@@ -565,63 +567,57 @@ const customProviderModal = reactive({
   isEdit: false,
   loading: false,
   data: {
-    providerId: '',
-    name: '',
-    base_url: '',
-    default: '',
-    env: '',
-    modelsText: '',
+    providerId: "",
+    name: "",
+    base_url: "",
+    default: "",
+    env: "",
+    modelsText: "",
     models: [],
-    url: ''
-  }
+    url: "",
+  },
 });
 
 // 自定义供应商表单验证规则
 const customProviderRules = {
   providerId: [
-    { required: true, message: '请输入供应商ID', trigger: 'blur' },
-    { pattern: /^[a-zA-Z0-9_-]+$/, message: '供应商ID只能包含字母、数字、下划线和横线', trigger: 'blur' },
+    { required: true, message: "请输入供应商ID", trigger: "blur" },
+    { pattern: /^[a-zA-Z0-9_-]+$/, message: "供应商ID只能包含字母、数字、下划线和横线", trigger: "blur" },
     {
-      validator: (rule, value) => {
+      validator: (_rule, value) => {
         if (!value) return Promise.resolve();
         // 检查是否与现有供应商ID重复
-        if (modelNames.value && modelNames.value[value]) {
-          return Promise.reject('供应商ID已存在，请使用其他ID');
+        if (modelNames.value?.[value]) {
+          return Promise.reject("供应商ID已存在，请使用其他ID");
         }
         return Promise.resolve();
       },
-      trigger: 'blur'
-    }
+      trigger: "blur",
+    },
   ],
-  name: [
-    { required: true, message: '请输入供应商名称', trigger: 'blur' }
-  ],
+  name: [{ required: true, message: "请输入供应商名称", trigger: "blur" }],
   base_url: [
-    { required: true, message: '请输入API地址', trigger: 'blur' },
-    { type: 'url', message: '请输入有效的URL地址', trigger: 'blur' }
+    { required: true, message: "请输入API地址", trigger: "blur" },
+    { type: "url", message: "请输入有效的URL地址", trigger: "blur" },
   ],
-  default: [
-    { required: true, message: '请输入默认模型', trigger: 'blur' }
-  ],
-  env: [
-    { required: true, message: '请输入API密钥或环境变量', trigger: 'blur' }
-  ]
+  default: [{ required: true, message: "请输入默认模型", trigger: "blur" }],
+  env: [{ required: true, message: "请输入API密钥或环境变量", trigger: "blur" }],
 };
 
 // API密钥掩码显示
 const maskApiKey = (apiKey) => {
-  if (!apiKey) return '未配置';
+  if (!apiKey) return "未配置";
 
   // 如果是环境变量格式，直接显示
-  if (apiKey.startsWith('${') && apiKey.endsWith('}')) {
+  if (apiKey.startsWith("${") && apiKey.endsWith("}")) {
     return apiKey;
   }
 
   // 如果是直接的API密钥，进行掩码处理
   if (apiKey.length > 8) {
-    return apiKey.substring(0, 4) + '***' + apiKey.substring(apiKey.length - 4);
+    return `${apiKey.substring(0, 4)}***${apiKey.substring(apiKey.length - 4)}`;
   }
-  return '***';
+  return "***";
 };
 
 // 打开添加自定义供应商弹窗
@@ -643,21 +639,21 @@ const openEditCustomProviderModal = (providerId, provider) => {
   customProviderModal.data.default = provider.default;
   customProviderModal.data.env = provider.env;
   customProviderModal.data.models = provider.models || [];
-  customProviderModal.data.modelsText = (provider.models || []).join('\n');
-  customProviderModal.data.url = provider.url || '';
+  customProviderModal.data.modelsText = (provider.models || []).join("\n");
+  customProviderModal.data.url = provider.url || "";
 };
 
 // 重置自定义供应商表单
 const resetCustomProviderForm = () => {
   customProviderModal.data = {
-    providerId: '',
-    name: '',
-    base_url: '',
-    default: '',
-    env: '',
-    modelsText: '',
+    providerId: "",
+    name: "",
+    base_url: "",
+    default: "",
+    env: "",
+    modelsText: "",
     models: [],
-    url: ''
+    url: "",
   };
   customProviderForm.value?.resetFields();
 };
@@ -670,9 +666,9 @@ const saveCustomProvider = async () => {
 
     // 处理模型列表
     const models = customProviderModal.data.modelsText
-      .split('\n')
-      .map(model => model.trim())
-      .filter(model => model.length > 0);
+      .split("\n")
+      .map((model) => model.trim())
+      .filter((model) => model.length > 0);
 
     const providerData = {
       name: customProviderModal.data.name,
@@ -681,28 +677,24 @@ const saveCustomProvider = async () => {
       env: customProviderModal.data.env,
       models: models,
       url: customProviderModal.data.url,
-      custom: true
+      custom: true,
     };
 
     let result;
     if (customProviderModal.isEdit) {
       result = await customProviderApi.updateCustomProvider(
         customProviderModal.data.providerId,
-        providerData
+        providerData,
       );
-      message.success('自定义供应商更新成功');
+      message.success("自定义供应商更新成功");
     } else {
-      result = await customProviderApi.addCustomProvider(
-        customProviderModal.data.providerId,
-        providerData
-      );
+      result = await customProviderApi.addCustomProvider(customProviderModal.data.providerId, providerData);
       message.success(`自定义供应商 ${customProviderModal.data.providerId} 添加成功`);
     }
 
     // 关闭弹窗并刷新配置
     customProviderModal.visible = false;
     await configStore.refreshConfig();
-
   } catch (error) {
     if (error.errorFields) {
       // 表单验证错误
@@ -710,12 +702,12 @@ const saveCustomProvider = async () => {
     }
 
     // 处理API错误响应
-    let errorMessage = '未知错误';
+    let errorMessage = "未知错误";
     if (error.response?.data?.detail) {
       errorMessage = error.response.data.detail;
     } else if (error.message) {
       errorMessage = error.message;
-    } else if (typeof error === 'string') {
+    } else if (typeof error === "string") {
       errorMessage = error;
     }
 
@@ -735,34 +727,34 @@ const cancelCustomProvider = () => {
 const deleteCustomProvider = async (providerId) => {
   try {
     const result = await customProviderApi.deleteCustomProvider(providerId);
-    message.success('自定义供应商删除成功');
+    message.success("自定义供应商删除成功");
     await configStore.refreshConfig();
   } catch (error) {
-    message.error(`删除失败: ${error.message || error.response?.data?.detail || '未知错误'}`);
+    message.error(`删除失败: ${error.message || error.response?.data?.detail || "未知错误"}`);
   }
 };
 
 // 测试自定义供应商连接
 const testCustomProvider = async (providerId, modelName) => {
   try {
-    message.loading({ content: '正在测试连接...', key: 'test-connection', duration: 0 });
+    message.loading({ content: "正在测试连接...", key: "test-connection", duration: 0 });
 
     const result = await customProviderApi.testCustomProvider(providerId, modelName);
 
-    if (result.status?.status === 'available') {
-      message.success({ content: '连接测试成功', key: 'test-connection', duration: 2 });
+    if (result.status?.status === "available") {
+      message.success({ content: "连接测试成功", key: "test-connection", duration: 2 });
     } else {
       message.error({
-        content: `连接测试失败: ${result.status?.message || '未知错误'}`,
-        key: 'test-connection',
-        duration: 3
+        content: `连接测试失败: ${result.status?.message || "未知错误"}`,
+        key: "test-connection",
+        duration: 3,
       });
     }
   } catch (error) {
     message.error({
-      content: `测试失败: ${error.message || error.response?.data?.detail || '未知错误'}`,
-      key: 'test-connection',
-      duration: 3
+      content: `测试失败: ${error.message || error.response?.data?.detail || "未知错误"}`,
+      key: "test-connection",
+      duration: 3,
     });
   }
 };

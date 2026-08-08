@@ -75,56 +75,56 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/user'
-import { useInfoStore } from '@/stores/info'
-import { useThemeStore } from '@/stores/theme'
-import UserInfoComponent from '@/components/UserInfoComponent.vue'
-import ProjectOverview from '@/components/ProjectOverview.vue'
 import {
   BookText,
   Bug,
-  Video,
-  Route,
-  Github,
-  Star,
   CheckCircle2,
   GitCommit,
-  ShieldCheck
-} from 'lucide-vue-next'
+  Github,
+  Route,
+  ShieldCheck,
+  Star,
+  Video,
+} from "lucide-vue-next";
+import { computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
+import ProjectOverview from "@/components/ProjectOverview.vue";
+import UserInfoComponent from "@/components/UserInfoComponent.vue";
+import { useInfoStore } from "@/stores/info";
+import { useThemeStore } from "@/stores/theme";
+import { useUserStore } from "@/stores/user";
 
-const router = useRouter()
-const userStore = useUserStore()
-const infoStore = useInfoStore()
-const themeStore = useThemeStore()
+const router = useRouter();
+const userStore = useUserStore();
+const infoStore = useInfoStore();
+const themeStore = useThemeStore();
 
 const goToChat = async () => {
   // 检查用户是否登录
   if (!userStore.isLoggedIn) {
     // 登录后应该跳转到默认智能体而不是/agent
-    sessionStorage.setItem('redirect', '/');  // 设置为首页，登录后会通过路由守卫处理重定向
-    router.push('/login');
+    sessionStorage.setItem("redirect", "/"); // 设置为首页，登录后会通过路由守卫处理重定向
+    router.push("/login");
     return;
   }
 
   // 根据用户角色进行跳转
   if (userStore.isAdmin) {
     // 管理员用户跳转到聊天页面
-    router.push('/agent');
+    router.push("/agent");
     return;
   }
 
   // 普通用户跳转到默认智能体
-  router.push('/agent');
+  router.push("/agent");
 };
 
 onMounted(async () => {
   // 加载信息配置
-  await infoStore.loadInfoConfig()
-})
+  await infoStore.loadInfoConfig();
+});
 
-const iconKey = (value) => typeof value === 'string' ? value.toLowerCase() : ''
+const iconKey = (value) => (typeof value === "string" ? value.toLowerCase() : "");
 
 // region icon_mapping
 const featureIconMap = {
@@ -133,8 +133,8 @@ const featureIconMap = {
   resolved: CheckCircle2,
   commits: GitCommit,
   license: ShieldCheck,
-  default: Star
-}
+  default: Star,
+};
 
 const actionIconMap = {
   doc: BookText,
@@ -147,52 +147,51 @@ const actionIconMap = {
   demo: Video,
   video: Video,
   github: Github,
-  default: Github
-}
+  default: Github,
+};
 // endregion icon_mapping
 
 const featureCards = computed(() => {
-  const list = Array.isArray(infoStore.features) ? infoStore.features : []
+  const list = Array.isArray(infoStore.features) ? infoStore.features : [];
   return list
     .map((item) => {
-      if (typeof item === 'string') {
+      if (typeof item === "string") {
         return {
           label: item,
-          value: '',
-          description: '',
-          icon: featureIconMap.default
-        }
+          value: "",
+          description: "",
+          icon: featureIconMap.default,
+        };
       }
 
-      const key = iconKey(item.icon || item.type)
+      const key = iconKey(item.icon || item.type);
       return {
-        label: item.label || item.name || '',
-        value: item.value || '',
-        description: item.description || '',
-        icon: featureIconMap[key] || featureIconMap.default
-      }
+        label: item.label || item.name || "",
+        value: item.value || "",
+        description: item.description || "",
+        icon: featureIconMap[key] || featureIconMap.default,
+      };
     })
-    .filter((item) => item.label || item.value || item.description)
-})
+    .filter((item) => item.label || item.value || item.description);
+});
 
 const actionLinks = computed(() => {
-  const actions = infoStore.actions
+  const actions = infoStore.actions;
   if (!Array.isArray(actions)) {
-    return []
+    return [];
   }
 
   return actions
     .map((item) => {
-      const key = iconKey(item?.icon || item?.type)
+      const key = iconKey(item?.icon || item?.type);
       return {
-        name: item?.name || item?.label || '',
-        url: item?.url || item?.link || '',
-        icon: actionIconMap[key] || actionIconMap.default
-      }
+        name: item?.name || item?.label || "",
+        url: item?.url || item?.link || "",
+        icon: actionIconMap[key] || actionIconMap.default,
+      };
     })
-    .filter((item) => item.name && item.url)
-})
-
+    .filter((item) => item.name && item.url);
+});
 </script>
 
 <style lang="less" scoped>

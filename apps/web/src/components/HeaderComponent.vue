@@ -22,20 +22,21 @@
 </template>
 
 <script setup>
-import { LoadingOutlined } from '@ant-design/icons-vue';
+import { LoadingOutlined } from "@ant-design/icons-vue";
+
 const props = defineProps({
   title: {
     type: String,
-    required: true
+    required: true,
   },
   description: {
     type: String,
-    default: ''
+    default: "",
   },
   loading: {
     type: Boolean,
-    default: false
-  }
+    default: false,
+  },
 });
 </script>
 

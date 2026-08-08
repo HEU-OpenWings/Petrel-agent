@@ -1,7 +1,7 @@
 <script setup>
-import { useThemeStore } from '@/stores/theme'
+import { useThemeStore } from "@/stores/theme";
 
-const themeStore = useThemeStore()
+const themeStore = useThemeStore();
 </script>
 <template>
   <a-config-provider

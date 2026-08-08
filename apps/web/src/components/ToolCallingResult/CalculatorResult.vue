@@ -13,35 +13,32 @@
 </template>
 
 <script setup>
-import { NumberOutlined } from '@ant-design/icons-vue'
+import { NumberOutlined } from "@ant-design/icons-vue";
 
 const props = defineProps({
   data: {
     type: Number,
-    required: true
-  }
-})
-
+    required: true,
+  },
+});
 
 // 方法
 const formatNumber = (num) => {
-  if (typeof num !== 'number') return String(num)
+  if (typeof num !== "number") return String(num);
 
   // 处理特殊值
-  if (!isFinite(num)) {
-    if (num === Infinity) return '∞'
-    if (num === -Infinity) return '-∞'
-    if (isNaN(num)) return 'NaN'
+  if (!Number.isFinite(num)) {
+    if (num === Infinity) return "∞";
+    if (num === -Infinity) return "-∞";
+    if (Number.isNaN(num)) return "NaN";
   }
 
   // 使用本地化格式
-  return new Intl.NumberFormat('zh-CN', {
+  return new Intl.NumberFormat("zh-CN", {
     maximumFractionDigits: 10,
-    useGrouping: true
-  }).format(num)
-}
-
-
+    useGrouping: true,
+  }).format(num);
+};
 </script>
 
 <style lang="less" scoped>

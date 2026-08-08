@@ -59,112 +59,108 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, watch } from 'vue'
-import { useClipboard } from '@vueuse/core'
-import { message } from 'ant-design-vue'
-import {
-  ThumbsUp,
-  ThumbsDown,
-  Bot,
-  Copy,
-  Check,
-  RotateCcw,
-} from 'lucide-vue-next'
-import { agentApi } from '@/apis'
+import { useClipboard } from "@vueuse/core";
+import { message } from "ant-design-vue";
+import { Bot, Check, Copy, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-vue-next";
+import { computed, reactive, ref, watch } from "vue";
+import { agentApi } from "@/apis";
 
-const emit = defineEmits(['retry', 'openRefs']);
+const emit = defineEmits(["retry", "openRefs"]);
 const props = defineProps({
   message: Object,
   showRefs: {
     type: [Array, Boolean],
-    default: () => false
+    default: () => false,
   },
   isLatestMessage: {
     type: Boolean,
-    default: false
-  }
-})
+    default: false,
+  },
+});
 
-const msg = ref(props.message)
+const msg = ref(props.message);
 
 // Feedback state
 const feedbackState = reactive({
   hasSubmitted: false,
   rating: null, // 'like' or 'dislike'
   reason: null,
-})
+});
 
 // 初始化反馈状态 - 从 message.feedback 读取历史反馈
 const initFeedbackState = () => {
   if (msg.value?.feedback) {
-    feedbackState.hasSubmitted = true
-    feedbackState.rating = msg.value.feedback.rating
-    feedbackState.reason = msg.value.feedback.reason
+    feedbackState.hasSubmitted = true;
+    feedbackState.rating = msg.value.feedback.rating;
+    feedbackState.reason = msg.value.feedback.reason;
   } else {
-    feedbackState.hasSubmitted = false
-    feedbackState.rating = null
-    feedbackState.reason = null
+    feedbackState.hasSubmitted = false;
+    feedbackState.rating = null;
+    feedbackState.reason = null;
   }
-}
+};
 
 // 监听 message prop 变化 (用于切换对话时更新状态)
-watch(() => props.message, () => {
-  msg.value = props.message
-  initFeedbackState()
-}, { immediate: true })
+watch(
+  () => props.message,
+  () => {
+    msg.value = props.message;
+    initFeedbackState();
+  },
+  { immediate: true },
+);
 
 // Modal state for dislike
-const dislikeModalVisible = ref(false)
-const dislikeReason = ref('')
-const submittingFeedback = ref(false)
+const dislikeModalVisible = ref(false);
+const dislikeReason = ref("");
+const submittingFeedback = ref(false);
 
 // 使用 useClipboard 实现复制功能
-const { copy, isSupported } = useClipboard()
+const { copy, isSupported } = useClipboard();
 
 const showKey = (key) => {
   if (props.showRefs === true) {
-    return true
+    return true;
   }
-  return props.showRefs.includes(key)
-}
+  return props.showRefs.includes(key);
+};
 
 // 复制状态
-const isCopied = ref(false)
+const isCopied = ref(false);
 
 // 定义 copy 方法
 const copyText = async (text) => {
   if (isSupported) {
     try {
-      await copy(text)
-      message.success('文本已复制到剪贴板')
-      isCopied.value = true
+      await copy(text);
+      message.success("文本已复制到剪贴板");
+      isCopied.value = true;
       setTimeout(() => {
-        isCopied.value = false
-      }, 2000)
+        isCopied.value = false;
+      }, 2000);
     } catch (error) {
-      console.error('复制失败:', error)
-      message.error('复制失败，请手动复制')
+      console.error("复制失败:", error);
+      message.error("复制失败，请手动复制");
     }
   } else {
-    console.warn('浏览器不支持自动复制')
-    message.warning('浏览器不支持自动复制，请手动复制')
+    console.warn("浏览器不支持自动复制");
+    message.warning("浏览器不支持自动复制，请手动复制");
   }
-}
+};
 
 const showRefs = computed(() => {
   // 如果只是为了显示模型信息，不需要检查状态
-  if (props.showRefs && Array.isArray(props.showRefs) && props.showRefs.includes('model')) {
+  if (props.showRefs && Array.isArray(props.showRefs) && props.showRefs.includes("model")) {
     return true;
   }
   // 原有的逻辑
-  return (msg.value.role=='received' || msg.value.role=='assistant') && msg.value.status=='finished';
-})
-
+  return (msg.value.role === "received" || msg.value.role === "assistant") && msg.value.status === "finished";
+});
 
 // 添加重新生成方法
 const regenerateMessage = () => {
-  emit('retry')
-}
+  emit("retry");
+};
 
 // 获取模型名称
 const getModelName = (msg) => {
@@ -177,95 +173,91 @@ const getModelName = (msg) => {
     return msg.meta.server_model_name;
   }
   return null;
-}
+};
 // Handle like action
 const likeThisResponse = async (msg) => {
   if (feedbackState.hasSubmitted) {
-    message.info('您已经提交过反馈了')
-    return
+    message.info("您已经提交过反馈了");
+    return;
   }
 
   if (!msg?.id) {
-    message.error('无法提交反馈：消息ID不存在')
-    console.error('Message object:', msg)
-    return
+    message.error("无法提交反馈：消息ID不存在");
+    console.error("Message object:", msg);
+    return;
   }
 
   try {
-    submittingFeedback.value = true
-    await agentApi.submitMessageFeedback(msg.id, 'like', null)
+    submittingFeedback.value = true;
+    await agentApi.submitMessageFeedback(msg.id, "like", null);
 
-    feedbackState.hasSubmitted = true
-    feedbackState.rating = 'like'
+    feedbackState.hasSubmitted = true;
+    feedbackState.rating = "like";
 
-    message.success('感谢您的反馈！')
+    message.success("感谢您的反馈！");
   } catch (error) {
-    console.error('Failed to submit like feedback:', error)
-    if (error.message?.includes('already submitted')) {
-      message.info('您已经提交过反馈了')
-      feedbackState.hasSubmitted = true
+    console.error("Failed to submit like feedback:", error);
+    if (error.message?.includes("already submitted")) {
+      message.info("您已经提交过反馈了");
+      feedbackState.hasSubmitted = true;
     } else {
-      message.error('提交反馈失败，请稍后重试')
+      message.error("提交反馈失败，请稍后重试");
     }
   } finally {
-    submittingFeedback.value = false
+    submittingFeedback.value = false;
   }
-}
+};
 
 // Handle dislike action
 const dislikeThisResponse = async (msg) => {
   if (feedbackState.hasSubmitted) {
-    message.info('您已经提交过反馈了')
-    return
+    message.info("您已经提交过反馈了");
+    return;
   }
 
   if (!msg?.id) {
-    message.error('无法提交反馈：消息ID不存在')
-    console.error('Message object:', msg)
-    return
+    message.error("无法提交反馈：消息ID不存在");
+    console.error("Message object:", msg);
+    return;
   }
 
   // Open modal to get reason
-  dislikeModalVisible.value = true
-}
+  dislikeModalVisible.value = true;
+};
 
 // Submit dislike feedback with reason
 const submitDislikeFeedback = async () => {
   try {
-    submittingFeedback.value = true
-    await agentApi.submitMessageFeedback(
-      msg.value.id,
-      'dislike',
-      dislikeReason.value || null
-    )
+    submittingFeedback.value = true;
+    await agentApi.submitMessageFeedback(msg.value.id, "dislike", dislikeReason.value || null);
 
-    feedbackState.hasSubmitted = true
-    feedbackState.rating = 'dislike'
-    feedbackState.reason = dislikeReason.value
+    feedbackState.hasSubmitted = true;
+    feedbackState.rating = "dislike";
+    feedbackState.reason = dislikeReason.value;
 
-    dislikeModalVisible.value = false
-    dislikeReason.value = ''
+    dislikeModalVisible.value = false;
+    dislikeReason.value = "";
 
-    message.success('感谢您的反馈！')
+    message.success("感谢您的反馈！");
   } catch (error) {
-    console.error('Failed to submit dislike feedback:', error)
-    if (error.message?.includes('already submitted')) {
-      message.info('您已经提交过反馈了')
-      feedbackState.hasSubmitted = true
-      dislikeModalVisible.value = false
+    console.error("Failed to submit dislike feedback:", error);
+    if (error.message?.includes("already submitted")) {
+      message.info("您已经提交过反馈了");
+      feedbackState.hasSubmitted = true;
+      dislikeModalVisible.value = false;
     } else {
-      message.error('提交反馈失败，请稍后重试')
+      message.error("提交反馈失败，请稍后重试");
     }
   } finally {
-    submittingFeedback.value = false
+    submittingFeedback.value = false;
   }
-}
+};
 
 // Cancel dislike modal
 const cancelDislike = () => {
-  dislikeModalVisible.value = false
-  dislikeReason.value = ''
-}
+  dislikeModalVisible.value = false;
+  dislikeReason.value = "";
+};
 </script>
 
 <style lang="less" scoped>

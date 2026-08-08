@@ -106,78 +106,84 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { FileTextOutlined, FileOutlined, DownOutlined, EyeOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
+import {
+  DatabaseOutlined,
+  DownOutlined,
+  EyeOutlined,
+  FileOutlined,
+  FileTextOutlined,
+} from "@ant-design/icons-vue";
+import { computed, ref } from "vue";
 
 const props = defineProps({
   data: {
     type: Array,
-    required: true
-  }
-})
+    required: true,
+  },
+});
 
 // 管理展开状态
-const expandedFiles = ref(new Set())
+const expandedFiles = ref(new Set());
 
 // 弹窗状态
-const modalVisible = ref(false)
-const selectedChunk = ref(null)
+const modalVisible = ref(false);
+const selectedChunk = ref(null);
 
 // 按文件名聚合数据
 const fileGroups = computed(() => {
-  const groups = new Map()
+  const groups = new Map();
 
-  props.data.forEach(item => {
-    const filename = item.metadata.source
+  props.data.forEach((item) => {
+    const filename = item.metadata.source;
     if (!groups.has(filename)) {
       groups.set(filename, {
         filename,
-        chunks: []
-      })
+        chunks: [],
+      });
     }
-    groups.get(filename).chunks.push(item)
-  })
+    groups.get(filename).chunks.push(item);
+  });
 
   // 转换为数组并按文件名排序
-  return Array.from(groups.values()).sort((a, b) => a.filename.localeCompare(b.filename))
-})
+  return Array.from(groups.values()).sort((a, b) => a.filename.localeCompare(b.filename));
+});
 
 // 切换文件展开/折叠状态
 const toggleFile = (filename) => {
   if (expandedFiles.value.has(filename)) {
-    expandedFiles.value.delete(filename)
+    expandedFiles.value.delete(filename);
   } else {
-    expandedFiles.value.add(filename)
+    expandedFiles.value.add(filename);
   }
-}
+};
 
 // 显示chunk详细信息
 const showChunkDetail = (chunk, index) => {
   selectedChunk.value = {
     data: chunk,
-    index: index
-  }
-  modalVisible.value = true
-}
+    index: index,
+  };
+  modalVisible.value = true;
+};
 
 // 获取预览文本
 const getPreviewText = (text) => {
-  if (text.length <= 100) return text
-  return text.substring(0, 100) + '...'
-}
+  if (text.length <= 100) return text;
+  return `${text.substring(0, 100)}...`;
+};
 
 const getPercent = (score) => {
   if (score <= 1) {
-    return Math.round(score * 100)
+    return Math.round(score * 100);
   }
-  return Math.min(Math.round(score * 100), 100)
-}
+  return Math.min(Math.round(score * 100), 100);
+};
 
 const getScoreColor = (score) => {
-  if (score >= 0.7) return '#52c41a'  // 绿色 - 高相关性
-  if (score >= 0.5) return '#faad14'  // 橙色 - 中等相关性
-  return '#ff4d4f'  // 红色 - 低相关性
-}
+  if (score >= 0.7) return "#52c41a"; // 绿色 - 高相关性
+  if (score >= 0.5) return "#faad14"; // 橙色 - 中等相关性
+  return "#ff4d4f"; // 红色 - 低相关性
+};
 </script>
 
 <style lang="less" scoped>

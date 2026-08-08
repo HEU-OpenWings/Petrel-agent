@@ -70,23 +70,32 @@
 </template>
 
 <script setup>
-import { MessageCircle, Activity, Mail, Users, BarChart3, Heart, TrendingUp, TrendingDown } from 'lucide-vue-next'
+import {
+  Activity,
+  BarChart3,
+  Heart,
+  Mail,
+  MessageCircle,
+  TrendingDown,
+  TrendingUp,
+  Users,
+} from "lucide-vue-next";
 
 // Props
 const props = defineProps({
   basicStats: {
     type: Object,
-    default: () => ({})
-  }
-})
+    default: () => ({}),
+  },
+});
 
 // Methods
 const getSatisfactionClass = () => {
-  const rate = props.basicStats?.feedback_stats?.satisfaction_rate || 0
-  if (rate >= 80) return 'satisfaction-high'
-  if (rate >= 60) return 'satisfaction-medium'
-  return 'satisfaction-low'
-}
+  const rate = props.basicStats?.feedback_stats?.satisfaction_rate || 0;
+  if (rate >= 80) return "satisfaction-high";
+  if (rate >= 60) return "satisfaction-medium";
+  return "satisfaction-low";
+};
 </script>
 
 <style lang="less" scoped>

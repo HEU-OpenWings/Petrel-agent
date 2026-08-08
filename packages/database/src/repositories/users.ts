@@ -17,6 +17,8 @@ export interface UserWithSecret extends PublicUser {
   passwordHash: string;
   emailVerifyTokenExpiresAt: Date | null;
   passwordResetTokenExpiresAt: Date | null;
+  /** 会话版本号：requireAuth 用它比对 JWT payload 里的 tv */
+  tokenVersion: number;
 }
 
 /**
@@ -74,6 +76,7 @@ export function createUserRepository(db: Database) {
           passwordHash: users.passwordHash,
           emailVerifyTokenExpiresAt: users.emailVerifyTokenExpiresAt,
           passwordResetTokenExpiresAt: users.passwordResetTokenExpiresAt,
+          tokenVersion: users.tokenVersion,
         })
         .from(users)
         .where(eq(users.email, email))
@@ -84,6 +87,32 @@ export function createUserRepository(db: Database) {
     async findById(id: string): Promise<PublicUser | undefined> {
       const rows = await db.select(PUBLIC_COLUMNS).from(users).where(eq(users.id, id)).limit(1);
       return rows[0];
+    },
+
+    /** requireAuth 专用：要读 tokenVersion 比对，但密码哈希不该出现在 PublicUser 里 */
+    async findByIdWithSecrets(id: string): Promise<UserWithSecret | undefined> {
+      const rows = await db
+        .select({
+          ...PUBLIC_COLUMNS,
+          passwordHash: users.passwordHash,
+          emailVerifyTokenExpiresAt: users.emailVerifyTokenExpiresAt,
+          passwordResetTokenExpiresAt: users.passwordResetTokenExpiresAt,
+          tokenVersion: users.tokenVersion,
+        })
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+      return rows[0];
+    },
+
+    /** 签发 token 时读当前会话版本号（登录/注册/改密重签时各一次，PK 查询可忽略） */
+    async getTokenVersion(id: string): Promise<number | undefined> {
+      const rows = await db
+        .select({ tokenVersion: users.tokenVersion })
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+      return rows[0]?.tokenVersion;
     },
 
     async listAll(): Promise<PublicUser[]> {
@@ -129,6 +158,7 @@ export function createUserRepository(db: Database) {
           passwordHash: users.passwordHash,
           emailVerifyTokenExpiresAt: users.emailVerifyTokenExpiresAt,
           passwordResetTokenExpiresAt: users.passwordResetTokenExpiresAt,
+          tokenVersion: users.tokenVersion,
         })
         .from(users)
         .where(eq(users.emailVerifyTokenHash, tokenHash))
@@ -152,6 +182,7 @@ export function createUserRepository(db: Database) {
           passwordHash: users.passwordHash,
           emailVerifyTokenExpiresAt: users.emailVerifyTokenExpiresAt,
           passwordResetTokenExpiresAt: users.passwordResetTokenExpiresAt,
+          tokenVersion: users.tokenVersion,
         })
         .from(users)
         .where(eq(users.passwordResetTokenHash, tokenHash))
@@ -160,7 +191,8 @@ export function createUserRepository(db: Database) {
     },
 
     /**
-     * 密码重置落库：换哈希 + 清空重置 token，并把邮箱顺带标记为已验证
+     * 密码重置落库：换哈希 + 清空重置 token + **会话版本号自增**（旧 token 全部失效），
+     * 并把邮箱顺带标记为已验证
      * （重置邮件本身就是邮箱所有权证明，也兜住「验证邮件丢了」的情况）。
      */
     async resetPassword(id: string, passwordHash: string, now: Date): Promise<boolean> {
@@ -171,15 +203,34 @@ export function createUserRepository(db: Database) {
           passwordResetTokenHash: null,
           passwordResetTokenExpiresAt: null,
           emailVerifiedAt: sql`COALESCE(${users.emailVerifiedAt}, ${now})`,
+          tokenVersion: sql`${users.tokenVersion} + 1`,
         })
         .where(eq(users.id, id))
         .returning();
       return updated.length > 0;
     },
 
-    /** 只有「用户自己改密码」这一条路径会调它。admin 无权替人改密码 */
-    async setPasswordHash(id: string, passwordHash: string): Promise<boolean> {
-      const updated = await db.update(users).set({ passwordHash }).where(eq(users.id, id)).returning();
+    /**
+     * 用户自己改密码：换哈希 + **会话版本号自增**，一次 UPDATE 原子完成——
+     * 分两步的话中间有个窗口期，改完密码旧 token 还能用
+     * （重置密码走 resetPassword，同样自增）。
+     */
+    async changePassword(id: string, passwordHash: string): Promise<boolean> {
+      const updated = await db
+        .update(users)
+        .set({ passwordHash, tokenVersion: sql`${users.tokenVersion} + 1` })
+        .where(eq(users.id, id))
+        .returning();
+      return updated.length > 0;
+    },
+
+    /** 「退出所有设备」：自增版本号让所有已签发 token 失效 */
+    async bumpTokenVersion(id: string): Promise<boolean> {
+      const updated = await db
+        .update(users)
+        .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
+        .where(eq(users.id, id))
+        .returning();
       return updated.length > 0;
     },
   };

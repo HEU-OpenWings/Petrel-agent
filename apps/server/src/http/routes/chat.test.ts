@@ -119,6 +119,7 @@ async function registerUser(email: string): Promise<{ cookie: string; id: string
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
   const login = await app.request("/api/auth/login", {
     method: "POST",
@@ -161,6 +162,7 @@ beforeEach(async () => {
   __resetRegistry();
   const user = await registerUser("a@x.io");
   cookie = user.cookie;
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   service = createSessionService(state.db!, user.id);
   state.seenHarnessOptions = undefined;
 });
@@ -968,9 +970,11 @@ describe("POST /api/chat HEU-40 配额拦截", () => {
   /** 给当前登录用户插一条超额用量事实，模拟「本窗口已用满」 */
   async function fillQuota(tokens: number) {
     const user = await (await import("@petrel/database"))
+      // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
       .createUserRepository(state.db!)
       .findByEmail("a@x.io");
     if (!user) throw new Error("测试用户未找到");
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     const usageRepo = createTokenUsageRepository(state.db!);
     await usageRepo.insertFact({
       entryId: crypto.randomUUID(),
@@ -1035,9 +1039,11 @@ describe("POST /api/chat HEU-40 配额拦截", () => {
     // 当前测试用户 a@x.io 不是 admin（ADMIN_EMAILS 未配），无法在 e2e 里测 admin 豁免。
     // 这里给该用户设额度覆盖为 0，验证普通用户被拦；admin 豁免的单元覆盖在 quota.test.ts。
     const user = await (await import("@petrel/database"))
+      // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
       .createUserRepository(state.db!)
       .findByEmail("a@x.io");
     if (!user) throw new Error("测试用户未找到");
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     await createQuotaLimitsRepository(state.db!).upsertLimit(user.id, 0);
 
     faux.setResponses([fauxAssistantMessage([fauxText("不该出现")])]);

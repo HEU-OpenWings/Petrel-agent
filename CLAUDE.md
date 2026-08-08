@@ -15,7 +15,7 @@ docker logs petrel-web-dev --tail 100
 pnpm install
 pnpm run build           # 后端 tsc + 前端 vite build
 pnpm run typecheck       # 各包 tsc -p tsconfig.check.json
-pnpm run lint            # Biome；配置里排除了 apps/web
+pnpm run lint            # Biome；覆盖全仓，含 apps/web
 pnpm run format          # biome check --write
 pnpm run test            # vitest run
 pnpm run dev             # 仅后端，宿主机调试用（nodemon --legacy-watch + tsx）
@@ -24,8 +24,12 @@ pnpm run dev             # 仅后端，宿主机调试用（nodemon --legacy-wat
 单个测试：`pnpm vitest run packages/agent/src/harness.test.ts`，
 单个用例加 `-t "工具循环"`。在**主仓库根**跑全量测试要加 `--exclude '**/.claude/**'`（见「踩过的坑」16）。
 
-`apps/web` 的 `pnpm run lint` 目前不可用（v0.4 遗留：eslint 9 只认 `eslint.config.js`，
-仓库里是旧格式 `.eslintrc.cjs`），前端没有 typecheck。
+`apps/web` 已随 HEU-46 从 eslint/prettier 迁到 Biome（`biome check .`），全仓静态检查统一走
+根目录 `pnpm run lint`。前端的例外集中在 `biome.json` 的 `overrides`（只对 `apps/web/**` 生效）：
+`.vue` 关掉 `noUnusedVariables` / `noUnusedImports`（Biome 不解析 template，只在 template 里
+引用的绑定会被误报为未使用）与 `noVueDuplicateKeys`（`v-model` 的 prop + computed 同名是惯例），
+`.css` / `.less` 关掉 `noDescendingSpecificity` 与 `noImportantStyles`。a11y 规则全部保持开启。
+前端仍没有 typecheck（尚未 TS 化）。
 
 ## 架构
 
@@ -168,11 +172,12 @@ token 里的 role 只是签发那一刻的快照，而 admin 禁用滥用者必�
 
 
 改密码是 `POST /api/account/password`（挂在 `requireAuth` 之下，不在公开的 `/api/auth`
-前缀里——改凭据的端点靠 handler 手写校验，哪天漏了就等于认证绕过）。它**不失效其他
-设备上的旧 token**：JWT 无状态、7 天有效，只重新签发当前会话的 cookie。彻底解决要给
-`users` 加 `tokenVersion` 并让 `requireAuth` 比对。另外旧密码校验与登录**共用同一个
-失败计数器**，所以改密码连错 5 次也会连带锁住登录 15 分钟——有意的取舍，人已经在
-登录态里，锁住的只是重新登录。
+前缀里——改凭据的端点靠 handler 手写校验，哪天漏了就等于认证绕过）。
+`users.tokenVersion`（签发时写进 JWT payload 的 `tv`，`requireAuth` 每请求比对，
+不增加查询）：**改密码与重置密码都会自增**，其他设备上的旧 token 立即失效；
+`POST /api/account/logout-all` 自增版本号实现「退出所有设备」（当前会话的 cookie 一并清掉）。
+另外旧密码校验与登录**共用同一个失败计数器**，所以改密码连错 5 次也会连带锁住
+登录 15 分钟——有意的取舍，人已经在登录态里，锁住的只是重新登录。
 
 ### 配额与计量（HEU-40）
 

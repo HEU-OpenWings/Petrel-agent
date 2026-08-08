@@ -75,6 +75,7 @@ async function registerUser(email: string): Promise<{ cookie: string; id: string
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
   const login = await app.request("/api/auth/login", {
     method: "POST",
@@ -87,6 +88,7 @@ async function registerUser(email: string): Promise<{ cookie: string; id: string
 /** 注册后直接改库提权，再重新登录拿到 admin 身份的 cookie */
 async function registerAdmin(email: string): Promise<{ cookie: string; id: string }> {
   const { id } = await registerUser(email);
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setRole(id, "admin");
 
   const response = await app.request("/api/auth/login", {
@@ -236,6 +238,7 @@ describe("HEU-40 PUT/DELETE /api/admin/users/:id/quota", () => {
 
     // 直接读库确认覆盖生效（quota-limits repository）
     const { createQuotaLimitsRepository } = await import("@petrel/database");
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     const limit = await createQuotaLimitsRepository(state.db!).getLimit(victim.id);
     expect(limit).toBe(0);
   });
@@ -245,6 +248,7 @@ describe("HEU-40 PUT/DELETE /api/admin/users/:id/quota", () => {
     const victim = await registerUser("victim@x.io");
     await putQuota(victim.id, 500, admin.cookie);
     expect(
+      // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
       await (await import("@petrel/database")).createQuotaLimitsRepository(state.db!).getLimit(victim.id),
     ).toBe(500);
 
@@ -252,6 +256,7 @@ describe("HEU-40 PUT/DELETE /api/admin/users/:id/quota", () => {
     expect(putNull.status).toBe(200);
     // 删除覆盖后 getLimit 返回 undefined（跟随系统默认）
     expect(
+      // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
       await (await import("@petrel/database")).createQuotaLimitsRepository(state.db!).getLimit(victim.id),
     ).toBeUndefined();
   });

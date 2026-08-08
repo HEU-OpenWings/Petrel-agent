@@ -79,6 +79,7 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
   const login = await app.request("/api/auth/login", {
     method: "POST",
@@ -91,6 +92,7 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
 /** 注册后直接改库提权，再重新登录拿到 admin 身份的 cookie（同 admin.test.ts） */
 async function registerAdmin(email: string): Promise<string> {
   const { id } = await register(email);
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setRole(id, "admin");
 
   const response = await app.request("/api/auth/login", {

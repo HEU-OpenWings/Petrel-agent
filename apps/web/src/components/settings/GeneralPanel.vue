@@ -57,10 +57,10 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
-import { usePreferencesStore } from '@/stores/preferences'
-import { useThemeStore } from '@/stores/theme'
+import { message } from "ant-design-vue";
+import { computed, ref, watch } from "vue";
+import { usePreferencesStore } from "@/stores/preferences";
+import { useThemeStore } from "@/stores/theme";
 
 /**
  * 与后端 apps/server/src/http/routes/account.ts 的 SYSTEM_PROMPT_LENGTH_LIMIT 对齐。
@@ -68,17 +68,17 @@ import { useThemeStore } from '@/stores/theme'
  * 「后续 package 在对应业务首次落地时创建」），为一个常量建一个包不值得，
  * 所以用这条双向注释代替编译期约束
  */
-const SYSTEM_PROMPT_LIMIT = 4000
+const SYSTEM_PROMPT_LIMIT = 4000;
 
-const preferences = usePreferencesStore()
-const theme = useThemeStore()
+const preferences = usePreferencesStore();
+const theme = useThemeStore();
 
 /**
  * 表单绑草稿副本而不是直接绑 store：直接绑的话，用户改了一半关掉弹窗，
  * store 里已经是脏值，ChatView 下一条消息就会用上一个从未保存的设置。
  */
-const draftModel = ref(null)
-const draftPrompt = ref('')
+const draftModel = ref(null);
+const draftPrompt = ref("");
 /**
  * saving 期间要禁用两个输入控件，不只是给按钮加 loading。
  *
@@ -86,48 +86,46 @@ const draftPrompt = ref('')
  * 写成「点击那一刻」的值 → watch 触发 syncDraft 把草稿覆盖回旧值，
  * 用户在这期间的输入被静默丢弃，且没有任何提示。
  */
-const saving = ref(false)
+const saving = ref(false);
 
-const systemDefaultName = computed(
-  () => preferences.models.find((model) => model.isDefault)?.name ?? '未知'
-)
+const systemDefaultName = computed(() => preferences.models.find((model) => model.isDefault)?.name ?? "未知");
 
 /** store 里空 prompt 是 null，表单里是 ''，比较前统一 */
 const dirty = computed(
   () =>
     draftModel.value !== preferences.defaultModel ||
-    draftPrompt.value.trim() !== (preferences.systemPrompt ?? '')
-)
+    draftPrompt.value.trim() !== (preferences.systemPrompt ?? ""),
+);
 
 function syncDraft() {
-  draftModel.value = preferences.defaultModel
-  draftPrompt.value = preferences.systemPrompt ?? ''
+  draftModel.value = preferences.defaultModel;
+  draftPrompt.value = preferences.systemPrompt ?? "";
 }
 
 // immediate：store 可能在本组件挂载之前就已经加载完（ChatView 先拉过），
 // 那时不会再有变化事件，只靠 watch 会让表单一直是空的
 watch(() => [preferences.loaded, preferences.defaultModel, preferences.systemPrompt], syncDraft, {
-  immediate: true
-})
+  immediate: true,
+});
 
 function retry() {
-  void preferences.ensureLoaded()
+  void preferences.ensureLoaded();
 }
 
 async function onSave() {
-  saving.value = true
+  saving.value = true;
   try {
     // 空串归一成 null 交给后端也会做一次，这里做是为了让 dirty 的比较基准一致
     await preferences.save({
       defaultModel: draftModel.value,
-      systemPrompt: draftPrompt.value.trim() || null
-    })
-    message.success('设置已保存')
+      systemPrompt: draftPrompt.value.trim() || null,
+    });
+    message.success("设置已保存");
   } catch (error) {
     // 必须出声：静默失败的话用户以为保存成功了，下次打开发现还是旧值
-    message.error(error.message || '保存失败，请重试')
+    message.error(error.message || "保存失败，请重试");
   } finally {
-    saving.value = false
+    saving.value = false;
   }
 }
 </script>
