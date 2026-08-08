@@ -1,4 +1,4 @@
-import { ref, reactive, nextTick } from 'vue';
+import { nextTick, reactive, ref } from "vue";
 
 export function useGraph(graphRef) {
   const fetching = ref(false);
@@ -13,16 +13,16 @@ export function useGraph(graphRef) {
 
   const handleNodeClick = (nodeData) => {
     selectedItem.value = nodeData;
-    selectedItemType.value = 'node';
+    selectedItemType.value = "node";
     showDetailDrawer.value = true;
-    console.log('Node clicked:', nodeData);
+    console.log("Node clicked:", nodeData);
   };
 
   const handleEdgeClick = (edgeData) => {
     selectedItem.value = edgeData;
-    selectedItemType.value = 'edge';
+    selectedItemType.value = "edge";
     showDetailDrawer.value = true;
-    console.log('Edge clicked:', edgeData);
+    console.log("Edge clicked:", edgeData);
   };
 
   const handleCanvasClick = () => {
@@ -30,7 +30,7 @@ export function useGraph(graphRef) {
     selectedItem.value = null;
     selectedItemType.value = null;
     // Clear focus state on the graph component if available
-    if (graphRef && graphRef.value && graphRef.value.clearFocus) {
+    if (graphRef?.value?.clearFocus) {
       graphRef.value.clearFocus();
     }
   };
@@ -50,7 +50,7 @@ export function useGraph(graphRef) {
 
   const refreshGraph = () => {
     nextTick(() => {
-      if (graphRef && graphRef.value && graphRef.value.refreshGraph) {
+      if (graphRef?.value?.refreshGraph) {
         graphRef.value.refreshGraph();
       }
     });

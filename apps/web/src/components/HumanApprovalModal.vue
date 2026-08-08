@@ -30,46 +30,48 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch } from "vue";
 
 const props = defineProps({
   visible: {
     type: Boolean,
-    default: false
+    default: false,
   },
   question: {
     type: String,
-    default: '是否批准此操作？'
+    default: "是否批准此操作？",
   },
   operation: {
     type: String,
-    default: ''
-  }
+    default: "",
+  },
 });
 
-const emit = defineEmits(['approve', 'reject']);
+const emit = defineEmits(["approve", "reject"]);
 
 const isProcessing = ref(false);
 
 // 监听弹窗关闭，重置处理状态
-watch(() => props.visible, (newVal) => {
-  if (!newVal) {
-    isProcessing.value = false;
-  }
-});
+watch(
+  () => props.visible,
+  (newVal) => {
+    if (!newVal) {
+      isProcessing.value = false;
+    }
+  },
+);
 
 const handleApprove = () => {
   if (isProcessing.value) return;
   isProcessing.value = true;
-  emit('approve');
+  emit("approve");
 };
 
 const handleReject = () => {
   if (isProcessing.value) return;
   isProcessing.value = true;
-  emit('reject');
+  emit("reject");
 };
-
 </script>
 
 <style scoped>

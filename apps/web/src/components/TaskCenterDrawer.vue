@@ -106,243 +106,234 @@
 </template>
 
 <script setup>
-import { computed, h, onBeforeUnmount, watch, ref } from 'vue'
-import { Modal } from 'ant-design-vue'
-import { useTaskerStore } from '@/stores/tasker'
-import { storeToRefs } from 'pinia'
-import { formatFullDateTime, formatRelative, parseToShanghai } from '@/utils/time'
+import { Modal } from "ant-design-vue";
+import { storeToRefs } from "pinia";
+import { computed, h, onBeforeUnmount, ref, watch } from "vue";
+import { useTaskerStore } from "@/stores/tasker";
+import { formatFullDateTime, formatRelative, parseToShanghai } from "@/utils/time";
 
-const taskerStore = useTaskerStore()
-const {
-  isDrawerOpen,
-  sortedTasks,
-  loading,
-  lastError,
-  activeCount,
-  totalCount,
-  successCount,
-  failedCount
-} = storeToRefs(taskerStore)
-const isOpen = isDrawerOpen
+const taskerStore = useTaskerStore();
+const { isDrawerOpen, sortedTasks, loading, lastError, activeCount, totalCount, successCount, failedCount } =
+  storeToRefs(taskerStore);
+const isOpen = isDrawerOpen;
 
-const tasks = computed(() => sortedTasks.value)
-const loadingState = computed(() => Boolean(loading.value))
-const lastErrorState = computed(() => lastError.value)
-const statusFilter = ref('all')
-const inProgressCount = computed(() => activeCount.value || 0)
-const completedCount = computed(() => successCount.value || 0)
-const failedTaskCount = computed(() => failedCount.value || 0)
-const totalTaskCount = computed(() => totalCount.value || 0)
+const tasks = computed(() => sortedTasks.value);
+const loadingState = computed(() => Boolean(loading.value));
+const lastErrorState = computed(() => lastError.value);
+const statusFilter = ref("all");
+const inProgressCount = computed(() => activeCount.value || 0);
+const completedCount = computed(() => successCount.value || 0);
+const failedTaskCount = computed(() => failedCount.value || 0);
+const totalTaskCount = computed(() => totalCount.value || 0);
 const taskFilterOptions = computed(() => [
   {
     label: () =>
-      h('span', { class: 'task-filter-option' }, [
-        '全部',
-        h('span', { class: 'filter-count' }, totalTaskCount.value)
+      h("span", { class: "task-filter-option" }, [
+        "全部",
+        h("span", { class: "filter-count" }, totalTaskCount.value),
       ]),
-    value: 'all'
+    value: "all",
   },
   {
     label: () =>
-      h('span', { class: 'task-filter-option' }, [
-        '进行中',
-        h('span', { class: 'filter-count' }, inProgressCount.value)
+      h("span", { class: "task-filter-option" }, [
+        "进行中",
+        h("span", { class: "filter-count" }, inProgressCount.value),
       ]),
-    value: 'active'
+    value: "active",
   },
   {
     label: () =>
-      h('span', { class: 'task-filter-option' }, [
-        '已完成',
-        h('span', { class: 'filter-count' }, completedCount.value)
+      h("span", { class: "task-filter-option" }, [
+        "已完成",
+        h("span", { class: "filter-count" }, completedCount.value),
       ]),
-    value: 'success'
+    value: "success",
   },
   {
     label: () =>
-      h('span', { class: 'task-filter-option' }, [
-        '失败',
-        h('span', { class: 'filter-count' }, failedTaskCount.value)
+      h("span", { class: "task-filter-option" }, [
+        "失败",
+        h("span", { class: "filter-count" }, failedTaskCount.value),
       ]),
-    value: 'failed'
-  }
-])
+    value: "failed",
+  },
+]);
 
 const filteredTasks = computed(() => {
-  const list = tasks.value
+  const list = tasks.value;
   switch (statusFilter.value) {
-    case 'active':
-      return list.filter((task) => ACTIVE_CLASS_STATUSES.has(task.status))
-    case 'success':
-      return list.filter((task) => task.status === 'success')
-    case 'failed':
-      return list.filter((task) => FAILED_STATUSES.has(task.status))
+    case "active":
+      return list.filter((task) => ACTIVE_CLASS_STATUSES.has(task.status));
+    case "success":
+      return list.filter((task) => task.status === "success");
+    case "failed":
+      return list.filter((task) => FAILED_STATUSES.has(task.status));
     default:
-      return list
+      return list;
   }
-})
+});
 
-const hasTasks = computed(() => filteredTasks.value.length > 0)
+const hasTasks = computed(() => filteredTasks.value.length > 0);
 
-const ACTIVE_CLASS_STATUSES = new Set(['pending', 'queued', 'running'])
-const FAILED_STATUSES = new Set(['failed', 'cancelled'])
+const ACTIVE_CLASS_STATUSES = new Set(["pending", "queued", "running"]);
+const FAILED_STATUSES = new Set(["failed", "cancelled"]);
 const TASK_TYPE_LABELS = {
-  knowledge_ingest: '知识库导入',
-  knowledge_rechunks: '文档重新分块',
-  graph_task: '图谱处理',
-  agent_job: '智能体任务'
-}
+  knowledge_ingest: "知识库导入",
+  knowledge_rechunks: "文档重新分块",
+  graph_task: "图谱处理",
+  agent_job: "智能体任务",
+};
 
 function taskCardClasses(task) {
   return {
-    'task-card--active': ACTIVE_CLASS_STATUSES.has(task.status),
-    'task-card--success': task.status === 'success',
-    'task-card--failed': task.status === 'failed'
-  }
+    "task-card--active": ACTIVE_CLASS_STATUSES.has(task.status),
+    "task-card--success": task.status === "success",
+    "task-card--failed": task.status === "failed",
+  };
 }
 
 function taskTypeLabel(type) {
-  if (!type) return '后台任务'
-  return TASK_TYPE_LABELS[type] || type
+  if (!type) return "后台任务";
+  return TASK_TYPE_LABELS[type] || type;
 }
 
 function formatTaskId(id) {
-  if (!id) return '--'
-  return id.slice(0, 8)
+  if (!id) return "--";
+  return id.slice(0, 8);
 }
 
 watch(
   isOpen,
   (open) => {
     if (open) {
-      taskerStore.loadTasks()
-      taskerStore.startPolling()
+      taskerStore.loadTasks();
+      taskerStore.startPolling();
     } else {
-      taskerStore.stopPolling()
+      taskerStore.stopPolling();
     }
   },
-  { immediate: true }
-)
+  { immediate: true },
+);
 
 onBeforeUnmount(() => {
-  taskerStore.stopPolling()
-})
+  taskerStore.stopPolling();
+});
 
 function handleClose() {
-  taskerStore.closeDrawer()
+  taskerStore.closeDrawer();
 }
 
 function handleRefresh() {
-  taskerStore.loadTasks()
+  taskerStore.loadTasks();
 }
 
 function handleDetail(taskId) {
-  const task = tasks.value.find(item => item.id === taskId)
+  const task = tasks.value.find((item) => item.id === taskId);
   if (!task) {
-    return
+    return;
   }
-  const detail = h('div', { class: 'task-detail' }, [
-    h('p', [h('strong', '状态：'), statusLabel(task.status)]),
-    h('p', [h('strong', '进度：'), `${Math.round(task.progress || 0)}%`]),
-    h('p', [h('strong', '更新时间：'), formatTime(task.updated_at)]),
-    h('p', [h('strong', '描述：'), task.message || '-']),
-    h('p', [h('strong', '错误：'), task.error || '-'])
-  ])
+  const detail = h("div", { class: "task-detail" }, [
+    h("p", [h("strong", "状态："), statusLabel(task.status)]),
+    h("p", [h("strong", "进度："), `${Math.round(task.progress || 0)}%`]),
+    h("p", [h("strong", "更新时间："), formatTime(task.updated_at)]),
+    h("p", [h("strong", "描述："), task.message || "-"]),
+    h("p", [h("strong", "错误："), task.error || "-"]),
+  ]);
   Modal.info({
     title: task.name,
     width: 520,
-    content: detail
-  })
+    content: detail,
+  });
 }
 
 function handleCancel(taskId) {
-  taskerStore.cancelTask(taskId)
+  taskerStore.cancelTask(taskId);
 }
 
-function formatTime(value, mode = 'full') {
-  if (!value) return '-'
-  if (mode === 'short') {
-    return formatRelative(value)
+function formatTime(value, mode = "full") {
+  if (!value) return "-";
+  if (mode === "short") {
+    return formatRelative(value);
   }
-  return formatFullDateTime(value)
+  return formatFullDateTime(value);
 }
 
 function getTaskDuration(task) {
-  if (!task.started_at || !task.completed_at) return null
+  if (!task.started_at || !task.completed_at) return null;
   try {
-    const start = parseToShanghai(task.started_at)
-    const end = parseToShanghai(task.completed_at)
+    const start = parseToShanghai(task.started_at);
+    const end = parseToShanghai(task.completed_at);
     if (!start || !end) {
-      return null
+      return null;
     }
 
-    const diffSeconds = Math.max(0, Math.floor(end.diff(start, 'second')))
-    const hours = Math.floor(diffSeconds / 3600)
-    const minutes = Math.floor((diffSeconds % 3600) / 60)
-    const seconds = diffSeconds % 60
+    const diffSeconds = Math.max(0, Math.floor(end.diff(start, "second")));
+    const hours = Math.floor(diffSeconds / 3600);
+    const minutes = Math.floor((diffSeconds % 3600) / 60);
+    const seconds = diffSeconds % 60;
 
     if (hours > 0) {
-      return `${hours}小时${minutes}分钟`
+      return `${hours}小时${minutes}分钟`;
     }
     if (minutes > 0) {
-      return `${minutes}分钟${seconds}秒`
+      return `${minutes}分钟${seconds}秒`;
     }
     if (seconds > 0) {
-      return `${seconds}秒`
+      return `${seconds}秒`;
     }
-    return '小于1秒'
+    return "小于1秒";
   } catch {
-    return null
+    return null;
   }
 }
 
 function isTaskCompleted(task) {
-  return ['success', 'failed', 'cancelled'].includes(task.status)
+  return ["success", "failed", "cancelled"].includes(task.status);
 }
 
 function getCompletionIcon(status) {
   const icons = {
-    success: '✓',
-    failed: '✗',
-    cancelled: '○'
-  }
-  return icons[status] || '?'
+    success: "✓",
+    failed: "✗",
+    cancelled: "○",
+  };
+  return icons[status] || "?";
 }
 
 function statusLabel(status) {
   const map = {
-    pending: '等待中',
-    queued: '已排队',
-    running: '进行中',
-    success: '已完成',
-    failed: '失败',
-    cancelled: '已取消'
-  }
-  return map[status] || status
+    pending: "等待中",
+    queued: "已排队",
+    running: "进行中",
+    success: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+  };
+  return map[status] || status;
 }
 
 function statusColor(status) {
   const map = {
-    pending: 'blue',
-    queued: 'blue',
-    running: 'processing',
-    success: 'green',
-    failed: 'red',
-    cancelled: 'gray'
-  }
-  return map[status] || 'default'
+    pending: "blue",
+    queued: "blue",
+    running: "processing",
+    success: "green",
+    failed: "red",
+    cancelled: "gray",
+  };
+  return map[status] || "default";
 }
 
 function progressStatus(status) {
-  if (status === 'failed') return 'exception'
-  if (status === 'cancelled') return 'normal'
-  return 'active'
+  if (status === "failed") return "exception";
+  if (status === "cancelled") return "normal";
+  return "active";
 }
 
 function canCancel(task) {
-  return ['pending', 'running', 'queued'].includes(task.status) && !task.cancel_requested
+  return ["pending", "running", "queued"].includes(task.status) && !task.cancel_requested;
 }
-
 </script>
 <style scoped lang="less">
 .task-center {

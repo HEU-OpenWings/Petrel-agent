@@ -10,10 +10,10 @@
  * @returns {string} - 重叠部分的内容
  */
 export function findOverlap(str1, str2) {
-  if (!str1 || !str2) return '';
+  if (!str1 || !str2) return "";
 
   const maxOverlap = Math.min(str1.length, str2.length);
-  let overlap = '';
+  let overlap = "";
 
   // 从最长可能的重叠开始检查
   for (let i = maxOverlap; i > 10; i--) {
@@ -36,13 +36,13 @@ export function findOverlap(str1, str2) {
  */
 export function mergeChunks(chunks) {
   if (!chunks || chunks.length === 0) {
-    return { content: '', chunks: [] };
+    return { content: "", chunks: [] };
   }
 
   // 按order排序
   const sorted = [...chunks].sort((a, b) => a.chunk_order_index - b.chunk_order_index);
   const merged = [];
-  let currentContent = '';
+  let currentContent = "";
 
   for (let i = 0; i < sorted.length; i++) {
     const chunk = sorted[i];
@@ -54,7 +54,7 @@ export function mergeChunks(chunks) {
       merged.push({
         ...chunk,
         startOffset: 0,
-        endOffset: content.length
+        endOffset: content.length,
       });
     } else {
       // 查找重叠部分
@@ -71,7 +71,7 @@ export function mergeChunks(chunks) {
         merged.push({
           ...chunk,
           startOffset,
-          endOffset: currentContent.length
+          endOffset: currentContent.length,
         });
       }
     }
@@ -89,7 +89,7 @@ export function splitIntoParagraphs(content) {
   if (!content) return [];
 
   // 按换行符分割，保留空段落
-  return content.split(/\n\n+/).filter(para => para.trim() !== '');
+  return content.split(/\n\n+/).filter((para) => para.trim() !== "");
 }
 
 /**
@@ -102,19 +102,19 @@ export function mapParagraphsToChunks(paragraphs, mappedChunks) {
   if (!paragraphs || !mappedChunks) return [];
 
   let currentOffset = 0;
-  return paragraphs.map(paragraph => {
+  return paragraphs.map((paragraph) => {
     const paragraphLength = paragraph.length + 2; // +2 for the \n\n
 
     // 找到包含此位置的chunk
-    const chunk = mappedChunks.find(chunk =>
-      currentOffset >= chunk.startOffset && currentOffset < chunk.endOffset
-    ) || mappedChunks[0];
+    const chunk =
+      mappedChunks.find((chunk) => currentOffset >= chunk.startOffset && currentOffset < chunk.endOffset) ||
+      mappedChunks[0];
 
     const result = {
       content: paragraph,
       chunk,
       startOffset: currentOffset,
-      endOffset: currentOffset + paragraphLength
+      endOffset: currentOffset + paragraphLength,
     };
 
     currentOffset += paragraphLength;
@@ -129,10 +129,10 @@ export function mapParagraphsToChunks(paragraphs, mappedChunks) {
  * @returns {string} - 预览文本
  */
 export function getChunkPreview(content, maxLength = 100) {
-  if (!content) return '';
+  if (!content) return "";
 
-  const text = content.replace(/\n+/g, ' ').trim();
+  const text = content.replace(/\n+/g, " ").trim();
   if (text.length <= maxLength) return text;
 
-  return text.slice(0, maxLength) + '...';
+  return `${text.slice(0, maxLength)}...`;
 }

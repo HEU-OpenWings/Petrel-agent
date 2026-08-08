@@ -39,84 +39,84 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useInfoStore } from '@/stores/info'
-import { useUserStore } from '@/stores/user'
-import { Clock, User, ClipboardList } from 'lucide-vue-next'
-import { useTaskerStore } from '@/stores/tasker'
-import { storeToRefs } from 'pinia'
-import dayjs from '@/utils/time'
+import { ClipboardList, Clock, User } from "lucide-vue-next";
+import { storeToRefs } from "pinia";
+import { computed, onMounted, onUnmounted, ref } from "vue";
+import { useInfoStore } from "@/stores/info";
+import { useTaskerStore } from "@/stores/tasker";
+import { useUserStore } from "@/stores/user";
+import dayjs from "@/utils/time";
 
 // 使用 stores
-const infoStore = useInfoStore()
-const userStore = useUserStore()
-const taskerStore = useTaskerStore()
-const { activeCount: activeCountRef } = storeToRefs(taskerStore)
+const infoStore = useInfoStore();
+const userStore = useUserStore();
+const taskerStore = useTaskerStore();
+const { activeCount: activeCountRef } = storeToRefs(taskerStore);
 
 // 响应式数据
-const currentTime = ref('')
+const currentTime = ref("");
 
 // 计算属性
-const organization = computed(() => infoStore.organization)
-const branding = computed(() => infoStore.branding)
+const organization = computed(() => infoStore.organization);
+const branding = computed(() => infoStore.branding);
 
 // 用户名计算属性
 const currentUser = computed(() => {
-  return userStore.username || '游客'
-})
+  return userStore.username || "游客";
+});
 
 // 问候语计算属性
 const greeting = computed(() => {
-  const hour = dayjs().tz('Asia/Shanghai').hour()
-  let greetingText = ''
+  const hour = dayjs().tz("Asia/Shanghai").hour();
+  let greetingText = "";
 
   if (hour >= 5 && hour < 12) {
-    greetingText = '早上好'
+    greetingText = "早上好";
   } else if (hour >= 12 && hour < 14) {
-    greetingText = '中午好'
+    greetingText = "中午好";
   } else if (hour >= 14 && hour < 18) {
-    greetingText = '下午好'
+    greetingText = "下午好";
   } else if (hour >= 18 && hour < 22) {
-    greetingText = '晚上好'
+    greetingText = "晚上好";
   } else {
-    greetingText = '夜深了'
+    greetingText = "夜深了";
   }
 
-  return `${greetingText}！${currentUser.value}`
-})
+  return `${greetingText}！${currentUser.value}`;
+});
 
-const activeTaskCount = computed(() => activeCountRef.value || 0)
+const activeTaskCount = computed(() => activeCountRef.value || 0);
 
 const openTaskCenter = () => {
-  taskerStore.openDrawer()
-}
+  taskerStore.openDrawer();
+};
 
 // 更新时间
 const updateTime = () => {
-  const now = dayjs().tz('Asia/Shanghai')
-  currentTime.value = now.format('YYYY年MM月DD日 HH:mm:ss')
-}
+  const now = dayjs().tz("Asia/Shanghai");
+  currentTime.value = now.format("YYYY年MM月DD日 HH:mm:ss");
+};
 
 // 定时器
-let timeInterval = null
+let timeInterval = null;
 
 onMounted(async () => {
-  updateTime()
-  timeInterval = setInterval(updateTime, 1000)
+  updateTime();
+  timeInterval = setInterval(updateTime, 1000);
 
   // 获取用户信息
   try {
-    await userStore.getCurrentUser()
+    await userStore.getCurrentUser();
   } catch (error) {
-    console.error('获取用户信息失败:', error)
+    console.error("获取用户信息失败:", error);
   }
-})
+});
 
 onUnmounted(() => {
   if (timeInterval) {
-    clearInterval(timeInterval)
+    clearInterval(timeInterval);
   }
-})
+});
 </script>
 
 <style scoped lang="less">

@@ -61,7 +61,7 @@ vi.mock("@petrel/database", async (importOriginal) => {
 });
 
 // import 必须在 mock 声明之后（vi.mock 提升，这里拿到的是 mock 后的模块）
-const { createQuotaService, QuotaError } = await import("./quota.ts");
+const { createQuotaService } = await import("./quota.ts");
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 

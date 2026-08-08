@@ -49,6 +49,7 @@ async function registerUser(email: string): Promise<string> {
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
   const login = await app.request("/api/auth/login", {
     method: "POST",
@@ -89,6 +90,7 @@ function login(email: string, password: string) {
 /** 取一个真实的模型 id。白名单校验要求它必须是注册过的，不能随便编一个 */
 async function firstModelId(cookie: string): Promise<string> {
   const body = (await (await getPreferences(cookie)).json()) as { models: { id: string }[] };
+  // biome-ignore lint/style/noNonNullAssertion: 模型注册表非空，白名单校验依赖这一点
   return body.models[0]!.id;
 }
 

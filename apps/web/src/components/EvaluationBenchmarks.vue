@@ -191,30 +191,30 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue';
-import { message, Modal } from 'ant-design-vue';
 import {
-  UploadOutlined,
-  RobotOutlined,
-  EyeOutlined,
-  DeleteOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
-  ReloadOutlined
-} from '@ant-design/icons-vue';
-import { evaluationApi } from '@/apis/knowledge_api';
-import { useTaskerStore } from '@/stores/tasker';
-import BenchmarkUploadModal from './modals/BenchmarkUploadModal.vue';
-import BenchmarkGenerateModal from './modals/BenchmarkGenerateModal.vue';
+  DeleteOutlined,
+  EyeOutlined,
+  ReloadOutlined,
+  RobotOutlined,
+  UploadOutlined,
+} from "@ant-design/icons-vue";
+import { Modal, message } from "ant-design-vue";
+import { computed, onMounted, reactive, ref } from "vue";
+import { evaluationApi } from "@/apis/knowledge_api";
+import { useTaskerStore } from "@/stores/tasker";
+import BenchmarkGenerateModal from "./modals/BenchmarkGenerateModal.vue";
+import BenchmarkUploadModal from "./modals/BenchmarkUploadModal.vue";
 
 const props = defineProps({
   databaseId: {
     type: String,
-    required: true
-  }
+    required: true,
+  },
 });
 
-const emit = defineEmits(['refresh']);
+const emit = defineEmits(["refresh"]);
 
 const taskerStore = useTaskerStore();
 
@@ -230,43 +230,43 @@ const previewPagination = ref({
   current: 1,
   pageSize: 10,
   total: 0,
-  loading: false
+  loading: false,
 });
 
 // 表格列定义
 const questionColumns = [
   {
-    title: '#',
-    key: 'index',
+    title: "#",
+    key: "index",
     width: 60,
-    align: 'center'
+    align: "center",
   },
   {
-    title: '问题',
-    dataIndex: 'query',
-    key: 'query',
+    title: "问题",
+    dataIndex: "query",
+    key: "query",
     width: 280,
-    ellipsis: false
+    ellipsis: false,
   },
   {
-    title: '黄金Chunk',
-    dataIndex: 'gold_chunk_ids',
-    key: 'gold_chunk_ids',
+    title: "黄金Chunk",
+    dataIndex: "gold_chunk_ids",
+    key: "gold_chunk_ids",
     width: 200,
-    ellipsis: false
+    ellipsis: false,
   },
   {
-    title: '黄金答案',
-    dataIndex: 'gold_answer',
-    key: 'gold_answer',
+    title: "黄金答案",
+    dataIndex: "gold_answer",
+    key: "gold_answer",
     width: 420,
-    ellipsis: false
-  }
+    ellipsis: false,
+  },
 ];
 
 const displayedQuestionColumns = computed(() => {
   if (previewData.value && previewData.value.has_gold_chunks === false) {
-    return questionColumns.filter(c => c.key !== 'gold_chunk_ids');
+    return questionColumns.filter((c) => c.key !== "gold_chunk_ids");
   }
   return questionColumns;
 });
@@ -278,11 +278,11 @@ const paginationConfig = computed(() => ({
   total: previewPagination.value.total,
   showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
   showSizeChanger: true,
-  pageSizeOptions: ['5', '10', '20', '50'],
+  pageSizeOptions: ["5", "10", "20", "50"],
   showQuickJumper: true,
-  size: 'small',
+  size: "small",
   onChange: handlePageChange,
-  onShowSizeChange: handlePageSizeChange
+  onShowSizeChange: handlePageSizeChange,
 }));
 
 // 加载基准列表
@@ -293,20 +293,19 @@ const loadBenchmarks = async () => {
   try {
     const response = await evaluationApi.getBenchmarks(props.databaseId);
 
-    if (response && response.message === 'success' && Array.isArray(response.data)) {
+    if (response && response.message === "success" && Array.isArray(response.data)) {
       benchmarks.value = response.data;
     } else {
-      console.error('响应格式不符合预期:', response);
-      message.error('基准数据格式错误');
+      console.error("响应格式不符合预期:", response);
+      message.error("基准数据格式错误");
     }
   } catch (error) {
-    console.error('加载评估基准失败:', error);
-    message.error('加载评估基准失败');
+    console.error("加载评估基准失败:", error);
+    message.error("加载评估基准失败");
   } finally {
     loading.value = false;
   }
 };
-
 
 // 显示上传模态框
 const showUploadModal = () => {
@@ -321,10 +320,10 @@ const showGenerateModal = () => {
 // 上传成功回调
 const onUploadSuccess = () => {
   loadBenchmarks();
-  message.success('基准上传成功');
+  message.success("基准上传成功");
   taskerStore.loadTasks(); // 刷新任务列表
   // 通知父组件刷新基准列表
-  emit('refresh');
+  emit("refresh");
 };
 
 // 生成成功回调
@@ -333,7 +332,7 @@ const onGenerateSuccess = () => {
   // message.success('基准生成成功'); // 移除，由模态框提示任务提交
   taskerStore.loadTasks(); // 刷新任务列表
   // 通知父组件刷新基准列表
-  emit('refresh');
+  emit("refresh");
 };
 
 // 分页处理函数
@@ -343,7 +342,7 @@ const handlePageChange = (page, pageSize) => {
   loadPreviewQuestions();
 };
 
-const handlePageSizeChange = (current, size) => {
+const handlePageSizeChange = (_current, size) => {
   previewPagination.value.current = 1;
   previewPagination.value.pageSize = size;
   loadPreviewQuestions();
@@ -359,16 +358,16 @@ const loadPreviewQuestions = async () => {
       props.databaseId,
       previewData.value.benchmark_id,
       previewPagination.value.current,
-      previewPagination.value.pageSize
+      previewPagination.value.pageSize,
     );
 
-    if (response.message === 'success') {
+    if (response.message === "success") {
       previewQuestions.value = response.data.questions || [];
       previewPagination.value.total = response.data.pagination?.total_questions || 0;
     }
   } catch (error) {
-    console.error('加载预览问题失败:', error);
-    message.error('加载预览问题失败');
+    console.error("加载预览问题失败:", error);
+    message.error("加载预览问题失败");
   } finally {
     previewPagination.value.loading = false;
   }
@@ -382,65 +381,65 @@ const previewBenchmark = async (benchmark) => {
       current: 1,
       pageSize: 10,
       total: 0,
-      loading: false
+      loading: false,
     };
 
     const response = await evaluationApi.getBenchmarkByDb(
       props.databaseId,
       benchmark.benchmark_id,
       previewPagination.value.current,
-      previewPagination.value.pageSize
+      previewPagination.value.pageSize,
     );
 
-    if (response.message === 'success') {
+    if (response.message === "success") {
       // 保存基准ID用于后续分页请求
       previewData.value = {
         ...response.data,
-        benchmark_id: benchmark.benchmark_id  // 手动添加benchmark_id
+        benchmark_id: benchmark.benchmark_id, // 手动添加benchmark_id
       };
       previewQuestions.value = response.data.questions || [];
       previewPagination.value.total = response.data.pagination?.total_questions || 0;
-      console.log('预览问题数据:', response.data.questions); // 调试信息
+      console.log("预览问题数据:", response.data.questions); // 调试信息
       previewModalVisible.value = true;
     }
   } catch (error) {
-    console.error('获取基准详情失败:', error);
-    message.error('获取基准详情失败');
+    console.error("获取基准详情失败:", error);
+    message.error("获取基准详情失败");
   }
 };
 
 // 删除基准
 const deleteBenchmark = (benchmark) => {
   Modal.confirm({
-    title: '确认删除',
+    title: "确认删除",
     content: `确定要删除评估基准"${benchmark.name}"吗？此操作不可恢复。`,
-    okText: '确定',
-    cancelText: '取消',
+    okText: "确定",
+    cancelText: "取消",
     onOk: async () => {
       try {
         const response = await evaluationApi.deleteBenchmark(benchmark.benchmark_id);
-        if (response.message === 'success') {
-          message.success('删除成功');
+        if (response.message === "success") {
+          message.success("删除成功");
           loadBenchmarks();
         }
       } catch (error) {
-        console.error('删除基准失败:', error);
-        message.error('删除基准失败');
+        console.error("删除基准失败:", error);
+        message.error("删除基准失败");
       }
-    }
+    },
   });
 };
 
 // 格式化日期
 const formatDate = (dateStr) => {
-  if (!dateStr) return '-';
+  if (!dateStr) return "-";
   const date = new Date(dateStr);
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
+  return date.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 };
 

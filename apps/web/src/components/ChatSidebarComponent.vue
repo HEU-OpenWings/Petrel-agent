@@ -58,18 +58,14 @@
 </template>
 
 <script setup>
-import { computed, h } from 'vue';
-import {
-  DeleteOutlined,
-  EditOutlined,
-  MoreOutlined
-} from '@ant-design/icons-vue';
-import { message, Modal } from 'ant-design-vue';
-import { PanelLeftClose, MessageSquarePlus, LoaderCircle } from 'lucide-vue-next';
-import dayjs, { parseToShanghai } from '@/utils/time';
-import { useChatUIStore } from '@/stores/chatUI';
-import { useInfoStore } from '@/stores/info';
-import { storeToRefs } from 'pinia';
+import { DeleteOutlined, EditOutlined, MoreOutlined } from "@ant-design/icons-vue";
+import { Modal, message } from "ant-design-vue";
+import { LoaderCircle, MessageSquarePlus, PanelLeftClose } from "lucide-vue-next";
+import { storeToRefs } from "pinia";
+import { computed, h } from "vue";
+import { useChatUIStore } from "@/stores/chatUI";
+import { useInfoStore } from "@/stores/info";
+import dayjs, { parseToShanghai } from "@/utils/time";
 
 // 使用 chatUI store
 const chatUIStore = useChatUIStore();
@@ -80,50 +76,55 @@ const { branding } = storeToRefs(infoStore);
 const props = defineProps({
   currentAgentId: {
     type: String,
-    default: null
+    default: null,
   },
   currentChatId: {
     type: String,
-    default: null
+    default: null,
   },
   chatsList: {
     type: Array,
-    default: () => []
+    default: () => [],
   },
   isInitialRender: {
     type: Boolean,
-    default: false
+    default: false,
   },
   singleMode: {
     type: Boolean,
-    default: true
+    default: true,
   },
   agents: {
     type: Array,
-    default: () => []
+    default: () => [],
   },
   selectedAgentId: {
     type: String,
-    default: null
-  }
+    default: null,
+  },
 });
 
-const emit = defineEmits(['create-chat', 'select-chat', 'delete-chat', 'rename-chat', 'toggle-sidebar', 'open-agent-modal']);
-
-
+const emit = defineEmits([
+  "create-chat",
+  "select-chat",
+  "delete-chat",
+  "rename-chat",
+  "toggle-sidebar",
+  "open-agent-modal",
+]);
 
 const groupedChats = computed(() => {
   const groups = {
-    '今天': [],
-    '七天内': [],
-    '三十天内': [],
+    今天: [],
+    七天内: [],
+    三十天内: [],
   };
 
   // 确保使用北京时间进行比较
-  const now = dayjs().tz('Asia/Shanghai');
-  const today = now.startOf('day');
-  const sevenDaysAgo = now.subtract(7, 'day').startOf('day');
-  const thirtyDaysAgo = now.subtract(30, 'day').startOf('day');
+  const now = dayjs().tz("Asia/Shanghai");
+  const today = now.startOf("day");
+  const sevenDaysAgo = now.subtract(7, "day").startOf("day");
+  const thirtyDaysAgo = now.subtract(30, "day").startOf("day");
 
   // Sort chats by creation date, newest first
   const sortedChats = [...props.chatsList].sort((a, b) => {
@@ -133,20 +134,20 @@ const groupedChats = computed(() => {
     return dateA.diff(dateB);
   });
 
-  sortedChats.forEach(chat => {
+  sortedChats.forEach((chat) => {
     // 将后端时间当作UTC时间处理，然后转换为北京时间
     const chatDate = parseToShanghai(chat.created_at);
     if (!chatDate) {
       return;
     }
     if (chatDate.isAfter(today)) {
-      groups['今天'].push(chat);
+      groups["今天"].push(chat);
     } else if (chatDate.isAfter(sevenDaysAgo)) {
-      groups['七天内'].push(chat);
+      groups["七天内"].push(chat);
     } else if (chatDate.isAfter(thirtyDaysAgo)) {
-      groups['三十天内'].push(chat);
+      groups["三十天内"].push(chat);
     } else {
-      const monthKey = chatDate.format('YYYY-MM');
+      const monthKey = chatDate.format("YYYY-MM");
       if (!groups[monthKey]) {
         groups[monthKey] = [];
       }
@@ -164,55 +165,60 @@ const groupedChats = computed(() => {
   return groups;
 });
 
-
 const createNewChat = () => {
-  emit('create-chat');
+  emit("create-chat");
 };
 
 const selectChat = (chat) => {
-  emit('select-chat', chat.id);
+  emit("select-chat", chat.id);
 };
 
 const deleteChat = (chatId) => {
-  emit('delete-chat', chatId);
+  emit("delete-chat", chatId);
 };
 
 const renameChat = async (chatId) => {
   try {
-    const chat = props.chatsList.find(c => c.id === chatId);
+    const chat = props.chatsList.find((c) => c.id === chatId);
     if (!chat) return;
 
     let newTitle = chat.title;
     Modal.confirm({
-      title: '重命名对话',
-      content: h('div', { style: { marginTop: '12px' } }, [
-        h('input', {
+      title: "重命名对话",
+      content: h("div", { style: { marginTop: "12px" } }, [
+        h("input", {
           value: newTitle,
-          style: { width: '100%', padding: '4px 8px', border: '1px solid var(--gray-150)', background: 'var(--gray-0)', borderRadius: '4px' },
-          onInput: (e) => { newTitle = e.target.value; }
-        })
+          style: {
+            width: "100%",
+            padding: "4px 8px",
+            border: "1px solid var(--gray-150)",
+            background: "var(--gray-0)",
+            borderRadius: "4px",
+          },
+          onInput: (e) => {
+            newTitle = e.target.value;
+          },
+        }),
       ]),
-      okText: '确认',
-      cancelText: '取消',
+      okText: "确认",
+      cancelText: "取消",
       onOk: () => {
         if (!newTitle.trim()) {
-          message.warning('标题不能为空');
+          message.warning("标题不能为空");
           return Promise.reject();
         }
-        emit('rename-chat', { chatId, title: newTitle });
+        emit("rename-chat", { chatId, title: newTitle });
       },
-      onCancel: () => {}
+      onCancel: () => {},
     });
   } catch (error) {
-    console.error('重命名对话失败:', error);
+    console.error("重命名对话失败:", error);
   }
 };
 
 const toggleCollapse = () => {
-  emit('toggle-sidebar');
+  emit("toggle-sidebar");
 };
-
-
 </script>
 
 <style lang="less" scoped>

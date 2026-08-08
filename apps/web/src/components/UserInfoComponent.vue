@@ -154,96 +154,96 @@
 </template>
 
 <script setup>
-import { computed, ref, inject } from 'vue';
-import { useRouter } from 'vue-router';
-import { useUserStore } from '@/stores/user';
 //
 //
 //
 //
-import { message } from 'ant-design-vue';
-import { CircleUser, UserRoundCheck, Sun, Moon, User, LogOut, Upload, Settings } from 'lucide-vue-next';
-import { useThemeStore } from '@/stores/theme'
+import { message } from "ant-design-vue";
+import { CircleUser, LogOut, Moon, Settings, Sun, Upload, User, UserRoundCheck } from "lucide-vue-next";
+import { computed, inject, ref } from "vue";
+import { useRouter } from "vue-router";
+import { useThemeStore } from "@/stores/theme";
+import { useUserStore } from "@/stores/user";
 
 const router = useRouter();
 const userStore = useUserStore();
 const themeStore = useThemeStore();
 
 // Inject settings modal methods
-const { openSettingsModal } = inject('settingsModal', {});
+const { openSettingsModal } = inject("settingsModal", {});
 
 // 个人资料弹窗状态
 const profileModalVisible = ref(false);
 const avatarUploading = ref(false);
 const profileEditing = ref(false);
 const editedProfile = ref({
-  username: '',
-  phone_number: ''
+  username: "",
+  phone_number: "",
 });
 
 const props = defineProps({
   showRole: {
     type: Boolean,
-    default: false
+    default: false,
   },
   showButton: {
     type: Boolean,
-    default: false
-  }
-})
+    default: false,
+  },
+});
 
 // 用户名首字母（用于显示在头像中）
 const userInitial = computed(() => {
-  if (!userStore.username) return '?';
+  if (!userStore.username) return "?";
   return userStore.username.charAt(0).toUpperCase();
 });
 
 // 用户角色显示文本
 const userRoleText = computed(() => {
   switch (userStore.userRole) {
-    case 'superadmin':
-      return '超级管理员';
-    case 'admin':
-      return '管理员';
-    case 'user':
-      return '普通用户';
+    case "superadmin":
+      return "超级管理员";
+    case "admin":
+      return "管理员";
+    case "user":
+      return "普通用户";
     default:
-      return '未知角色';
+      return "未知角色";
   }
 });
 
 // 用户角色徽章样式类
 const userRoleClass = computed(() => {
   return {
-    'superadmin': userStore.userRole === 'superadmin',
-    'admin': userStore.userRole === 'admin',
-    'user': userStore.userRole === 'user'
+    superadmin: userStore.userRole === "superadmin",
+    admin: userStore.userRole === "admin",
+    user: userStore.userRole === "user",
   };
 });
 
 // 退出登录
 const logout = () => {
   userStore.logout();
-  message.success('已退出登录');
+  message.success("已退出登录");
   // 跳转到首页
-  router.push('/login');
+  router.push("/login");
 };
 
 // 前往登录页
 const goToLogin = () => {
-  router.push('/login');
+  router.push("/login");
 };
 
 const toggleTheme = () => {
-  themeStore.toggleTheme()
-}
+  themeStore.toggleTheme();
+};
 
 // 前往设置页
 const goToSetting = () => {
   if (openSettingsModal) {
-    openSettingsModal()
+    openSettingsModal();
   }
-}
+};
 
 // 打开个人资料页面
 const openProfile = async () => {
@@ -254,21 +254,25 @@ const openProfile = async () => {
   try {
     await userStore.getCurrentUser();
     editedProfile.value = {
-      username: userStore.username || '',
-      phone_number: userStore.phoneNumber || ''
+      username: userStore.username || "",
+      phone_number: userStore.phoneNumber || "",
     };
   } catch (error) {
-    console.error('刷新用户信息失败:', error);
+    console.error("刷新用户信息失败:", error);
   }
 };
 
 // 角色标签颜色
 const getRoleColor = (role) => {
   switch (role) {
-    case 'superadmin': return 'red';
-    case 'admin': return 'blue';
-    case 'user': return 'green';
-    default: return 'default';
+    case "superadmin":
+      return "red";
+    case "admin":
+      return "blue";
+    case "user":
+      return "green";
+    default:
+      return "default";
   }
 };
 
@@ -276,8 +280,8 @@ const getRoleColor = (role) => {
 const startEdit = () => {
   profileEditing.value = true;
   editedProfile.value = {
-    username: userStore.username || '',
-    phone_number: userStore.phoneNumber || ''
+    username: userStore.username || "",
+    phone_number: userStore.phoneNumber || "",
   };
 };
 
@@ -285,8 +289,8 @@ const startEdit = () => {
 const cancelEdit = () => {
   profileEditing.value = false;
   editedProfile.value = {
-    username: userStore.username || '',
-    phone_number: userStore.phoneNumber || ''
+    username: userStore.username || "",
+    phone_number: userStore.phoneNumber || "",
   };
 };
 
@@ -294,14 +298,17 @@ const cancelEdit = () => {
 const saveProfile = async () => {
   try {
     // 验证用户名
-    if (editedProfile.value.username && (editedProfile.value.username.trim().length < 2 || editedProfile.value.username.trim().length > 20)) {
-      message.error('用户名长度必须在 2-20 个字符之间');
+    if (
+      editedProfile.value.username &&
+      (editedProfile.value.username.trim().length < 2 || editedProfile.value.username.trim().length > 20)
+    ) {
+      message.error("用户名长度必须在 2-20 个字符之间");
       return;
     }
 
     // 验证手机号格式
     if (editedProfile.value.phone_number && !validatePhoneNumber(editedProfile.value.phone_number)) {
-      message.error('请输入正确的手机号格式');
+      message.error("请输入正确的手机号格式");
       return;
     }
 
@@ -309,11 +316,11 @@ const saveProfile = async () => {
       username: editedProfile.value.username?.trim() || undefined,
       phone_number: editedProfile.value.phone_number || undefined,
     });
-    message.success('个人资料更新成功！');
+    message.success("个人资料更新成功！");
     profileEditing.value = false;
   } catch (error) {
-    console.error('更新个人资料失败:', error);
-    message.error('更新失败：' + (error.message || '请稍后重试'));
+    console.error("更新个人资料失败:", error);
+    message.error(`更新失败：${error.message || "请稍后重试"}`);
   }
 };
 
@@ -326,15 +333,15 @@ const validatePhoneNumber = (phone) => {
 
 // 头像上传前验证
 const beforeUpload = (file) => {
-  const isImage = file.type.startsWith('image/');
+  const isImage = file.type.startsWith("image/");
   if (!isImage) {
-    message.error('只能上传图片文件！');
+    message.error("只能上传图片文件！");
     return false;
   }
 
   const isLt5M = file.size / 1024 / 1024 < 5;
   if (!isLt5M) {
-    message.error('图片大小不能超过 5MB！');
+    message.error("图片大小不能超过 5MB！");
     return false;
   }
 
@@ -343,12 +350,12 @@ const beforeUpload = (file) => {
 
 // 处理头像上传
 const handleAvatarChange = async (info) => {
-  if (info.file.status === 'uploading') {
+  if (info.file.status === "uploading") {
     avatarUploading.value = true;
     return;
   }
 
-  if (info.file.status === 'done') {
+  if (info.file.status === "done") {
     avatarUploading.value = false;
     return;
   }
@@ -357,10 +364,10 @@ const handleAvatarChange = async (info) => {
   try {
     avatarUploading.value = true;
     const result = await userStore.uploadAvatar(info.file.originFileObj || info.file);
-    message.success('头像上传成功！');
+    message.success("头像上传成功！");
   } catch (error) {
-    console.error('头像上传失败:', error);
-    message.error('头像上传失败：' + (error.message || '请稍后重试'));
+    console.error("头像上传失败:", error);
+    message.error(`头像上传失败：${error.message || "请稍后重试"}`);
   } finally {
     avatarUploading.value = false;
   }
