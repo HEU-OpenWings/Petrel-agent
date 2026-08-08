@@ -54,17 +54,17 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue';
-import { message } from 'ant-design-vue';
-import { useRoute, useRouter } from 'vue-router';
-import { Share2, ChevronDown } from 'lucide-vue-next';
-import { StarFilled, StarOutlined } from '@ant-design/icons-vue';
-import AgentChatComponent from '@/components/AgentChatComponent.vue';
-import UserInfoComponent from '@/components/UserInfoComponent.vue';
-import { ChatExporter } from '@/utils/chatExporter';
-import { handleChatError } from '@/utils/errorHandler';
-import { useAgentStore } from '@/stores/agent';
-import { storeToRefs } from 'pinia';
+import { StarFilled, StarOutlined } from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { ChevronDown, Share2 } from "lucide-vue-next";
+import { storeToRefs } from "pinia";
+import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import AgentChatComponent from "@/components/AgentChatComponent.vue";
+import UserInfoComponent from "@/components/UserInfoComponent.vue";
+import { useAgentStore } from "@/stores/agent";
+import { ChatExporter } from "@/utils/chatExporter";
+import { handleChatError } from "@/utils/errorHandler";
 
 const route = useRoute();
 const router = useRouter();
@@ -81,9 +81,9 @@ const { agents, defaultAgentId } = storeToRefs(agentStore);
 
 // 当前智能体名称
 const currentAgentName = computed(() => {
-  if (!agentId.value || !agents.value?.length) return '智能体加载中……';
-  const agent = agents.value.find(a => a.id === agentId.value);
-  return agent ? agent.name : '未知智能体';
+  if (!agentId.value || !agents.value?.length) return "智能体加载中……";
+  const agent = agents.value.find((a) => a.id === agentId.value);
+  return agent ? agent.name : "未知智能体";
 });
 
 // 打开智能体选择弹窗
@@ -108,9 +108,9 @@ const selectAgentFromModal = (newAgentId) => {
 const setAsDefaultAgent = async (agentIdToSet) => {
   try {
     await agentStore.setDefaultAgent(agentIdToSet);
-    message.success('已设置为默认智能体');
+    message.success("已设置为默认智能体");
   } catch (error) {
-    handleChatError(error, 'save');
+    handleChatError(error, "save");
   }
 };
 
@@ -119,7 +119,7 @@ const handleShareChat = async () => {
     const exportData = chatComponentRef.value?.getExportPayload?.();
 
     if (!exportData) {
-      message.warning('当前没有可导出的对话内容');
+      message.warning("当前没有可导出的对话内容");
       return;
     }
 
@@ -127,18 +127,18 @@ const handleShareChat = async () => {
     const hasOngoingMessages = Boolean(exportData.onGoingMessages?.length);
 
     if (!hasMessages && !hasOngoingMessages) {
-      message.warning('当前对话暂无内容可导出，请先进行对话');
+      message.warning("当前对话暂无内容可导出，请先进行对话");
       return;
     }
 
     const result = await ChatExporter.exportToHTML(exportData);
     message.success(`对话已导出为HTML文件: ${result.filename}`);
   } catch (error) {
-    if (error?.message?.includes('没有可导出的对话内容')) {
-      message.warning('当前对话暂无内容可导出，请先进行对话');
+    if (error?.message?.includes("没有可导出的对话内容")) {
+      message.warning("当前对话暂无内容可导出，请先进行对话");
       return;
     }
-    handleChatError(error, 'export');
+    handleChatError(error, "export");
   }
 };
 
@@ -148,7 +148,7 @@ onMounted(async () => {
     try {
       await agentStore.initialize();
     } catch (error) {
-      console.error('初始化智能体 store 失败:', error);
+      console.error("初始化智能体 store 失败:", error);
     }
   }
 });

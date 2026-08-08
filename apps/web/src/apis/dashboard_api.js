@@ -1,4 +1,4 @@
-import { apiAdminGet } from './base'
+import { apiAdminGet } from "./base";
 
 /**
  * Dashboard API模块
@@ -17,14 +17,14 @@ export const dashboardApi = {
    * @returns {Promise<Array>} - 对话列表
    */
   getConversations: (params = {}) => {
-    const queryParams = new URLSearchParams()
-    if (params.user_id) queryParams.append('user_id', params.user_id)
-    if (params.agent_id) queryParams.append('agent_id', params.agent_id)
-    if (params.status) queryParams.append('status', params.status)
-    if (params.limit) queryParams.append('limit', params.limit)
-    if (params.offset) queryParams.append('offset', params.offset)
+    const queryParams = new URLSearchParams();
+    if (params.user_id) queryParams.append("user_id", params.user_id);
+    if (params.agent_id) queryParams.append("agent_id", params.agent_id);
+    if (params.status) queryParams.append("status", params.status);
+    if (params.limit) queryParams.append("limit", params.limit);
+    if (params.offset) queryParams.append("offset", params.offset);
 
-    return apiAdminGet(`/api/dashboard/conversations?${queryParams.toString()}`)
+    return apiAdminGet(`/api/dashboard/conversations?${queryParams.toString()}`);
   },
 
   /**
@@ -33,7 +33,7 @@ export const dashboardApi = {
    * @returns {Promise<Object>} - 对话详情
    */
   getConversationDetail: (threadId) => {
-    return apiAdminGet(`/api/dashboard/conversations/${threadId}`)
+    return apiAdminGet(`/api/dashboard/conversations/${threadId}`);
   },
 
   /**
@@ -41,7 +41,7 @@ export const dashboardApi = {
    * @returns {Promise<Object>} - 统计信息
    */
   getStats: () => {
-    return apiAdminGet('/api/dashboard/stats')
+    return apiAdminGet("/api/dashboard/stats");
   },
 
   /**
@@ -52,11 +52,11 @@ export const dashboardApi = {
    * @returns {Promise<Array>} - 反馈列表
    */
   getFeedbacks: (params = {}) => {
-    const queryParams = new URLSearchParams()
-    if (params.rating && params.rating !== 'all') queryParams.append('rating', params.rating)
-    if (params.agent_id) queryParams.append('agent_id', params.agent_id)
+    const queryParams = new URLSearchParams();
+    if (params.rating && params.rating !== "all") queryParams.append("rating", params.rating);
+    if (params.agent_id) queryParams.append("agent_id", params.agent_id);
 
-    return apiAdminGet(`/api/dashboard/feedbacks?${queryParams.toString()}`)
+    return apiAdminGet(`/api/dashboard/feedbacks?${queryParams.toString()}`);
   },
 
   // ========== 新增并行API接口 ==========
@@ -66,7 +66,7 @@ export const dashboardApi = {
    * @returns {Promise<Object>} - 用户活跃度统计信息
    */
   getUserStats: () => {
-    return apiAdminGet('/api/dashboard/stats/users')
+    return apiAdminGet("/api/dashboard/stats/users");
   },
 
   /**
@@ -74,7 +74,7 @@ export const dashboardApi = {
    * @returns {Promise<Object>} - 工具调用统计信息
    */
   getToolStats: () => {
-    return apiAdminGet('/api/dashboard/stats/tools')
+    return apiAdminGet("/api/dashboard/stats/tools");
   },
 
   /**
@@ -82,7 +82,7 @@ export const dashboardApi = {
    * @returns {Promise<Object>} - 知识库统计信息
    */
   getKnowledgeStats: () => {
-    return apiAdminGet('/api/dashboard/stats/knowledge')
+    return apiAdminGet("/api/dashboard/stats/knowledge");
   },
 
   /**
@@ -90,7 +90,7 @@ export const dashboardApi = {
    * @returns {Promise<Object>} - AI智能体分析信息
    */
   getAgentStats: () => {
-    return apiAdminGet('/api/dashboard/stats/agents')
+    return apiAdminGet("/api/dashboard/stats/agents");
   },
 
   /**
@@ -100,23 +100,23 @@ export const dashboardApi = {
   getAllStats: async () => {
     try {
       const [basicStats, userStats, toolStats, knowledgeStats, agentStats] = await Promise.all([
-        apiAdminGet('/api/dashboard/stats'),
-        apiAdminGet('/api/dashboard/stats/users'),
-        apiAdminGet('/api/dashboard/stats/tools'),
-        apiAdminGet('/api/dashboard/stats/knowledge'),
-        apiAdminGet('/api/dashboard/stats/agents')
-      ])
+        apiAdminGet("/api/dashboard/stats"),
+        apiAdminGet("/api/dashboard/stats/users"),
+        apiAdminGet("/api/dashboard/stats/tools"),
+        apiAdminGet("/api/dashboard/stats/knowledge"),
+        apiAdminGet("/api/dashboard/stats/agents"),
+      ]);
 
       return {
         basic: basicStats,
         users: userStats,
         tools: toolStats,
         knowledge: knowledgeStats,
-        agents: agentStats
-      }
+        agents: agentStats,
+      };
     } catch (error) {
-      console.error('批量获取统计数据失败:', error)
-      throw error
+      console.error("批量获取统计数据失败:", error);
+      throw error;
     }
   },
 
@@ -126,9 +126,7 @@ export const dashboardApi = {
    * @param {string} timeRange - 时间范围 (14hours/14days/14weeks)
    * @returns {Promise<Object>} - 时间序列统计数据
    */
-  getCallTimeseries: (type = 'models', timeRange = '14days') => {
-    return apiAdminGet(`/api/dashboard/stats/calls/timeseries?type=${type}&time_range=${timeRange}`)
-  }
-}
-
-
+  getCallTimeseries: (type = "models", timeRange = "14days") => {
+    return apiAdminGet(`/api/dashboard/stats/calls/timeseries?type=${type}&time_range=${timeRange}`);
+  },
+};

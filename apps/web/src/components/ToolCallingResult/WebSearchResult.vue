@@ -43,22 +43,22 @@
 </template>
 
 <script setup>
-import { GlobalOutlined } from '@ant-design/icons-vue'
-import { parseToShanghai } from '@/utils/time'
+import { GlobalOutlined } from "@ant-design/icons-vue";
+import { parseToShanghai } from "@/utils/time";
 
 const props = defineProps({
   data: {
     type: Object,
-    required: true
-  }
-})
+    required: true,
+  },
+});
 
 const formatDate = (dateString) => {
-  if (!dateString) return ''
-  const parsed = parseToShanghai(dateString)
-  if (!parsed) return ''
-  return parsed.format('YYYY年MM月DD日')
-}
+  if (!dateString) return "";
+  const parsed = parseToShanghai(dateString);
+  if (!parsed) return "";
+  return parsed.format("YYYY年MM月DD日");
+};
 </script>
 
 <style lang="less" scoped>

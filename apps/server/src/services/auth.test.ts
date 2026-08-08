@@ -261,6 +261,7 @@ describe("login", () => {
     await registerVerified("a@x.io");
     const { createUserRepository } = await import("@petrel/database");
     const found = await createUserRepository(db).findByEmail("a@x.io");
+    // biome-ignore lint/style/noNonNullAssertion: 上一行刚注册过，必然查得到
     await createUserRepository(db).setDisabled(found!.id, true);
 
     await expect(service.login("a@x.io", PASSWORD)).rejects.toMatchObject({ status: 401 });

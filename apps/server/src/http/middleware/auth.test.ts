@@ -39,6 +39,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await reset();
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   const user = await createUserRepository(state.db!).create({
     email: "a@x.io",
     passwordHash: "scrypt$a$b",
@@ -125,6 +126,7 @@ describe("requireAuth", () => {
   // 每请求查库的意义就在这条：禁用必须立即生效，不能等 token 自然过期
   it("token 合法但用户已被禁用返回 401", async () => {
     const cookie = await issue(userId);
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     await createUserRepository(state.db!).setDisabled(userId, true);
 
     const response = await app.request("/protected/whoami", { headers: { Cookie: cookie } });
@@ -175,6 +177,7 @@ describe("requireAuth", () => {
 
 describe("requireAdmin", () => {
   it("admin 放行", async () => {
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     await createUserRepository(state.db!).setRole(userId, "admin");
     const cookie = await issue(userId, "admin");
 

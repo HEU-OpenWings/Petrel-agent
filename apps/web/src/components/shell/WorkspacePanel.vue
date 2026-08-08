@@ -37,20 +37,20 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { PanelRightClose } from 'lucide-vue-next'
-import { ToolResultRenderer } from '@/components/ToolCallingResult'
-import { useLayoutStore } from '@/stores/layout'
-import { useWorkspaceStore } from '@/stores/workspace'
-import { extractToolResultText, formatToolArgs, TOOL_STATE_TEXT } from '@/utils/toolCall'
+import { PanelRightClose } from "lucide-vue-next";
+import { computed } from "vue";
+import { ToolResultRenderer } from "@/components/ToolCallingResult";
+import { useLayoutStore } from "@/stores/layout";
+import { useWorkspaceStore } from "@/stores/workspace";
+import { extractToolResultText, formatToolArgs, TOOL_STATE_TEXT } from "@/utils/toolCall";
 
-const layout = useLayoutStore()
-const workspace = useWorkspaceStore()
+const layout = useLayoutStore();
+const workspace = useWorkspaceStore();
 
-const active = computed(() => workspace.activeToolCall)
-const stateText = computed(() => TOOL_STATE_TEXT[active.value?.state] ?? '')
-const formattedArgs = computed(() => formatToolArgs(active.value?.args))
-const resultText = computed(() => extractToolResultText(active.value?.result))
+const active = computed(() => workspace.activeToolCall);
+const stateText = computed(() => TOOL_STATE_TEXT[active.value?.state] ?? "");
+const formattedArgs = computed(() => formatToolArgs(active.value?.args));
+const resultText = computed(() => extractToolResultText(active.value?.result));
 </script>
 
 <style lang="less" scoped>

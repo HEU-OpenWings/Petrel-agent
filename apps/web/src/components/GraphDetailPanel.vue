@@ -58,19 +58,19 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
-import { CloseOutlined } from '@ant-design/icons-vue';
+import { CloseOutlined } from "@ant-design/icons-vue";
+import { computed } from "vue";
 
 const props = defineProps({
   visible: Boolean,
   item: Object,
-  type: String // 'node' | 'edge'
+  type: String, // 'node' | 'edge'
 });
 
-defineEmits(['close']);
+defineEmits(["close"]);
 
 const title = computed(() => {
-  return props.type === 'node' ? '节点详情' : '关系详情';
+  return props.type === "node" ? "节点详情" : "关系详情";
 });
 
 // 过滤边的属性，隐藏内部字段
@@ -83,9 +83,9 @@ const filteredEdgeProperties = computed(() => {
   const filtered = {};
 
   // 定义需要隐藏的内部字段
-  const hiddenFields = ['source_id', 'target_id', '_id', 'truncate'];
+  const hiddenFields = ["source_id", "target_id", "_id", "truncate"];
 
-  Object.keys(properties).forEach(key => {
+  Object.keys(properties).forEach((key) => {
     if (!hiddenFields.includes(key)) {
       filtered[key] = properties[key];
     }

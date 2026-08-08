@@ -62,7 +62,6 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
 import {
   BarChart3,
   CircleCheck,
@@ -73,67 +72,68 @@ import {
   Settings,
   SquarePen,
   Trash2,
-  Users
-} from 'lucide-vue-next'
-import { RouterLink, useRouter } from 'vue-router'
-import { useSessionStore } from '@/stores/session'
-import { useUserStore } from '@/stores/user'
+  Users,
+} from "lucide-vue-next";
+import { computed, onMounted } from "vue";
+import { RouterLink, useRouter } from "vue-router";
+import { useSessionStore } from "@/stores/session";
+import { useUserStore } from "@/stores/user";
 
-const emit = defineEmits(['new-chat', 'select', 'open-settings'])
+const emit = defineEmits(["new-chat", "select", "open-settings"]);
 
-const sessionStore = useSessionStore()
-const userStore = useUserStore()
-const router = useRouter()
+const sessionStore = useSessionStore();
+const userStore = useUserStore();
+const router = useRouter();
 
-onMounted(() => sessionStore.refresh())
+onMounted(() => sessionStore.refresh());
 
 // 用 computed 而不是常量：/admin 只对 admin 可见，登录态是异步恢复的（main.js 里
 // fetchMe），isAdmin 会从 false 变 true，静态数组不会重新求值
 const navItems = computed(() => [
-  { label: '知识库', path: '/knowledge', icon: LibraryBig },
-  { label: 'Dashboard', path: '/dashboard', icon: BarChart3 },
-  { label: '评测', path: '/eval', icon: CircleCheck },
-  ...(userStore.isAdmin ? [{ label: '用户管理', path: '/admin', icon: Users }] : [])
-])
+  { label: "知识库", path: "/knowledge", icon: LibraryBig },
+  { label: "Dashboard", path: "/dashboard", icon: BarChart3 },
+  { label: "评测", path: "/eval", icon: CircleCheck },
+  ...(userStore.isAdmin ? [{ label: "用户管理", path: "/admin", icon: Users }] : []),
+]);
 
-const initial = computed(() => (userStore.displayName || '?').slice(0, 1).toUpperCase())
+const initial = computed(() => (userStore.displayName || "?").slice(0, 1).toUpperCase());
 
 function onNewChat() {
-  emit('new-chat')
+  emit("new-chat");
 }
 
 async function onRename(item) {
-  const title = window.prompt('重命名会话', item.title)?.trim()
-  if (!title || title === item.title) return
+  const title = window.prompt("重命名会话", item.title)?.trim();
+  if (!title || title === item.title) return;
   try {
-    await sessionStore.rename(item.id, title)
+    await sessionStore.rename(item.id, title);
   } catch {
     // 失败必须出声：Vue 会把这里抛的 promise 接进 errorHandler，界面上什么都不会发生，
     // 用户看到的只是「标题没变」，分不清是自己点错了还是请求挂了。
     // 用 alert 而不是引一套 toast，跟上面的 prompt / 下面的 confirm 保持一致
-    window.alert('重命名失败，请重试')
+    window.alert("重命名失败，请重试");
   }
 }
 
 async function onRemove(item) {
-  if (!window.confirm(`删除会话「${item.title}」？`)) return
+  if (!window.confirm(`删除会话「${item.title}」？`)) return;
   // 要在 remove 之前判断：remove() 删掉的正是当前会话时会把 currentId 置空，
   // 删完再比就永远不相等，删掉当前会话后界面会停在一个已经不存在的对话上
-  const wasCurrent = item.id === sessionStore.currentId
+  const wasCurrent = item.id === sessionStore.currentId;
   try {
-    await sessionStore.remove(item.id)
+    await sessionStore.remove(item.id);
   } catch {
-    window.alert('删除失败，请重试')
-    return
+    window.alert("删除失败，请重试");
+    return;
   }
-  if (wasCurrent) emit('new-chat')
+  if (wasCurrent) emit("new-chat");
 }
 
 async function onLogout() {
   // logout() 先同步清本地 user 再发请求（见 stores/user.js 的注释），
   // 所以这里等不等请求完成都能立刻跳登录页；await 只是保证顺序可读
-  await userStore.logout()
-  router.push('/login')
+  await userStore.logout();
+  router.push("/login");
 }
 </script>
 

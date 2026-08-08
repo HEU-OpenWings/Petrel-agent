@@ -69,59 +69,59 @@
 </template>
 
 <script setup>
-import { computed, onUnmounted, ref } from 'vue'
-import { CaretRightOutlined } from '@ant-design/icons-vue'
-import { Check, Copy, TriangleAlert } from 'lucide-vue-next'
-import { MdPreview } from 'md-editor-v3'
-import 'md-editor-v3/lib/preview.css'
-import { useThemeStore } from '@/stores/theme'
-import ToolCallBlock from './ToolCallBlock.vue'
+import { CaretRightOutlined } from "@ant-design/icons-vue";
+import { Check, Copy, TriangleAlert } from "lucide-vue-next";
+import { MdPreview } from "md-editor-v3";
+import { computed, onUnmounted, ref } from "vue";
+import "md-editor-v3/lib/preview.css";
+import { useThemeStore } from "@/stores/theme";
+import ToolCallBlock from "./ToolCallBlock.vue";
 
 const props = defineProps({
   /** pi 的 AgentMessage */
   message: { type: Object, required: true },
   toolCalls: { type: Object, default: () => ({}) },
   streaming: { type: Boolean, default: false },
-  editorId: { type: [String, Number], default: 0 }
-})
+  editorId: { type: [String, Number], default: 0 },
+});
 
-const showThinking = ref(false)
-const copied = ref(false)
-const themeStore = useThemeStore()
-const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
+const showThinking = ref(false);
+const copied = ref(false);
+const themeStore = useThemeStore();
+const theme = computed(() => (themeStore.isDark ? "dark" : "light"));
 
 /** pi 的 content 可能是字符串（用户输入）或 content block 数组 */
 const blocks = computed(() => {
-  const content = props.message.content
-  if (typeof content === 'string') return [{ type: 'text', text: content }]
-  return Array.isArray(content) ? content : []
-})
+  const content = props.message.content;
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  return Array.isArray(content) ? content : [];
+});
 
 /** 只取文本块：复制时不该把工具调用的 JSON 和思考过程也带上 */
 const plainText = computed(() =>
   blocks.value
-    .filter((block) => block.type === 'text')
+    .filter((block) => block.type === "text")
     .map((block) => block.text)
-    .join('\n')
-)
+    .join("\n"),
+);
 
-let copyTimer = null
+let copyTimer = null;
 
 async function copy() {
   try {
-    await navigator.clipboard.writeText(plainText.value)
-    copied.value = true
+    await navigator.clipboard.writeText(plainText.value);
+    copied.value = true;
     // 连点两次时重置上一个计时器，否则第二次的「已复制」会被前一个提前掐掉
-    clearTimeout(copyTimer)
+    clearTimeout(copyTimer);
     copyTimer = setTimeout(() => {
-      copied.value = false
-    }, 1500)
+      copied.value = false;
+    }, 1500);
   } catch {
     // http 环境下 clipboard 不可用，静默失败好过弹一个用户无法处理的错误
   }
 }
 
-onUnmounted(() => clearTimeout(copyTimer))
+onUnmounted(() => clearTimeout(copyTimer));
 </script>
 
 <style lang="less" scoped>

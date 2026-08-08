@@ -30,38 +30,38 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
-import AccountPanel from './AccountPanel.vue'
-import GeneralPanel from './GeneralPanel.vue'
-import { usePreferencesStore } from '@/stores/preferences'
+import { computed, ref, watch } from "vue";
+import { usePreferencesStore } from "@/stores/preferences";
+import AccountPanel from "./AccountPanel.vue";
+import GeneralPanel from "./GeneralPanel.vue";
 
 const props = defineProps({
-  open: { type: Boolean, default: false }
-})
+  open: { type: Boolean, default: false },
+});
 
-const emit = defineEmits(['update:open'])
+const emit = defineEmits(["update:open"]);
 
 const TABS = [
-  { key: 'general', label: '通用' },
-  { key: 'account', label: '账号' }
-]
+  { key: "general", label: "通用" },
+  { key: "account", label: "账号" },
+];
 
-const preferences = usePreferencesStore()
-const activeTab = ref('general')
+const preferences = usePreferencesStore();
+const activeTab = ref("general");
 
 const visible = computed({
   get: () => props.open,
-  set: (value) => emit('update:open', value)
-})
+  set: (value) => emit("update:open", value),
+});
 
 // 打开时才拉：未登录的人压根开不到这里，而应用启动阶段拉一次会多一个必然 401 的请求。
 // ensureLoaded 幂等，ChatView 已经拉过就不会重复发
 watch(
   () => props.open,
   (open) => {
-    if (open) void preferences.ensureLoaded()
-  }
-)
+    if (open) void preferences.ensureLoaded();
+  },
+);
 </script>
 
 <style lang="less" scoped>
