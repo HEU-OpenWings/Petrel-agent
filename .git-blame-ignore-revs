@@ -9,3 +9,7 @@
 # 前端 lint 迁移到 Biome，全量格式化（PR #13）
 # TODO(合并后): 若本 PR 走 squash merge，把这一行替换为 main 上的实际 commit SHA
 87146712b90cbba6f4cb6ea4df41fcb450ebd413
+
+# 合并 main 时对 main 侧 5 个前端文件补跑的格式化（同 PR #13）
+# TODO(合并后): 同上，squash merge 后需替换
+9d63e9eb8671fed02d833f667e65e9e1328a3d5a
