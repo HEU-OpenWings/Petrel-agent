@@ -119,7 +119,10 @@ event: compaction data: { phase: "start" }
 2. **连接断开不等于停止**：关页面/切走，agent 继续跑完并落库，用户回来能看到完整回答。
    用户要真停下来走 **`POST /api/chat/abort`**（前端「停止」按钮调它；切换会话只断本地接收，
    不调它）。
-3. **同一会话的第二个请求进 `followUp` 队列**，当轮结束后自动接上；registry 用一条 promise 链
+3. **同一会话的第二个请求进 registry 自己的 `pending` 队列**（HEU-37 已接管 pi 的
+   `followUp` 队列——pi 在 error / aborted 收尾时绕过抽干点会丢消息），`settled` 后
+   由 `setImmediate` 调度的 drain 逐个重新 `prompt()`，每个排队消息各占一轮 run；
+   registry 用一条 promise 链
    保护「判断是否在跑 + 发起调用」这段临界区，**但绝不能把「等整轮跑完」也串进去**——
    那样第二个请求会排到第一轮结束之后才发起，`followUp` 分支永远走不到。
 

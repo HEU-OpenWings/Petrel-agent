@@ -390,6 +390,67 @@ describe("POST /api/chat 会话持久化", () => {
     }, 5000);
   });
 
+  // HEU-37 验收：首轮以 error 收尾时，排队的第二条不能静默丢失
+  it("首轮以 error 收尾时，并发排队的第二条消息仍被回答并落库", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("答")], { stopReason: "error" }),
+      fauxAssistantMessage([fauxText("第二轮回答")]),
+    ]);
+
+    // 先发第一条并等到首轮真正开始（firstByte），再发第二条——保证第二条进排队
+    // 分支而不是落在首轮结束后的 idle 路径，避免并发时序抖动消费错 faux 响应
+    const first = await postChat({ message: "第一个问题", sessionId: SESSION_ID });
+    const { firstByte: firstStarted, done: firstDone } = drain(first);
+    await firstStarted;
+
+    const second = await postChat({ message: "第二个问题", sessionId: SESSION_ID });
+    const { done: secondDone } = drain(second);
+
+    const secondText = await secondDone;
+    await firstDone;
+
+    // 第二条连接不能静默空流：必须带着答案正常收尾
+    expect(secondText).toContain("第二轮回答");
+    const secondEvents = parseSse(secondText);
+    expect(secondEvents.map((entry) => (entry.data as { type: string }).type)).toContain("agent_end");
+
+    await vi.waitFor(async () => {
+      expect(await storedRoles()).toEqual(["user", "assistant", "user", "assistant"]);
+    }, 5000);
+  });
+
+  // HEU-37 验收：abort 只停当前轮，排队中的消息照常被回答并落库
+  it("abort 只停当前轮，排队中的消息仍被回答并落库", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText(LONG_ANSWER)]),
+      fauxAssistantMessage([fauxText("第二轮回答")]),
+    ]);
+
+    const first = await postChat({ message: "第一个问题", sessionId: SESSION_ID });
+    const { firstByte: firstStarted, done: firstDone } = drain(first);
+    await firstStarted;
+
+    const second = await postChat({ message: "第二个问题", sessionId: SESSION_ID });
+    const { done: secondDone } = drain(second);
+
+    // 首轮还在跑时 abort：排队中的第二条不能被静默丢弃
+    await app.request("/api/chat/abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ sessionId: SESSION_ID }),
+    });
+
+    const secondText = await secondDone;
+    await firstDone;
+    expect(secondText).toContain("第二轮回答");
+
+    await vi.waitFor(async () => {
+      expect(await storedRoles()).toEqual(["user", "assistant", "user", "assistant"]);
+    }, 5000);
+  });
+
   it("POST /api/chat/abort 停掉正在跑的会话", async () => {
     useFaux(CHUNKED);
     faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);

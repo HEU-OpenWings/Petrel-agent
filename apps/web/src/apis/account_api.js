@@ -25,5 +25,5 @@ export function changePassword(currentPassword, newPassword) {
 
 /** 退出所有设备：后端自增 tokenVersion，所有已签发 token 立即失效（含当前这个） */
 export function logoutAllDevices() {
-  return post('/api/account/logout-all', {})
+  return post("/api/account/logout-all", {});
 }
