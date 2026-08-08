@@ -7,6 +7,7 @@ import { account } from "./routes/account.ts";
 import { admin } from "./routes/admin.ts";
 import { auth } from "./routes/auth.ts";
 import { chat } from "./routes/chat.ts";
+import { providers } from "./routes/providers.ts";
 import { sessions } from "./routes/sessions.ts";
 import { system } from "./routes/system.ts";
 
@@ -27,5 +28,8 @@ app.use("/api/*", requireAuth);
 app.route("/api/chat", chat);
 app.route("/api/sessions", sessions);
 app.route("/api/account", account);
+// HEU-53：Settings「模型服务」面板的只读 provider 配置状态接口。挂在 requireAuth 之下，
+// 与 /api/account 同级；isolation.test.ts 守着「无 cookie → 401」。
+app.route("/api/providers", providers);
 app.use("/api/admin/*", requireAdmin);
 app.route("/api/admin", admin);

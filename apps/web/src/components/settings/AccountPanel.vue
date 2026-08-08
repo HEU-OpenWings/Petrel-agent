@@ -35,20 +35,20 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
-import { message } from 'ant-design-vue'
-import { useRouter } from 'vue-router'
-import { changePassword, logoutAllDevices } from '@/apis/account_api'
-import { useUserStore } from '@/stores/user'
+import { message } from "ant-design-vue";
+import { reactive, ref } from "vue";
+import { useRouter } from "vue-router";
+import { changePassword, logoutAllDevices } from "@/apis/account_api";
+import { useUserStore } from "@/stores/user";
 
 /** 与后端 apps/server/src/services/auth.ts 的 PASSWORD_MIN_LENGTH 对齐，改一处要改两处 */
 const PASSWORD_MIN_LENGTH = 8;
 
-const userStore = useUserStore()
-const router = useRouter()
-const formRef = ref(null)
-const submitting = ref(false)
-const loggingOutAll = ref(false)
+const userStore = useUserStore();
+const router = useRouter();
+const formRef = ref(null);
+const submitting = ref(false);
+const loggingOutAll = ref(false);
 
 const form = reactive({
   currentPassword: "",
@@ -90,17 +90,17 @@ async function onSubmit() {
 }
 
 async function onLogoutAll() {
-  loggingOutAll.value = true
+  loggingOutAll.value = true;
   try {
-    await logoutAllDevices()
-    message.success('已退出所有设备')
+    await logoutAllDevices();
+    message.success("已退出所有设备");
     // 后端已把当前 cookie 清掉（tokenVersion 也自增了），本地状态同步清空并回登录页
-    await userStore.logout()
-    router.push('/login')
+    await userStore.logout();
+    router.push("/login");
   } catch (error) {
-    message.error(error.message || '退出失败，请重试')
+    message.error(error.message || "退出失败，请重试");
   } finally {
-    loggingOutAll.value = false
+    loggingOutAll.value = false;
   }
 }
 </script>

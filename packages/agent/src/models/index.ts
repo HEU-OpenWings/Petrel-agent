@@ -1,5 +1,11 @@
 import { type Api, createModels, type Model } from "@earendil-works/pi-ai";
-import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, PROVIDERS } from "./providers.ts";
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER_ID,
+  PROVIDER_CREDENTIAL_HINTS,
+  PROVIDERS,
+  type ProviderCredentialHint,
+} from "./providers.ts";
 
 export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID } from "./providers.ts";
 
@@ -109,4 +115,225 @@ export async function listConfiguredModels(): Promise<ModelSummary[]> {
     });
   }
   return summaries;
+}
+
+// ---------------------------------------------------------------------------
+// HEU-53 provider 配置状态查询（只读，给 Settings「模型服务」面板）
+//
+// 与 listConfiguredModels 的区别：后者只列**已配置** provider 的模型（供默认模型下拉），
+// 这里要列**全部** provider 并标注每个的配置状态 + env var 填写指引——issue 的核心痛点是
+// 「用户不知道为什么选择器里只有 DeepSeek」，只有把未配置 provider 也列出来才能解答。
+//
+// 两个硬约束（见 providers.ts 的 PROVIDER_CREDENTIAL_HINTS 注释 + pi-ai 类型定义）：
+// 1. env var 名无法从 Provider 反射（闭包私有），只能从 side table 读。
+// 2. pi 的 getAvailable() 无参调用是 Promise.all，**单个 provider 的 checkAuth 抛错会让整
+//    个调用 reject**（auth/resolve.js 把 resolve() 的错包成 ModelsError("auth")）。
+//    所以这里绝不能用一次 models.getAvailable()，必须按 providerId 分别 checkAuth 各自
+//    try/catch，保证一个 provider 的故障不会拖垮整个列表——这也是「configured 必须三态」
+//    的根因：解析失败（null）要区别于「确实未配置」（false），否则故障被伪装成未配置。
+// ---------------------------------------------------------------------------
+
+/** R0 只读响应里单个 provider 的状态。字段逐个构造，绝不展开 pi 的 Provider/Model。 */
+export interface ProviderStatus {
+  id: string;
+  name: string;
+  /** 是否系统默认 provider（provider.id === DEFAULT_PROVIDER_ID） */
+  isDefault: boolean;
+  /** true=凭据可解析 / false=确实未配置 / null=状态检查失败（区别于 false！） */
+  configured: boolean | null;
+  /** 该 provider 接受的环境变量名（来自 side table，未配置时也有值） */
+  envVars: readonly string[];
+  /** 面向用户的填写指引 */
+  note: string;
+  /** 注册模型总数（getModels(id).length，不含配置状态） */
+  modelCount: number;
+  /** 已配置且通过 filterModels 的模型数；configured=null 时为 null */
+  availableModelCount: number | null;
+  /** ready 只表示状态检查流程成功，不代表远端服务在线 */
+  runtimeStatus: "ready" | "degraded";
+  /** degraded 时的固定泛化文案；绝不放原始异常 message（可能含路径/阈值/key 片段） */
+  statusMessage: string | null;
+}
+
+export interface ProviderListResponse {
+  defaultProviderId: string;
+  defaultModelId: string;
+  providers: ProviderStatus[];
+}
+
+/** GET /api/providers/:id/models 响应里单个模型的状态 */
+export interface ProviderModelStatus {
+  id: string;
+  name: string;
+  /** 必须同时判 provider 和 model：聚合平台代售同名模型，只判 id 会标错多个默认 */
+  isDefault: boolean;
+  /**
+   * true=凭据完整且通过 filterModels（当前凭据下可选，不代表远端刚验证过）；
+   * false=当前不可选（provider 未配置，或被 filterModels 排除）；
+   * null=检查失败，可用性未知（区别于 false）。
+   */
+  available: boolean | null;
+}
+
+export interface ProviderModelsResponse {
+  provider: { id: string; name: string; isDefault: boolean };
+  configured: boolean | null;
+  runtimeStatus: "ready" | "degraded";
+  statusMessage: string | null;
+  models: ProviderModelStatus[];
+}
+
+/** side table 缺项时的兜底文案（CI 的 hint parity 测试会让这种代码进不了 main） */
+const MISSING_HINT: ProviderCredentialHint = Object.freeze({
+  envVars: [] as readonly string[],
+  note: "该 provider 的配置指引尚未维护",
+});
+
+/** 固定泛化文案，避免把原始异常 message 透传到响应（可能含路径/阈值/key 片段） */
+const STATUS_AUTH_UNAVAILABLE = "凭据状态暂时无法读取";
+const STATUS_AVAILABILITY_UNAVAILABLE = "模型可用性暂时无法读取";
+
+/**
+ * 把单个 provider 投射成 ProviderStatus。两段 try/catch 区分两种故障：
+ * - checkAuth 抛错 → 连 configured 都不知道（null + degraded）
+ * - checkAuth 成功但 getAvailable(id) 抛错 → 已知 configured，但不知道可用模型数
+ *   （configured 保留真实值，availableModelCount=null + degraded）
+ *
+ * 注意 getAvailable 必须传 providerId：无参的 getAvailable() 是跨 provider 的 Promise.all，
+ * 任意一个 provider 抛错会整体 reject，无法隔离。传了 id 也仍可能抛错（该 provider 自己的
+ * filterModels 钩子等），所以照样 try/catch。
+ */
+async function toProviderStatus(providerId: string, name: string): Promise<ProviderStatus> {
+  const hint = PROVIDER_CREDENTIAL_HINTS.get(providerId) ?? MISSING_HINT;
+  const isDefault = providerId === DEFAULT_PROVIDER_ID;
+  const modelCount = models.getModels(providerId).length;
+
+  let configured: boolean | null;
+  let availableModelCount: number | null;
+  let runtimeStatus: "ready" | "degraded";
+  let statusMessage: string | null;
+
+  try {
+    const auth = await models.checkAuth(providerId);
+    if (auth === undefined) {
+      // 未配置：不调 getAvailable（它对未配置 provider 也返回空数组，但多一次解析无意义）
+      configured = false;
+      availableModelCount = 0;
+      runtimeStatus = "ready";
+      statusMessage = null;
+    } else {
+      configured = true;
+      // 已配置才查可用模型数；getAvailable(id) 失败时 configured 仍保留 true
+      try {
+        availableModelCount = (await models.getAvailable(providerId)).length;
+        runtimeStatus = "ready";
+        statusMessage = null;
+      } catch {
+        availableModelCount = null;
+        runtimeStatus = "degraded";
+        statusMessage = STATUS_AVAILABILITY_UNAVAILABLE;
+      }
+    }
+  } catch {
+    // checkAuth 本身抛错：完全不知道配置状态
+    configured = null;
+    availableModelCount = null;
+    runtimeStatus = "degraded";
+    statusMessage = STATUS_AUTH_UNAVAILABLE;
+  }
+
+  return {
+    id: providerId,
+    name,
+    isDefault,
+    configured,
+    envVars: hint.envVars,
+    note: hint.note,
+    modelCount,
+    availableModelCount,
+    runtimeStatus,
+    statusMessage,
+  };
+}
+
+/**
+ * 列出全部运行时 provider 的配置状态。运行时注册顺序即输出顺序（自建云端 → 内置 → 本地）。
+ * 并行解析但每个 provider 内部独立 try/catch，单个故障不影响其他项。
+ */
+export async function listProviderStatuses(): Promise<ProviderListResponse> {
+  const providers = models.getProviders();
+  const statuses = await Promise.all(
+    providers.map((provider) => toProviderStatus(provider.id, provider.name)),
+  );
+  return {
+    defaultProviderId: DEFAULT_PROVIDER_ID,
+    defaultModelId: DEFAULT_MODEL_ID,
+    providers: statuses,
+  };
+}
+
+/**
+ * 某 provider 的模型目录（懒加载）。provider 不在运行时注册表时返回 undefined，
+ * 由路由层翻成 404——这里不抛异常，让调用方区分「不存在」与「存在但查询失败」。
+ *
+ * 模型目录来自 getModels(id)（静态注册全集，不走 auth）；可用性来自 getAvailable(id)
+ *（已配置才查）。未配置 provider 仍返回目录，每个模型 available=false——让前端能展示
+ * 「支持这些模型，但当前未配置」。
+ */
+export async function listProviderModels(providerId: string): Promise<ProviderModelsResponse | undefined> {
+  const provider = models.getProvider(providerId);
+  if (!provider) return undefined;
+
+  const isDefault = provider.id === DEFAULT_PROVIDER_ID;
+  // 静态目录全集（不走 auth 解析）
+  const catalog = provider.getModels();
+
+  // 解析配置状态与可用模型集合，沿用 toProviderStatus 的两段 catch 策略
+  let configured: boolean | null;
+  let runtimeStatus: "ready" | "degraded";
+  let statusMessage: string | null;
+  let availableIds: Set<string> | null; // null 表示可用性查询失败，所有模型 available=null
+
+  try {
+    const auth = await models.checkAuth(providerId);
+    if (auth === undefined) {
+      configured = false;
+      runtimeStatus = "ready";
+      statusMessage = null;
+      availableIds = new Set(); // 空集 → 所有模型 available=false
+    } else {
+      configured = true;
+      try {
+        const available = await models.getAvailable(providerId);
+        availableIds = new Set(available.map((m) => m.id));
+        runtimeStatus = "ready";
+        statusMessage = null;
+      } catch {
+        availableIds = null;
+        runtimeStatus = "degraded";
+        statusMessage = STATUS_AVAILABILITY_UNAVAILABLE;
+      }
+    }
+  } catch {
+    configured = null;
+    runtimeStatus = "degraded";
+    statusMessage = STATUS_AUTH_UNAVAILABLE;
+    availableIds = null;
+  }
+
+  const modelsView: ProviderModelStatus[] = catalog.map((model) => ({
+    id: model.id,
+    name: model.name,
+    // 与 listModels() 同口径：聚合平台代售同名模型时，只有默认 provider 那条算默认
+    isDefault: provider.id === DEFAULT_PROVIDER_ID && model.id === DEFAULT_MODEL_ID,
+    available: availableIds === null ? null : availableIds.has(model.id),
+  }));
+
+  return {
+    provider: { id: provider.id, name: provider.name, isDefault },
+    configured,
+    runtimeStatus,
+    statusMessage,
+    models: modelsView,
+  };
 }

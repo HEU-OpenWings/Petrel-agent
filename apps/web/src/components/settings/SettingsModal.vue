@@ -23,6 +23,7 @@
 
       <div class="panel">
         <GeneralPanel v-if="activeTab === 'general'" />
+        <ProvidersPanel v-else-if="activeTab === 'providers'" />
         <AccountPanel v-else />
       </div>
     </div>
@@ -34,6 +35,7 @@ import { computed, ref, watch } from "vue";
 import { usePreferencesStore } from "@/stores/preferences";
 import AccountPanel from "./AccountPanel.vue";
 import GeneralPanel from "./GeneralPanel.vue";
+import ProvidersPanel from "./ProvidersPanel.vue";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -43,6 +45,7 @@ const emit = defineEmits(["update:open"]);
 
 const TABS = [
   { key: "general", label: "通用" },
+  { key: "providers", label: "模型服务" },
   { key: "account", label: "账号" },
 ];
 
@@ -59,7 +62,10 @@ const visible = computed({
 watch(
   () => props.open,
   (open) => {
-    if (open) void preferences.ensureLoaded();
+    if (open) {
+      activeTab.value = "general";
+      void preferences.ensureLoaded();
+    }
   },
 );
 </script>
