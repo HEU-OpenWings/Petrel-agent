@@ -33,6 +33,7 @@ services:
       - ./packages/agent/src:/app/packages/agent/src
       - ./packages/config/src:/app/packages/config/src
       - ./packages/logger/src:/app/packages/logger/src
+      - ./packages/memory/src:/app/packages/memory/src
       - ./packages/database/src:/app/packages/database/src
       # migration 目录也要挂：runMigrations() 读的是 packages/database/drizzle，
       # 只挂 src 的话容器里用的是构建时烘进镜像的那份旧副本，新增的 .sql 永远不会被应用，
