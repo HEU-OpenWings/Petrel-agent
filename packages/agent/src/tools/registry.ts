@@ -94,10 +94,16 @@ let mcpCleanup: (() => Promise<void>) | undefined;
  */
 export async function initMcpTools(): Promise<() => Promise<void>> {
   const { tools, cleanup } = await connectAllMcpServers();
-  for (const tool of tools) {
-    // MCP 工具名已经带了 server 前缀（由 mcp.ts 保证），不会与内置工具冲突。
-    // 如果有冲突（极端情况），抛错让运维知道。
-    registerTool(tool.name, tool);
+  try {
+    for (const tool of tools) {
+      // MCP 工具名已经带了 server 前缀（由 mcp.ts 保证），不会与内置工具冲突。
+      // 如果有冲突（极端情况），抛错让运维知道。
+      registerTool(tool.name, tool);
+    }
+  } catch (error) {
+    // 部分注册失败时关闭已建立的 MCP 连接，避免连接泄漏
+    await cleanup().catch(() => {});
+    throw error;
   }
   mcpCleanup = cleanup;
   return cleanup;

@@ -457,8 +457,8 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
           held.modelId = assembly.modelId;
         }
 
-        // 工具子集变更
-        if (held.activeToolNames !== assembly.activeToolNames) {
+        // 工具子集变更（值比较：前端每次传的数组引用不同，内容可能相同）
+        if (!sameTools(held.activeToolNames, assembly.activeToolNames)) {
           const tools = resolveTools(assembly.activeToolNames);
           await held.harness.setTools(tools, assembly.activeToolNames);
           held.activeToolNames = assembly.activeToolNames;
@@ -787,6 +787,17 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       return entries.get(sessionId)?.compactionState;
     },
   };
+}
+
+/**
+ * 比较两个 activeToolNames 是否内容相同。
+ * 不能用 `===`：前端每次请求传的是新数组对象（引用不同），即使工具列表没变。
+ */
+function sameTools(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true; // 两个都是 undefined 或同一引用
+  if (!a || !b) return false; // 一个 undefined 一个不是
+  if (a.length !== b.length) return false;
+  return a.every((name, i) => name === b[i]);
 }
 
 const TITLE_MAX_LENGTH = 30;

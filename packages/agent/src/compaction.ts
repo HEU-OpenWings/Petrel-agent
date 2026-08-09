@@ -188,8 +188,8 @@ export interface ContextUsage {
  * 采信 retainedTail 里那条压缩前 assistant 的 usage，用户压完再看 `/context`
  * 会发现数字纹丝不动（CLAUDE.md 坑 19）。
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function inspectContext(
+  // biome-ignore lint/suspicious/noExplicitAny: 工具函数不依赖具体 ToolContext
   harness: AgentHarness<any>,
   session: Session,
   policy: CompactionPolicy,
@@ -208,6 +208,7 @@ export async function inspectContext(
  * phase，并发保护由调用方负责（见 harness-registry 的 Entry.compaction）。
  */
 export async function maybeCompact(
+  // biome-ignore lint/suspicious/noExplicitAny: 工具函数不依赖具体 ToolContext
   harness: AgentHarness<any>,
   session: Session,
   state: CompactionState,
@@ -282,6 +283,7 @@ export async function maybeCompact(
  * 让 apps/server 不必碰 pi 的 Model 类型（依赖方向 server → agent，
  * pi 接线只在 agent 与 ai）。
  */
+// biome-ignore lint/suspicious/noExplicitAny: 工具函数不依赖具体 ToolContext
 export function isContextOverflow(harness: AgentHarness<any>, message: AssistantMessage): boolean {
   return piIsContextOverflow(message, harness.getModel().contextWindow);
 }
