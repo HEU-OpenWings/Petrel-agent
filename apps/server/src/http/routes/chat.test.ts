@@ -26,6 +26,8 @@ const state = vi.hoisted(() => ({
   harnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
   /** 记录路由实际传给 createHarness 的选项，用来断言 modelId 有没有透传 */
   seenHarnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
+  /** 指定第几次 prompt 直接 reject，用来覆盖 pending drain 的运输层异常。 */
+  promptFailureAt: undefined as number | undefined,
   /** HEU-40 配额测试开关：默认沿用真实 env（enforcement=false，不拦截） */
   quotaEnforcement: false,
 }));
@@ -90,7 +92,18 @@ vi.mock("@petrel/agent", async (importOriginal) => {
     ...actual,
     createHarness: (options: CreateHarnessOptions) => {
       state.seenHarnessOptions = options;
-      return actual.createHarness({ ...options, ...state.harnessOptions });
+      const harness = actual.createHarness({ ...options, ...state.harnessOptions });
+      if (state.promptFailureAt !== undefined) {
+        const failureAt = state.promptFailureAt;
+        const prompt = harness.prompt.bind(harness);
+        let calls = 0;
+        vi.spyOn(harness, "prompt").mockImplementation((message, promptOptions) => {
+          calls += 1;
+          if (calls === failureAt) return Promise.reject(new Error("transport unavailable"));
+          return prompt(message, promptOptions);
+        });
+      }
+      return harness;
     },
   };
 });
@@ -155,6 +168,7 @@ beforeEach(async () => {
   state.dbBroken = false;
   state.sessionRepoBroken = false;
   state.harnessOptions = undefined;
+  state.promptFailureAt = undefined;
   state.quotaEnforcement = false;
   useFaux();
   await reset();
@@ -418,6 +432,23 @@ describe("POST /api/chat 会话持久化", () => {
     await vi.waitFor(async () => {
       expect(await storedRoles()).toEqual(["user", "assistant", "user", "assistant"]);
     }, 5000);
+  });
+
+  it("排队 run 的 prompt 抛异常时，对应 SSE 收到 event:error", async () => {
+    useFaux(CHUNKED);
+    state.promptFailureAt = 2;
+    faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+
+    const first = await postChat({ message: "第一个问题", sessionId: SESSION_ID });
+    const { firstByte: firstStarted, done: firstDone } = drain(first);
+    await firstStarted;
+    const second = await postChat({ message: "第二个问题", sessionId: SESSION_ID });
+    const { done: secondDone } = drain(second);
+
+    const secondEvents = parseSse(await secondDone);
+    await firstDone;
+
+    expect(secondEvents).toContainEqual({ event: "error", data: { message: "transport unavailable" } });
   });
 
   // HEU-37 验收：abort 只停当前轮，排队中的消息照常被回答并落库

@@ -353,7 +353,8 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
   容量上限 200、归属校验在装配之前、会话表故障时降级成一次性内存会话。
   换来「关页面不丢回答」，代价是新增 `POST /api/chat/abort` 作为唯一的停止入口。
 - **同会话并发消息进 registry 自己的队列**（HEU-37 已接管 pi 的 followUp 队列），
-  settled 后由 drain 逐个重新 `prompt()`，registry 用 promise 链保护「判断 + 发起」临界区。
+  settled 后由 drain 逐个重新 `prompt()`；drain/send/compact 共用 promise 链保护「判断 + 发起」
+  临界区，排队条目携带各自的模型与 systemPrompt，并共享 overflow 补救压缩。
 - 分层：SQL 在 `packages/database`（不认识 pi）→ pi 语义在 `packages/agent`
   （`PgSessionStorage`）→ 运行时状态在 `apps/server`（registry）。新增 `agent → database` 边。
 
@@ -398,8 +399,9 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
    （HEU-37，设计见 superpowers/specs/2026-08-08-heu37-followup-loss-design.md）：
    registry 不再用 `harness.followUp()`，自己维护 `pending` 队列，`settled` 后
    `setImmediate` 调度 drain 逐个重新 `prompt()`——error / aborted 收尾同样发 settled，
-   两条路径都不丢。**abort 语义明确定义为「只停当前轮，排队消息照常处理」**；
-   evict 时剩余排队条目 reject（客户端收到 event:error，不挂连接）。
+   两条路径都不丢。drain 与 send/compact 共用 chain 互斥，且排队 run 同样处理 overflow
+   补救压缩与请求自己的模型/systemPrompt。**abort 语义明确定义为「只停当前轮，排队消息
+   照常处理」**；evict 时剩余排队条目 reject（客户端收到 event:error，不挂连接）。
 2. **常驻 harness 在多副本部署下需要会话亲和**。否则同一会话的两个请求落到不同副本，
    各自持有一个实例并发写同一颗树——结果是分叉而非丢消息，但仍是缺陷。
    当前单副本，§5 的容量上限与 TTL 是硬要求；**多副本部署前必须先解决亲和性**。

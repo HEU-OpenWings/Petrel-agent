@@ -26,6 +26,8 @@
 ```ts
 interface PendingMessage {
   message: string;
+  assembly: HarnessAssemblyOptions;
+  notify: (notice: HarnessNotice) => void;
   resolve: () => void;
   reject: (error: unknown) => void;
 }
@@ -37,9 +39,10 @@ draining: boolean;           // drain 互斥，防止并发消费
 
 ### 2.2 send() 运行中分支
 
-`held.running` 为真时不再 `followUp().then(waitForIdle())`，改为 push 进 `pending`，
+`held.running` 为真或队列已有条目时不再 `followUp().then(waitForIdle())`，改为 push 进 `pending`，
 返回该条目的 promise。**语义保持**：send() 在该消息真正跑完（settled）后才 resolve，
-并发连接的 SSE 流因此能看到答案再收尾。
+并发连接的 SSE 流因此能看到答案再收尾。条目同时保存该请求的 model、systemPrompt 与
+压缩通知回调，独立 run 启动前再应用，避免被后到请求的配置覆盖。
 
 ### 2.3 settled 后 drain
 
@@ -51,25 +54,35 @@ draining: boolean;           // drain 互斥，防止并发消费
 微任务链（含 finally）先跑完。
 
 ```ts
-async function drain(entry) {
+async function drain(entry, sessionId) {
   if (entry.draining) return;
   entry.draining = true;
   try {
     while (entry.pending.length > 0) {
-      if (entry.retired) { /* reject 剩余条目，让客户端收到 event:error */ return; }
-      const item = entry.pending.shift()!;
-      entry.running = true;
-      try { await entry.harness.prompt(item.message); }
-      catch (error) { logger.error(..., "排队消息 run 失败"); }
-      finally { entry.running = false; }
-      item.resolve();
+      const started = entry.chain.then(() => {
+        if (entry.retired) { /* reject 剩余条目 */ return; }
+        if (entry.running || entry.compaction) { /* settled/compaction 完成后再唤醒 */ return; }
+        const item = entry.pending.shift();
+        if (!item) return;
+        entry.running = true;
+        const outcome = applyAssembly(entry, item.assembly)
+          .then(() => promptWithOverflowRecovery(entry, sessionId, item.message, item.notify))
+          .finally(() => { entry.running = false; });
+        return { item, outcome }; // 包对象，chain 不等待整轮
+      });
+      entry.chain = started.catch(() => undefined);
+      const launched = await started;
+      if (!launched) return;
+      await launched.outcome.then(launched.item.resolve, launched.item.reject);
     }
   } finally { entry.draining = false; }
 }
 ```
 
-排队消息的 run **不做预压缩**：与旧 followUp 分支一致（那条分支本来就不压缩），
-上下文溢出时 pi 的静默溢出检测会给出 error 回答（有回答、落库，不静默）。
+drain 的「判断状态 + 发起 prompt」与 send/compact 共用 `entry.chain`，但等待整轮发生在
+chain 外；这样既不会插队或撞上压缩，也不会堵住后续请求入队。排队 run 保留**不做预压缩**
+的取舍，但 prompt 后复用普通 send 的 overflow 检测与强制压缩兜底，避免一次溢出让队列
+后续消息连锁失败。
 
 ### 2.4 abort 语义（本 issue 要求明确定义）
 
@@ -92,10 +105,12 @@ async function drain(entry) {
   第二条最终有回答且落库（registry 层 + chat 路由层各一条）；
 - `stopReason: "aborted"` 同样断言；
 - 既有「并发第三条消息」测试改为断言**每个排队消息各占一轮 run**（agent_end 数
-  与消息数一致），仍然全部有回答且落库。
+  与消息数一致）、prompt 顺序与发送顺序一致，仍然全部有回答且落库；
+- 排队 prompt 抛运输异常时 send reject，路由对应 SSE 收到 `event:error`；
+- 排队 run 溢出时执行补救压缩；运行期间 acquire 的 model/systemPrompt 在该条目起轮前应用。
 
 ## 4. 已知取舍
 
 - 排队消息从「同一 run 内消化」变为「各自独立 run」：多一个 agent_start/agent_end
   周期，前端按消息 id 归约，可正常渲染（不改前端）。
-- 排队消息的 run 不做预压缩（同旧 followUp 分支）。
+- 排队消息的 run 不做预压缩；溢出后的补救压缩与普通 send 一致。

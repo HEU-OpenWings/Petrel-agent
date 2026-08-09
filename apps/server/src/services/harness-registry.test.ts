@@ -257,6 +257,7 @@ describe("createHarnessRegistry", () => {
     const registry = createHarnessRegistry({ db, createHarness: factory.create });
 
     const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const prompt = vi.spyOn(handle.harness, "prompt");
     const types: string[] = [];
     handle.harness.subscribe((event) => {
       types.push(event.type);
@@ -265,7 +266,7 @@ describe("createHarnessRegistry", () => {
     const first = handle.send("第一个问题");
     const second = handle.send("第二个问题");
     const third = handle.send("第三个问题");
-    // send() 现在自己会等到整轮真正结束才 resolve（followUp 分支内部等了 waitForIdle）
+    // send() 会等到这条消息自己的独立 run 真正结束才 resolve
     await Promise.all([first, second, third]);
     handle.release();
 
@@ -273,6 +274,7 @@ describe("createHarnessRegistry", () => {
     expect(text).toContain("第一个问题");
     expect(text).toContain("第二个问题");
     expect(text).toContain("第三个问题");
+    expect(prompt.mock.calls.map(([message]) => message)).toEqual(["第一个问题", "第二个问题", "第三个问题"]);
     // HEU-37：不再用 harness.followUp()（error/aborted 收尾会绕过它的抽干点），
     // 每个排队消息各占一轮 run，所以是三次 agent_end——顺序仍然保持
     expect(types.filter((type) => type === "agent_end")).toHaveLength(3);
@@ -303,6 +305,23 @@ describe("createHarnessRegistry", () => {
     expect(text).toContain("第二个问题");
     // 两轮 run：首轮 error 收尾、第二轮消化排队消息
     expect(types.filter((type) => type === "agent_end")).toHaveLength(2);
+  });
+
+  it("排队消息的 prompt 抛异常时 send 会 reject，而不是静默成功", async () => {
+    const factory = fauxFactory(true);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const originalPrompt = handle.harness.prompt.bind(handle.harness);
+    vi.spyOn(handle.harness, "prompt")
+      .mockImplementationOnce((message, options) => originalPrompt(message, options))
+      .mockRejectedValueOnce(new Error("transport unavailable"));
+
+    const first = handle.send("第一个问题");
+    const second = handle.send("第二个问题");
+
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).rejects.toThrow("transport unavailable");
+    handle.release();
   });
 
   it("abort 只停当前轮，排队中的消息照常被回答并落库", async () => {
@@ -582,6 +601,47 @@ describe("createHarnessRegistry 的自动压缩", () => {
     second.release();
 
     expect(seenSystem).toBe("第一个提示");
+  });
+
+  it("运行中 acquire 的配置会在它自己的排队 run 开始前应用", async () => {
+    const factory = fauxFactory();
+    let firstStarted = false;
+    let releaseFirst: () => void = () => undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let queuedSystemPrompt: string | undefined;
+    factory.faux.setResponses([
+      async () => {
+        firstStarted = true;
+        await firstGate;
+        return fauxAssistantMessage([fauxText("第一轮回答")]);
+      },
+      (context) => {
+        queuedSystemPrompt = context.systemPrompt;
+        return fauxAssistantMessage([fauxText("第二轮回答")]);
+      },
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const firstHandle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题", {
+      systemPrompt: "第一个提示",
+    });
+    const first = firstHandle.send("第一个问题");
+    await vi.waitFor(() => expect(firstStarted).toBe(true));
+
+    const setModel = vi.spyOn(firstHandle.harness, "setModel").mockResolvedValue(undefined);
+    const secondHandle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第二个问题", {
+      systemPrompt: "第二个提示",
+      modelId: "deepseek-ai/DeepSeek-V3",
+    });
+    const second = secondHandle.send("第二个问题");
+    releaseFirst();
+    await Promise.all([first, second]);
+    firstHandle.release();
+    secondHandle.release();
+
+    expect(queuedSystemPrompt).toBe("第二个提示");
+    expect(setModel).toHaveBeenCalledWith(expect.objectContaining({ id: "deepseek-ai/DeepSeek-V3" }));
   });
 
   it("压缩失败不阻断本轮，照常 prompt", async () => {
@@ -927,6 +987,39 @@ describe("createHarnessRegistry 的 overflow 兜底", () => {
     handle.release();
 
     expect(text).toContain("已自动压缩历史，请重新发送");
+  });
+
+  it("排队 run 溢出时同样触发补救压缩，避免后续消息连锁失败", async () => {
+    const factory = overflowRecoveryFactory();
+    let firstStarted = false;
+    let releaseFirst: () => void = () => undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    factory.faux.setResponses([
+      async () => {
+        firstStarted = true;
+        await firstGate;
+        return fauxAssistantMessage([fauxText("第一轮回答")]);
+      },
+      OVERFLOW,
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const first = handle.send("第一个问题");
+    await vi.waitFor(() => expect(firstStarted).toBe(true));
+    const notices: HarnessNotice[] = [];
+    const second = handle.send("第二个问题", { onNotice: (notice) => notices.push(notice) });
+    releaseFirst();
+
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).rejects.toThrow(/已自动压缩历史，请重新发送/);
+    handle.release();
+
+    expect(notices.at(-1)).toMatchObject({ phase: "end", outcome: { kind: "compacted" } });
+    const entries = await handle.session.buildContextEntries();
+    expect(entries.some((entry) => entry.type === "compaction")).toBe(true);
   });
 
   /**
