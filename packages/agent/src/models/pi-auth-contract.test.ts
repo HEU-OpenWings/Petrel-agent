@@ -168,7 +168,9 @@ describe("createModels({ credentials, authContext }) 合同", () => {
     expect(check?.source).not.toBe(ENV_VAR);
 
     // 进一步用 getAuth 确认实际解析出的 apiKey 是 store 的那个
-    const auth = await models.getAuth(models.getModels(PROVIDER_ID)[0]!);
+    const [model] = models.getModels(PROVIDER_ID);
+    if (!model) throw new Error("合同测试模型未注册");
+    const auth = await models.getAuth(model);
     expect(auth?.auth.apiKey).toBe(storedKey);
     // stored 命中时 env 不该被读（per-field 合并：key 已有就不读 env）
     expect(envCalls).not.toHaveBeenCalled();
@@ -188,7 +190,9 @@ describe("createModels({ credentials, authContext }) 合同", () => {
     expect(check?.source).toBe(ENV_VAR);
     expect(envCalls).toHaveBeenCalledWith(ENV_VAR);
 
-    const auth = await models.getAuth(models.getModels(PROVIDER_ID)[0]!);
+    const [model] = models.getModels(PROVIDER_ID);
+    if (!model) throw new Error("合同测试模型未注册");
+    const auth = await models.getAuth(model);
     expect(auth?.auth.apiKey).toBe("ambient-env-key");
   });
 
@@ -214,7 +218,8 @@ describe("createModels({ credentials, authContext }) 合同", () => {
 
     const models = createModels({ credentials: store, authContext: ctx });
     models.setProvider(contractProvider());
-    const model = models.getModels(PROVIDER_ID)[0]!;
+    const [model] = models.getModels(PROVIDER_ID);
+    if (!model) throw new Error("合同测试模型未注册");
 
     const auth1 = await models.getAuth(model);
     expect(auth1?.auth.apiKey).toBe("key-v1");

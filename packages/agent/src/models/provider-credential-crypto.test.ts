@@ -2,7 +2,6 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   createProviderCredentialCipher,
-  type ProviderCredentialCipher,
   ProviderCredentialCryptoError,
 } from "./provider-credential-crypto.ts";
 

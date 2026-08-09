@@ -116,7 +116,8 @@ describe("无缓存：更新 key 后同一 Models 立即读到新值", () => {
     await store.modify(DEFAULT_PROVIDER_ID, async () => ({ type: "api_key", key: "sk-version-1-aaaa" }));
 
     const userModels = createUserModels(db, TEST_USER_ID, { cipher });
-    const model = userModels.getModel(DEFAULT_PROVIDER_ID, DEFAULT_MODEL_ID)!;
+    const model = userModels.getModel(DEFAULT_PROVIDER_ID, DEFAULT_MODEL_ID);
+    if (!model) throw new Error("默认模型未注册");
 
     const auth1 = await userModels.getAuth(model);
     expect(auth1?.auth.apiKey).toBe("sk-version-1-aaaa");

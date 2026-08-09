@@ -30,7 +30,7 @@ import { PROVIDERS } from "./providers.ts";
 /** 加密 cipher 的 lazy singleton：所有 user Models 共用同一个 cipher（同一个 master key） */
 let cachedCipher: ProviderCredentialCipher | undefined;
 
-function getCipher(): ProviderCredentialCipher {
+export function getProviderCredentialCipher(): ProviderCredentialCipher {
   if (cachedCipher) return cachedCipher;
   const key = env.providerCredentials.encryptionKey;
   if (key === undefined) {
@@ -62,7 +62,7 @@ export function createUserModels(
     authContext?: AuthContext;
   },
 ): Models {
-  const cipher = options?.cipher ?? getCipher();
+  const cipher = options?.cipher ?? getProviderCredentialCipher();
   const store: CredentialStore = createDbCredentialStore(db, userId, cipher);
 
   const models = createModels(

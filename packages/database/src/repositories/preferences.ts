@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { userPreferences } from "../schema.ts";
 import type { Database } from "./sessions.ts";
 
@@ -49,6 +49,22 @@ export function createPreferencesRepository(db: Database) {
         });
 
       return values;
+    },
+
+    /**
+     * 仅当默认模型仍是调用方刚读取到的 expectedModel 时清回系统默认。
+     *
+     * 删除 provider 凭据时，另一个标签页可能同时保存了新的默认模型。若先读后无条件 save，
+     * 删除请求会把那个新值覆盖为 null；把旧值放进 WHERE 后，竞态时更新 0 行并返回 false，
+     * 调用方即可知道「状态已变化，不能替用户清空」。systemPrompt 始终不受影响。
+     */
+    async clearDefaultModelIfMatches(userId: string, expectedModel: string): Promise<boolean> {
+      const updated = await db
+        .update(userPreferences)
+        .set({ defaultModel: null, updatedAt: NOW })
+        .where(and(eq(userPreferences.userId, userId), eq(userPreferences.defaultModel, expectedModel)))
+        .returning();
+      return updated.length > 0;
     },
   };
 }

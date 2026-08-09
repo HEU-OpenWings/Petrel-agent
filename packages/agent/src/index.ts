@@ -4,6 +4,7 @@ import { currentTime } from "./tools/current-time.ts";
 // pnpm 严格 node_modules 下 apps/server 解析不到 pi 包，也守住「pi 接线只在 agent」的约束。
 export type {
   Agent,
+  AgentEvent,
   AgentHarness,
   AgentHarnessEvent,
   AgentMessage,
@@ -21,6 +22,7 @@ export {
   isContextOverflow,
   maybeCompact,
 } from "./compaction.ts";
+export { projectAgentEvent, projectAssistantMessage } from "./events/project-agent-event.ts";
 export {
   type CreateHarnessOptions,
   createHarness,
@@ -41,5 +43,21 @@ export {
   type ProviderModelsResponse,
   type ProviderStatus,
 } from "./models/index.ts";
+export {
+  type CreateUserProviderServiceOptions,
+  createUserProviderService,
+  type DeletedCredentialResponse,
+  type PersonalCredentialState,
+  type PersonalCredentialStatus,
+  type ProviderCapabilities,
+  type ProviderCredentialTestResponse,
+  type ProviderCredentialTestSource,
+  type RuntimeCredentialSource,
+  type StoredCredentialResponse,
+  type UserProviderListResponse,
+  UserProviderServiceError,
+  type UserProviderServiceErrorKind,
+  type UserProviderStatus,
+} from "./models/user-provider-service.ts";
 export { PgSessionStorage } from "./session/pg-storage.ts";
 export { currentTime };

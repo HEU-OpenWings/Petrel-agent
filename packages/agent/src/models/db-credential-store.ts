@@ -74,7 +74,11 @@ export function __getCredentialMutexSize(): number {
   return mutexMap.size;
 }
 
-async function withMutex<T>(userId: string, providerId: string, fn: () => Promise<T>): Promise<T> {
+export async function withProviderCredentialMutex<T>(
+  userId: string,
+  providerId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
   const key = `${userId}\x00${providerId}`;
   const prev = mutexMap.get(key) ?? Promise.resolve();
   let release!: () => void;
@@ -168,7 +172,7 @@ export function createDbCredentialStore(
     },
 
     async modify(providerId, fn) {
-      return withMutex(userId, providerId, async () => {
+      return withProviderCredentialMutex(userId, providerId, async () => {
         for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
           // 读当前（current 只来自用户 DB，绝不混 ambient env——pi 的合并是 resolve 的事）
           let current: Credential | undefined;
@@ -206,7 +210,7 @@ export function createDbCredentialStore(
             );
           }
           // 规范化 + 校验 key（统一 trim 语义，加密与 hint 用同一个规范化值）
-          const normalizedKey = normalizeApiKey(next.key);
+          const normalizedKey = normalizeProviderApiKey(next.key);
           // 拒绝带 env 的 credential：复合 provider env 不在 R1 schema 范围，
           // 且 env 字段会绕过「用户只填 key」的语义
           if (next.env !== undefined) {
@@ -272,13 +276,21 @@ export function createDbCredentialStore(
     },
 
     async delete(providerId) {
-      await withMutex(userId, providerId, async () => {
-        // 无行幂等成功；有行直接删（用户显式删除就是要删，不走 CAS——
-        // 与「删除个人覆盖、恢复共享 env」语义一致）
-        try {
-          await repo.deleteByUserAndProvider(userId, providerId);
-        } catch {
-          throw new ProviderCredentialStoreError("db_unavailable", "凭据删除暂时不可用");
+      await withProviderCredentialMutex(userId, providerId, async () => {
+        for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+          try {
+            const current = await repo.findByUserAndProvider(userId, providerId);
+            if (!current) return; // 无行幂等成功
+
+            const deleted = await repo.deleteIfRevision(userId, providerId, current.revision);
+            if (deleted) return;
+            if (attempt + 1 === MAX_CAS_RETRIES) {
+              throw new ProviderCredentialStoreError("conflict", "凭据删除冲突，请重试");
+            }
+          } catch (err) {
+            if (err instanceof ProviderCredentialStoreError) throw err;
+            throw new ProviderCredentialStoreError("db_unavailable", "凭据删除暂时不可用");
+          }
         }
       });
     },
@@ -299,7 +311,7 @@ const MAX_API_KEY_LENGTH = 4096;
  * 校验：非空、长度 [MIN, MAX]、只含可打印 ASCII（拒绝控制字符/换行/非 ASCII，
  * 这类字符在 API key 里无合法用途，且可能是注入或复制错误）。
  */
-function normalizeApiKey(raw: string | undefined): string {
+export function normalizeProviderApiKey(raw: string | undefined): string {
   if (typeof raw !== "string") {
     throw new ProviderCredentialStoreError("not_api_key", "API key 不能为空");
   }
@@ -329,7 +341,7 @@ function normalizeApiKey(raw: string | undefined): string {
 /**
  * 从规范化 key 派生 hint（末 4 位）。面板显示遮罩「••••1234」用，不是机密。
  *
- * 安全前提：调用方传入的是 normalizeApiKey 的返回值（已校验 ≥ MIN_API_KEY_LENGTH=8），
+ * 安全前提：调用方传入的是 normalizeProviderApiKey 的返回值（已校验 ≥ MIN_API_KEY_LENGTH=8），
  * 所以末 4 位必是 key 的子串而非完整 key。与 schema 注释一致：不存前缀（sk- 无辨识度）。
  */
 function deriveKeyHint(normalizedApiKey: string): string {

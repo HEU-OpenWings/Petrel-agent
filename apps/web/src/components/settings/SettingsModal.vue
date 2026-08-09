@@ -23,7 +23,11 @@
 
       <div class="panel">
         <GeneralPanel v-if="activeTab === 'general'" />
-        <ProvidersPanel v-else-if="activeTab === 'providers'" />
+        <ProvidersPanel
+          v-else-if="activeTab === 'providers'"
+          :open="visible"
+          :user-id="userStore.user?.id ?? null"
+        />
         <AccountPanel v-else />
       </div>
     </div>
@@ -33,6 +37,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { usePreferencesStore } from "@/stores/preferences";
+import { useUserStore } from "@/stores/user";
 import AccountPanel from "./AccountPanel.vue";
 import GeneralPanel from "./GeneralPanel.vue";
 import ProvidersPanel from "./ProvidersPanel.vue";
@@ -50,6 +55,7 @@ const TABS = [
 ];
 
 const preferences = usePreferencesStore();
+const userStore = useUserStore();
 const activeTab = ref("general");
 
 const visible = computed({

@@ -9,6 +9,22 @@ import { useUserStore } from "@/stores/user";
 
 let unauthorizedHandler = null;
 
+/**
+ * 兼容 Error 的结构化 HTTP 错误。
+ *
+ * 旧调用方继续读取 `error.message`；需要按状态稳定分支的新调用方可读取
+ * status / code / retryAfter。只保存服务端安全错误 envelope，不附带响应正文或 headers。
+ */
+export class HttpError extends Error {
+  constructor(message, { status = null, code = null, retryAfter = null } = {}) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+    this.code = code;
+    this.retryAfter = retryAfter;
+  }
+}
+
 /** 由 main.js 在启动时注册。放在这里是为了让本模块对 router 零依赖，从而可测。 */
 export function setUnauthorizedHandler(handler) {
   unauthorizedHandler = handler;
@@ -36,15 +52,18 @@ export function handleUnauthorized({ skipUnauthorizedHandler = false } = {}) {
   if (!skipUnauthorizedHandler) {
     unauthorizedHandler?.();
   }
-  return new Error("登录已失效，请重新登录");
+  return new HttpError("登录已失效，请重新登录", { status: 401 });
 }
 
-async function readErrorMessage(response) {
+async function readError(response) {
   try {
     const body = await response.json();
-    return body?.error?.message ?? body?.detail ?? body?.message ?? "";
+    return {
+      code: body?.error?.code ?? null,
+      message: body?.error?.message ?? body?.detail ?? body?.message ?? "",
+    };
   } catch {
-    return "";
+    return { code: null, message: "" };
   }
 }
 
@@ -82,7 +101,12 @@ export async function request(url, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error((await readErrorMessage(response)) || `请求失败（HTTP ${response.status}）`);
+    const error = await readError(response);
+    throw new HttpError(error.message || `请求失败（HTTP ${response.status}）`, {
+      status: response.status,
+      code: error.code,
+      retryAfter: response.headers.get("Retry-After"),
+    });
   }
 
   if (responseType === "raw") return response;

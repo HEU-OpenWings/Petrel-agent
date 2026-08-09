@@ -1,433 +1,997 @@
 <template>
-  <div v-if="loadFailed" class="failed">
-    <p>模型服务状态读取失败。</p>
-    <a-button size="small" @click="load">重试</a-button>
-  </div>
-
-  <a-spin v-else-if="loading" />
-
-  <!-- B4：空态。成功加载但无 provider 时，不能渲染成空白 -->
-  <div v-else-if="providers.length === 0" class="empty">
-    <p>未发现已注册的模型服务。</p>
-  </div>
-
-  <div v-else class="providers">
-    <div
-      v-for="provider in providers"
-      :key="provider.id"
-      class="provider-row"
-      :class="{ expanded: expandedId === provider.id }"
-    >
-      <div class="row-header" @click="toggle(provider.id)">
-        <span class="provider-name">
-          {{ provider.name }}
-          <a-tag v-if="provider.isDefault" color="blue" size="small" class="default-tag"
-            >默认</a-tag
-          >
-        </span>
-        <span class="meta">
-          <!-- 严格三态：null 是「读取失败」，绝不能和 false 混为「未配置」 -->
-          <template v-if="provider.configured === true">
-            <a-tag color="green">已配置</a-tag>
-          </template>
-          <template v-else-if="provider.configured === false">
-            <a-tag color="default">未配置</a-tag>
-          </template>
-          <template v-else>
-            <a-tag color="orange">状态读取失败</a-tag>
-          </template>
-        </span>
-        <span class="arrow">{{ expandedId === provider.id ? '▾' : '▸' }}</span>
+  <section class="provider-panel" aria-labelledby="provider-panel-title">
+    <header class="panel-heading">
+      <div>
+        <h2 id="provider-panel-title">模型服务</h2>
+        <p>为当前账号管理个人 Provider 凭据。保存与连接测试相互独立，保存不会访问上游。</p>
       </div>
+      <span v-if="capabilities" class="runtime-mode">
+        {{ capabilities.storedCredentialsEnabled ? "个人凭据运行时已启用" : "仅使用系统凭据运行时" }}
+      </span>
+    </header>
 
-      <transition name="expand">
-        <div v-if="expandedId === provider.id" class="row-body">
-          <!-- degraded 优先提示（哪怕 configured=true，availability 查询失败也算 degraded）。
-               注意「已配置」只代表凭据材料完整，不代表 key 有效或服务在线。 -->
-          <div v-if="provider.runtimeStatus === 'degraded'" class="note degraded-note">
-            <span class="action-icon">⚠</span>{{ provider.statusMessage }}
-          </div>
-
-          <!-- B1：支持的环境变量三态都显示（configured=null 时用户最需要排查，不能藏起来） -->
-          <div v-if="provider.envVars.length > 0" class="source-info">
-            <span class="source-label">支持的环境变量：</span>
-            <code>{{ provider.envVars.join(' / ') }}</code>
-          </div>
-
-          <!-- 已配置：展示模型目录（懒加载，按 available 三态区分） -->
-          <template v-if="provider.configured === true">
-            <div class="section-title">
-              模型目录（{{ provider.availableModelCount ?? '—' }} 可用 /
-              {{ provider.modelCount }} 注册）
-            </div>
-          </template>
-
-          <!-- 未配置（API key 类）：B2 文案改为克制的「提供凭据」，不暗示「即可使用」 -->
-          <template v-else-if="provider.configured === false && provider.envVars.length > 0">
-            <div class="section-title">
-              未配置 — 提供凭据后可用（已注册 {{ provider.modelCount }} 个模型）
-            </div>
-            <div v-if="provider.note" class="note">
-              <span class="note-label">获取方式：</span>{{ provider.note }}
-            </div>
-            <div class="env-config">
-              <div v-for="envVar in provider.envVars" :key="envVar" class="env-line">
-                <code>{{ envVar }}=&lt;your-key&gt;</code>
-                <a-button size="small" type="link" @click.stop="copyEnv(envVar)">复制</a-button>
-              </div>
-              <div class="action">
-                <span class="action-icon">ℹ</span>
-                在 <code>.env</code> 中填入后执行
-                <code>docker compose up -d</code> 生效（环境变量不热重载，不能用 restart）
-              </div>
-            </div>
-          </template>
-
-          <!-- 未配置（本地服务类，无凭据 envVars） -->
-          <template v-else-if="provider.configured === false">
-            <div class="section-title">
-              本地推理服务（已注册 {{ provider.modelCount }} 个占位模型）
-            </div>
-            <div v-if="provider.note" class="note">{{ provider.note }}</div>
-            <div class="action">
-              <span class="action-icon">ℹ</span>
-              配置后执行 <code>docker compose up -d</code> 生效
-            </div>
-          </template>
-
-          <!-- B3：模型目录（已配置、未配置都懒加载，按 available 三态渲染） -->
-          <a-spin v-if="modelsLoading[provider.id]" size="small" />
-          <template v-else-if="modelsState[provider.id]">
-            <div class="models">
-              <a-tag
-                v-for="model in modelsState[provider.id].models"
-                :key="model.id"
-                :color="modelTagColor(model.available)"
-              >
-                {{ model.name }}
-                <span v-if="model.isDefault" class="model-default">（默认）</span>
-              </a-tag>
-            </div>
-            <div v-if="provider.configured === false" class="hint">
-              <span class="action-icon">ℹ</span>已注册的模型；配置凭据后可选择
-            </div>
-          </template>
-          <!-- B3：详情请求失败 → 显式错误 + 重试，不静默吞成空数组 -->
-          <div v-else-if="modelsError[provider.id]" class="failed-inline">
-            <span>模型目录读取失败。</span>
-            <a-button size="small" type="link" @click.stop="loadModels(provider.id)">重试</a-button>
-          </div>
-        </div>
-      </transition>
+    <div
+      v-if="managementOnly"
+      class="mode-notice"
+      role="status"
+    >
+      <span class="notice-mark">i</span>
+      个人凭据可以保存、测试和删除，但运行时开关尚未启用；已保存的个人凭据尚未用于对话。
     </div>
-  </div>
+
+    <div v-if="loadFailed" class="failed">
+      <p>模型服务状态读取失败。</p>
+      <a-button size="small" @click="load()">重试</a-button>
+    </div>
+
+    <div v-else-if="loading" class="loading"><a-spin /></div>
+
+    <div v-else-if="providers.length === 0" class="empty">
+      <p>未发现已注册的模型服务。</p>
+    </div>
+
+    <div v-else class="providers">
+      <article
+        v-for="provider in providers"
+        :key="provider.id"
+        class="provider-row"
+        :class="{ expanded: expandedId === provider.id }"
+      >
+        <button
+          type="button"
+          class="row-header"
+          :aria-expanded="expandedId === provider.id"
+          :aria-controls="`provider-details-${provider.id}`"
+          @click="toggle(provider.id)"
+        >
+          <span class="provider-identity">
+            <span class="provider-name">{{ provider.name }}</span>
+            <span v-if="provider.isDefault" class="default-pill">默认</span>
+          </span>
+
+          <span class="status-cluster">
+            <span class="status-pill" :class="configuredClass(provider.configured)">
+              {{ configuredLabel(provider.configured) }}
+            </span>
+            <span
+              v-if="provider.personalCredential.status === 'stored'"
+              class="status-pill personal"
+            >
+              个人凭据 {{ provider.personalCredential.keyHint }}
+            </span>
+            <span class="source-label">{{ runtimeSourceLabel(provider.runtimeCredentialSource) }}</span>
+          </span>
+
+          <span class="arrow" aria-hidden="true">{{ expandedId === provider.id ? "▾" : "▸" }}</span>
+        </button>
+
+        <transition name="expand">
+          <div
+            v-if="expandedId === provider.id"
+            :id="`provider-details-${provider.id}`"
+            class="row-body"
+          >
+            <div v-if="provider.runtimeStatus === 'degraded'" class="degraded-note" role="status">
+              <span aria-hidden="true">!</span>{{ provider.statusMessage }}
+            </div>
+
+            <dl class="credential-summary">
+              <div>
+                <dt>个人凭据</dt>
+                <dd>{{ personalCredentialLabel(provider.personalCredential) }}</dd>
+              </div>
+              <div>
+                <dt>对话运行时</dt>
+                <dd>{{ runtimeSourceDescription(provider.runtimeCredentialSource) }}</dd>
+              </div>
+              <div>
+                <dt>模型目录</dt>
+                <dd>{{ provider.availableModelCount ?? "—" }} 可用 / {{ provider.modelCount }} 注册</dd>
+              </div>
+            </dl>
+
+            <div v-if="capabilities?.credentialManagementEnabled" class="credential-card">
+              <div class="credential-card-heading">
+                <div>
+                  <h3>个人 API Key</h3>
+                  <p>密钥仅用于当前账号；草稿只保留在本设置窗口内。</p>
+                </div>
+                <span v-if="provider.personalCredential.updatedAt" class="updated-at">
+                  更新于 {{ formatUpdatedAt(provider.personalCredential.updatedAt) }}
+                </span>
+              </div>
+
+              <label class="key-label" :for="`provider-key-${provider.id}`">API Key</label>
+              <a-input-password
+                :id="`provider-key-${provider.id}`"
+                v-model:value="draftKeys[provider.id]"
+                class="key-input"
+                autocomplete="off"
+                autocapitalize="none"
+                autocorrect="off"
+                :spellcheck="false"
+                :disabled="saveLoading[provider.id] || deleteLoading[provider.id]"
+                placeholder="输入新的 API Key；不会显示已保存的值"
+                @input="markDraft(provider.id)"
+              />
+
+              <div class="operation-actions">
+                <a-button
+                  type="primary"
+                  size="small"
+                  :loading="saveLoading[provider.id]"
+                  :disabled="!draftTouched[provider.id] || deleteLoading[provider.id]"
+                  @click="save(provider.id)"
+                >
+                  保存或覆盖
+                </a-button>
+                <a-button
+                  size="small"
+                  :loading="testLoading[provider.id]"
+                  :disabled="saveLoading[provider.id] || deleteLoading[provider.id]"
+                  @click="testConnection(provider.id)"
+                >
+                  {{ draftTouched[provider.id] ? "测试当前草稿" : "测试当前凭据" }}
+                </a-button>
+                <a-popconfirm
+                  title="删除当前账号保存的个人凭据？"
+                  description="删除后将重新计算模型可用性与默认模型；系统环境凭据仍可能继续可用。"
+                  ok-text="删除"
+                  cancel-text="取消"
+                  placement="topRight"
+                  @confirm="remove(provider.id)"
+                >
+                  <a-button
+                    danger
+                    size="small"
+                    :loading="deleteLoading[provider.id]"
+                    :disabled="provider.personalCredential.status !== 'stored' || saveLoading[provider.id]"
+                  >
+                    删除个人凭据
+                  </a-button>
+                </a-popconfirm>
+              </div>
+
+              <div class="probe-warning">
+                <span aria-hidden="true">!</span>
+                测试会向上游发送固定的最小请求，可能产生费用、触发上游限流，并形成 Provider
+                侧审计记录。测试不会保存草稿，也不消耗聊天 Token 配额。
+              </div>
+
+              <div class="operation-results" aria-live="polite">
+                <p
+                  v-if="saveResult[provider.id]"
+                  class="operation-result"
+                  :class="saveResult[provider.id].kind"
+                >
+                  <span>保存</span>{{ saveResult[provider.id].message }}
+                </p>
+                <p
+                  v-if="testResult[provider.id]"
+                  class="operation-result"
+                  :class="testResult[provider.id].kind"
+                >
+                  <span>测试</span>{{ testResult[provider.id].message }}
+                </p>
+                <p
+                  v-if="deleteResult[provider.id]"
+                  class="operation-result"
+                  :class="deleteResult[provider.id].kind"
+                >
+                  <span>删除</span>{{ deleteResult[provider.id].message }}
+                </p>
+              </div>
+            </div>
+
+            <div v-else class="management-disabled">
+              当前已冻结个人凭据管理；现有运行时来源保持不变。
+            </div>
+
+            <div v-if="provider.envVars.length > 0" class="ambient-info">
+              <span>系统环境 fallback</span>
+              <code v-for="envVar in provider.envVars" :key="envVar">{{ envVar }}</code>
+            </div>
+
+            <section class="model-section" :aria-labelledby="`model-title-${provider.id}`">
+              <div class="model-heading">
+                <h3 :id="`model-title-${provider.id}`">注册模型</h3>
+                <button
+                  v-if="modelsError[provider.id]"
+                  type="button"
+                  class="retry-link"
+                  @click.stop="loadModels(provider.id, { force: true })"
+                >
+                  重试
+                </button>
+              </div>
+
+              <a-spin v-if="modelsLoading[provider.id]" size="small" />
+              <div v-else-if="modelsState[provider.id]" class="models">
+                <a-tag
+                  v-for="model in modelsState[provider.id].models"
+                  :key="model.id"
+                  :color="modelTagColor(model.available)"
+                >
+                  {{ model.name }}<span v-if="model.isDefault">（默认）</span>
+                </a-tag>
+              </div>
+              <p v-else-if="modelsError[provider.id]" class="failed-inline">模型目录读取失败。</p>
+            </section>
+          </div>
+        </transition>
+      </article>
+    </div>
+  </section>
 </template>
 
 <script setup>
-import { message } from "ant-design-vue";
-import { reactive, ref } from "vue";
-import { fetchProviderModels, fetchProviders } from "@/apis/provider_api";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import {
+  deleteProviderCredential,
+  fetchProviderModels,
+  fetchProviders,
+  saveProviderCredential,
+  testProviderCredential,
+} from "@/apis/provider_api";
+import { usePreferencesStore } from "@/stores/preferences";
 
-/**
- * 模型服务面板（R0 只读）。
- *
- * 数据源是后端 GET /api/providers（方案 C 扁平契约），不再用硬编码 provider 清单 +
- * usePreferencesStore 推导——后者列不出未配置 provider，正是 HEU-53 要补的缺口。
- *
- * 本期不含凭据管理（R1：在 UI 填 key 即时生效），那需要 admin 权限、加密落库与运行时
- * 改造，是独立的 issue。所以这里没有任何保存/测试/删除按钮。
- *
- * 文案红线（对应契约语义）：configured=true 只代表「凭据材料完整」，绝不写成「可用 /
- * 连接正常」——远端有效性需要真实模型调用才能证明，那超出 R0。
- */
+const props = defineProps({
+  open: { type: Boolean, default: false },
+  userId: { type: String, default: null },
+});
+
+const preferences = usePreferencesStore();
 const loading = ref(false);
 const loadFailed = ref(false);
 const providers = ref([]);
-
+const capabilities = ref(null);
 const expandedId = ref(null);
-// 展开某 provider 时懒加载它的模型目录，按 provider id 缓存
-const modelsState = reactive({}); // { [id]: { models: ProviderModelStatus[] } }
-const modelsLoading = reactive({});
-const modelsError = reactive({}); // { [id]: boolean } 详情请求失败标记（与「空目录」区分）
 
-async function load() {
-  loading.value = true;
+const modelsState = reactive({});
+const modelsLoading = reactive({});
+const modelsError = reactive({});
+
+// Key 只存在这个组件实例的局部内存，不进入 Pinia、URL 或浏览器存储。
+const draftKeys = reactive({});
+const draftTouched = reactive({});
+
+const saveLoading = reactive({});
+const testLoading = reactive({});
+const deleteLoading = reactive({});
+const saveResult = reactive({});
+const testResult = reactive({});
+const deleteResult = reactive({});
+
+const listSequence = ref(0);
+const modelSequence = {};
+const saveSequence = {};
+const testSequence = {};
+const deleteSequence = {};
+const mutationSequence = {};
+let lifecycleGeneration = 0;
+
+const managementOnly = computed(
+  () =>
+    capabilities.value?.credentialManagementEnabled === true &&
+    capabilities.value?.storedCredentialsEnabled === false,
+);
+
+function clearRecord(record) {
+  for (const key of Object.keys(record)) delete record[key];
+}
+
+function clearDraft(providerId) {
+  delete draftKeys[providerId];
+  delete draftTouched[providerId];
+}
+
+function clearSensitiveDrafts() {
+  clearRecord(draftKeys);
+  clearRecord(draftTouched);
+}
+
+function clearOperationState() {
+  for (const record of [saveLoading, testLoading, deleteLoading, saveResult, testResult, deleteResult]) {
+    clearRecord(record);
+  }
+}
+
+function nextSequence(record, providerId) {
+  const next = (record[providerId] ?? 0) + 1;
+  record[providerId] = next;
+  return next;
+}
+
+function isCurrent(boundary, sequence, record, providerId) {
+  return lifecycleGeneration === boundary && record[providerId] === sequence;
+}
+
+function invalidateTest(providerId) {
+  nextSequence(testSequence, providerId);
+  testLoading[providerId] = false;
+  delete testResult[providerId];
+}
+
+function resetBoundary() {
+  lifecycleGeneration += 1;
+  listSequence.value += 1;
+  loading.value = false;
+  loadFailed.value = false;
+  providers.value = [];
+  capabilities.value = null;
+  expandedId.value = null;
+  clearRecord(modelsState);
+  clearRecord(modelsLoading);
+  clearRecord(modelsError);
+  clearSensitiveDrafts();
+  clearOperationState();
+}
+
+async function load({ background = false } = {}) {
+  const boundary = lifecycleGeneration;
+  const sequence = ++listSequence.value;
+  if (!background) loading.value = true;
   loadFailed.value = false;
   try {
     const data = await fetchProviders();
-    providers.value = data.providers;
+    if (lifecycleGeneration !== boundary || listSequence.value !== sequence) return;
+    capabilities.value = data.capabilities ?? null;
+    providers.value = Array.isArray(data.providers) ? data.providers : [];
   } catch {
-    // 加载失败要显式提示 + 重试，不能用空列表冒充「无 provider」
+    if (lifecycleGeneration !== boundary || listSequence.value !== sequence) return;
     loadFailed.value = true;
   } finally {
-    loading.value = false;
+    if (lifecycleGeneration === boundary && listSequence.value === sequence) loading.value = false;
   }
 }
 
-async function loadModels(providerId) {
-  if (modelsLoading[providerId]) return;
-  // 清掉旧的错误态，允许重试覆盖
+async function loadModels(providerId, { force = false } = {}) {
+  if (modelsLoading[providerId] && !force) return;
+  const boundary = lifecycleGeneration;
+  const sequence = nextSequence(modelSequence, providerId);
   delete modelsError[providerId];
-  delete modelsState[providerId];
+  if (force) delete modelsState[providerId];
   modelsLoading[providerId] = true;
   try {
     const data = await fetchProviderModels(providerId);
-    modelsState[providerId] = { models: data.models };
+    if (!isCurrent(boundary, sequence, modelSequence, providerId)) return;
+    modelsState[providerId] = { models: Array.isArray(data.models) ? data.models : [] };
   } catch {
-    // B3：详情请求失败用独立 error 状态，不静默缓存成空数组
+    if (!isCurrent(boundary, sequence, modelSequence, providerId)) return;
     modelsError[providerId] = true;
   } finally {
-    modelsLoading[providerId] = false;
+    if (isCurrent(boundary, sequence, modelSequence, providerId)) {
+      modelsLoading[providerId] = false;
+    }
   }
 }
 
-async function toggle(id) {
-  expandedId.value = expandedId.value === id ? null : id;
-  // 展开任何 provider 都懒加载模型目录（未配置也展示「已注册但不可选」）
-  if (expandedId.value === id && !modelsState[id] && !modelsError[id]) {
-    loadModels(id);
+async function refreshAfterMutation(providerId, boundary, mutation) {
+  if (!isCurrent(boundary, mutation, mutationSequence, providerId)) return;
+  await Promise.all([
+    load({ background: true }),
+    loadModels(providerId, { force: true }),
+    preferences.reload(),
+  ]);
+}
+
+async function toggle(providerId) {
+  expandedId.value = expandedId.value === providerId ? null : providerId;
+  if (expandedId.value === providerId && !modelsState[providerId] && !modelsError[providerId]) {
+    await loadModels(providerId);
   }
 }
 
-/** B3：按 available 三态选 tag 颜色。null（未知）用 orange 区别于 false（灰）。 */
+function markDraft(providerId) {
+  draftTouched[providerId] = true;
+  delete saveResult[providerId];
+  invalidateTest(providerId);
+}
+
+async function save(providerId) {
+  const boundary = lifecycleGeneration;
+  const sequence = nextSequence(saveSequence, providerId);
+  const mutation = nextSequence(mutationSequence, providerId);
+  const candidate = draftKeys[providerId] ?? "";
+  saveLoading[providerId] = true;
+  delete saveResult[providerId];
+  delete deleteResult[providerId];
+  invalidateTest(providerId);
+  try {
+    const result = await saveProviderCredential(providerId, candidate);
+    if (!isCurrent(boundary, mutation, mutationSequence, providerId)) return;
+    clearDraft(providerId);
+    saveResult[providerId] = {
+      kind: "success",
+      message: `已加密保存（${result.credential.keyHint}）；下一轮对话会重新读取当前凭据。`,
+    };
+    await refreshAfterMutation(providerId, boundary, mutation);
+  } catch (error) {
+    if (!isCurrent(boundary, mutation, mutationSequence, providerId)) return;
+    saveResult[providerId] = { kind: "error", message: error.message || "保存失败，请重试。" };
+  } finally {
+    if (isCurrent(boundary, sequence, saveSequence, providerId)) saveLoading[providerId] = false;
+  }
+}
+
+async function testConnection(providerId) {
+  const boundary = lifecycleGeneration;
+  const sequence = nextSequence(testSequence, providerId);
+  const input = draftTouched[providerId] ? { apiKey: draftKeys[providerId] ?? "" } : {};
+  testLoading[providerId] = true;
+  delete testResult[providerId];
+  try {
+    const result = await testProviderCredential(providerId, input);
+    if (!isCurrent(boundary, sequence, testSequence, providerId)) return;
+    const source = {
+      candidate: "当前草稿",
+      personal: "已保存的个人凭据",
+      ambient: "系统环境凭据",
+    }[result.source];
+    testResult[providerId] = {
+      kind: "success",
+      message: `连接成功：${source ?? "当前凭据"} · ${result.modelId}`,
+    };
+  } catch (error) {
+    if (!isCurrent(boundary, sequence, testSequence, providerId)) return;
+    testResult[providerId] = { kind: "error", message: error.message || "连接测试失败。" };
+  } finally {
+    if (isCurrent(boundary, sequence, testSequence, providerId)) testLoading[providerId] = false;
+  }
+}
+
+async function remove(providerId) {
+  const boundary = lifecycleGeneration;
+  const sequence = nextSequence(deleteSequence, providerId);
+  const mutation = nextSequence(mutationSequence, providerId);
+  deleteLoading[providerId] = true;
+  delete deleteResult[providerId];
+  delete saveResult[providerId];
+  clearDraft(providerId);
+  invalidateTest(providerId);
+  try {
+    const result = await deleteProviderCredential(providerId);
+    if (!isCurrent(boundary, mutation, mutationSequence, providerId)) return;
+    deleteResult[providerId] = {
+      kind: "success",
+      message: result.defaultModelReset
+        ? "个人凭据已删除；不可用的默认模型已恢复为跟随系统默认。"
+        : "个人凭据已删除；当前默认模型无需调整。",
+    };
+    await refreshAfterMutation(providerId, boundary, mutation);
+  } catch (error) {
+    if (!isCurrent(boundary, mutation, mutationSequence, providerId)) return;
+    deleteResult[providerId] = { kind: "error", message: error.message || "删除失败，请重试。" };
+  } finally {
+    if (isCurrent(boundary, sequence, deleteSequence, providerId)) deleteLoading[providerId] = false;
+  }
+}
+
+function configuredLabel(configured) {
+  if (configured === true) return "运行时已配置";
+  if (configured === false) return "运行时未配置";
+  return "运行时状态未知";
+}
+
+function configuredClass(configured) {
+  if (configured === true) return "ready";
+  if (configured === false) return "missing";
+  return "unknown";
+}
+
+function runtimeSourceLabel(source) {
+  return {
+    personal: "个人凭据",
+    ambient: "系统凭据",
+    none: "无运行时凭据",
+    unknown: "来源未知",
+  }[source];
+}
+
+function runtimeSourceDescription(source) {
+  return {
+    personal: "下一轮对话读取当前账号的个人凭据",
+    ambient: "对话使用服务端环境凭据",
+    none: "当前没有可用于对话的凭据",
+    unknown: "凭据来源暂时无法确认",
+  }[source];
+}
+
+function personalCredentialLabel(credential) {
+  if (credential.status === "stored") return `已保存 ${credential.keyHint}`;
+  if (credential.status === "not_stored") return "未保存";
+  if (credential.status === "unknown") return "状态读取失败";
+  return "个人凭据功能已关闭";
+}
+
 function modelTagColor(available) {
   if (available === true) return "blue";
   if (available === null) return "orange";
   return "default";
 }
 
-async function copyEnv(envVar) {
-  const text = `${envVar}=<your-key>`;
-  try {
-    await navigator.clipboard.writeText(text);
-    message.success(`已复制：${text}`);
-  } catch {
-    message.error("复制失败");
-  }
+function formatUpdatedAt(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "未知时间" : date.toLocaleString("zh-CN", { hour12: false });
 }
 
-// 挂载即加载（组件只在 SettingsModal 打开「模型服务」tab 时才渲染）
-load();
+watch(
+  () => [props.open, props.userId],
+  ([open, userId]) => {
+    resetBoundary();
+    if (open && userId) void load();
+  },
+  { immediate: true, flush: "sync" },
+);
+
+onBeforeUnmount(resetBoundary);
 </script>
 
 <style lang="less" scoped>
-.failed {
-  color: var(--text-muted);
-  font-size: 14px;
+.provider-panel {
+  --provider-info-bg: #e6f4ff;
+  --provider-info-border: #91caff;
+  --provider-info-text: #0958d9;
+  --provider-warn-bg: #fffbe6;
+  --provider-warn-border: #ffe58f;
+  --provider-warn-text: #7c5b00;
+  --provider-success-bg: #f6ffed;
+  --provider-success-border: #b7eb8f;
+  --provider-success-text: #237804;
+  --provider-personal-bg: #f0f5ff;
+  --provider-personal-border: #adc6ff;
+  --provider-personal-text: #1d39c4;
+  --provider-error-text: #cf1322;
+  color: var(--text-strong);
+}
+
+:global(.dark) .provider-panel {
+  --provider-info-bg: #111d2c;
+  --provider-info-border: #1554ad;
+  --provider-info-text: #69b1ff;
+  --provider-warn-bg: #2b2111;
+  --provider-warn-border: #7c5b00;
+  --provider-warn-text: #ffd666;
+  --provider-success-bg: #162312;
+  --provider-success-border: #3c8618;
+  --provider-success-text: #95de64;
+  --provider-personal-bg: #131629;
+  --provider-personal-border: #3548a8;
+  --provider-personal-text: #85a5ff;
+  --provider-error-text: #ff7875;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+
+  h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
   p {
-    margin: 0 0 12px;
+    max-width: 520px;
+    margin: 5px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.55;
   }
 }
 
-.empty {
+.runtime-mode {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.mode-notice,
+.probe-warning,
+.degraded-note,
+.management-disabled {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.mode-notice,
+.management-disabled {
+  border: 1px solid var(--provider-info-border);
+  background: var(--provider-info-bg);
+  color: var(--provider-info-text);
+}
+
+.notice-mark {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.loading,
+.failed,
+.empty {
+  padding: 28px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+
+  p {
+    margin: 0 0 10px;
+  }
 }
 
 .providers {
   display: flex;
   flex-direction: column;
-  gap: 0;
 }
 
 .provider-row {
   border-bottom: 1px solid var(--border-subtle);
 
   &:last-child {
-    border-bottom: none;
+    border-bottom: 0;
   }
 }
 
 .row-header {
-  display: flex;
+  display: grid;
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 12px 8px;
+  grid-template-columns: minmax(124px, 0.8fr) minmax(240px, 1.4fr) 16px;
   align-items: center;
-  gap: 8px;
-  padding: 10px 0;
+  gap: 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
-  user-select: none;
   transition: background-color 0.15s ease;
 
   &:hover {
     background: var(--surface-hover);
-    margin: 0 -12px;
-    padding: 10px 12px;
-    border-radius: 6px;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #1677ff;
+    outline-offset: -2px;
   }
 }
 
-.provider-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-strong);
-  flex: 0 0 auto;
+.provider-identity,
+.status-cluster {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.default-tag {
-  font-size: 11px;
-  line-height: 1;
-  padding: 0 6px;
-}
-
-.meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1 1 auto;
   min-width: 0;
 }
 
-.arrow {
-  font-size: 12px;
-  color: var(--text-muted);
+.provider-name {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.default-pill,
+.status-pill {
   flex: 0 0 auto;
-  transition: transform 0.2s ease;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.default-pill {
+  background: var(--provider-info-bg);
+  color: var(--provider-info-text);
+}
+
+.status-pill {
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+
+  &.ready {
+    border-color: var(--provider-success-border);
+    background: var(--provider-success-bg);
+    color: var(--provider-success-text);
+  }
+
+  &.unknown {
+    border-color: var(--provider-warn-border);
+    background: var(--provider-warn-bg);
+    color: var(--provider-warn-text);
+  }
+
+  &.personal {
+    border-color: var(--provider-personal-border);
+    background: var(--provider-personal-bg);
+    color: var(--provider-personal-text);
+  }
+}
+
+.source-label {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arrow {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: right;
 }
 
 .row-body {
-  padding: 0 0 14px;
+  padding: 0 4px 18px;
   overflow: hidden;
 }
 
-.section-title {
-  font-size: 13px;
+.degraded-note {
+  border: 1px solid var(--provider-warn-border);
+  background: var(--provider-warn-bg);
+  color: var(--provider-warn-text);
+}
+
+.credential-summary {
+  display: grid;
+  margin: 12px 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-hover);
+
+  div {
+    min-width: 0;
+    padding: 10px 12px;
+    border-right: 1px solid var(--border-subtle);
+
+    &:last-child {
+      border-right: 0;
+    }
+  }
+
+  dt {
+    margin-bottom: 3px;
+    color: var(--text-muted);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  dd {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+}
+
+.credential-card {
+  padding: 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  background: var(--surface-app);
+}
+
+.credential-card-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 11px;
+
+  h3 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  p {
+    margin: 3px 0 0;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+}
+
+.updated-at {
+  align-self: flex-start;
   color: var(--text-muted);
-  margin: 10px 0 8px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.key-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-strong);
+  font-size: 11px;
+}
+
+.key-input {
+  width: 100%;
+}
+
+.operation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.probe-warning {
+  border: 1px solid var(--provider-warn-border);
+  background: var(--provider-warn-bg);
+  color: var(--provider-warn-text);
+}
+
+.operation-results {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.operation-result {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+
+  span {
+    flex: 0 0 auto;
+    font-weight: 600;
+  }
+
+  &.success {
+    color: var(--provider-success-text);
+  }
+
+  &.error {
+    color: var(--provider-error-text);
+  }
+}
+
+.ambient-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 11px;
+  color: var(--text-muted);
+  font-size: 11px;
+
+  code {
+    padding: 2px 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: var(--surface-hover);
+    color: var(--text-strong);
+    font-size: 10px;
+  }
+}
+
+.model-section {
+  margin-top: 13px;
+}
+
+.model-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+
+  h3 {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 12px;
+    font-weight: 600;
+  }
+}
+
+.retry-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1677ff;
+  font-size: 11px;
+  cursor: pointer;
 }
 
 .models {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 8px;
-}
-
-.model-default {
-  font-size: 11px;
-  opacity: 0.8;
-}
-
-.hint {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.source-info {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-
-  code {
-    padding: 2px 8px;
-    font-size: 12px;
-    background: var(--surface-hover);
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    color: var(--text-strong);
-  }
-}
-
-.source-label {
-  flex-shrink: 0;
-}
-
-.env-config {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.env-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-
-  code {
-    padding: 4px 12px;
-    font-size: 13px;
-    background: var(--surface-hover);
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    color: var(--text-strong);
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  }
-}
-
-.note {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.5;
-
-  .note-label {
-    font-weight: 500;
-    color: var(--text-secondary);
-  }
-}
-
-.degraded-note {
-  color: #d46b08;
-  background: #fffbe6;
-  border: 1px solid #ffe58f;
-  border-radius: 6px;
-  padding: 8px 12px;
-  margin-bottom: 6px;
-
-  .action-icon {
-    margin-right: 4px;
-  }
 }
 
 .failed-inline {
-  margin-top: 8px;
-  font-size: 12px;
+  margin: 0;
   color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  font-size: 11px;
 }
 
-.action {
-  margin-top: 8px;
-  padding: 8px 12px;
-  font-size: 12px;
-  color: var(--text-muted);
-  background: var(--surface-hover);
-  border-radius: 6px;
-  line-height: 1.6;
-
-  .action-icon {
-    margin-right: 4px;
-  }
-
-  code {
-    padding: 1px 6px;
-    font-size: 12px;
-    background: var(--surface-elevated);
-    border-radius: 4px;
-    color: var(--text-strong);
-  }
-}
-
-// 展开/收起过渡
 .expand-enter-active,
 .expand-leave-active {
-  transition: all 0.25s ease;
-  max-height: 800px;
+  max-height: 980px;
+  transition: max-height 0.22s ease, opacity 0.18s ease;
 }
 
 .expand-enter-from,
 .expand-leave-to {
   max-height: 0;
   opacity: 0;
-  padding-top: 0;
-  padding-bottom: 0;
+}
+
+@media (max-width: 680px) {
+  .panel-heading {
+    flex-direction: column;
+  }
+
+  .row-header {
+    grid-template-columns: minmax(0, 1fr) 16px;
+  }
+
+  .status-cluster {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+  }
+
+  .arrow {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .credential-summary {
+    grid-template-columns: 1fr;
+
+    div {
+      border-right: 0;
+      border-bottom: 1px solid var(--border-subtle);
+
+      &:last-child {
+        border-bottom: 0;
+      }
+    }
+  }
+
+  .credential-card-heading {
+    flex-direction: column;
+  }
+
+  .updated-at {
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .expand-enter-active,
+  .expand-leave-active,
+  .row-header {
+    transition: none;
+  }
 }
 </style>

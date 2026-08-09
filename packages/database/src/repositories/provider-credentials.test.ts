@@ -2,7 +2,11 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { userProviderCredentials, users } from "../schema.ts";
 import { createTestDb, TEST_USER_ID, type TestDb } from "../testing.ts";
-import { createProviderCredentialRepository } from "./provider-credentials.ts";
+import { createPreferencesRepository } from "./preferences.ts";
+import {
+  createProviderCredentialRepository,
+  deleteProviderCredentialAndNormalizeDefaultModel,
+} from "./provider-credentials.ts";
 
 // HEU-54 R1 凭据 repository 测试。关键不变式：
 // 1. 复合主键 (user, provider) 唯一——同用户同 provider 插两次撞主键
@@ -145,6 +149,16 @@ describe("listMetadataByUser", () => {
     expect((await repo.listMetadataByUser(TEST_USER_ID)).map((m) => m.providerId)).toEqual([PROVIDER_A]);
     expect((await repo.listMetadataByUser(OTHER_USER_ID)).map((m) => m.providerId)).toEqual([PROVIDER_B]);
   });
+
+  it("findMetadataByUserAndProvider 只返回单项安全元数据", async () => {
+    const repo = createProviderCredentialRepository(db);
+    await repo.insertIfAbsent(envelope(TEST_USER_ID, PROVIDER_A, "a", "abcd"));
+
+    const meta = await repo.findMetadataByUserAndProvider(TEST_USER_ID, PROVIDER_A);
+    expect(meta).toMatchObject({ providerId: PROVIDER_A, keyHint: "abcd", revision: 1 });
+    expect(JSON.stringify(meta)).not.toContain("cipher_");
+    await expect(repo.findMetadataByUserAndProvider(TEST_USER_ID, PROVIDER_B)).resolves.toBeUndefined();
+  });
 });
 
 describe("replaceIfRevision（乐观锁更新）", () => {
@@ -194,26 +208,70 @@ describe("deleteIfRevision（乐观锁删除）", () => {
   });
 });
 
-describe("deleteByUserAndProvider（用户显式删除）", () => {
-  it("无行时幂等成功（不抛错）", async () => {
+describe("删除 mutation 公共边界", () => {
+  it("不暴露绕过 revision CAS 的无条件删除 API", () => {
     const repo = createProviderCredentialRepository(db);
-    await expect(repo.deleteByUserAndProvider(TEST_USER_ID, PROVIDER_A)).resolves.toBeUndefined();
+    expect(Object.hasOwn(repo, "deleteByUserAndProvider")).toBe(false);
+  });
+});
+
+describe("deleteProviderCredentialAndNormalizeDefaultModel", () => {
+  it("同一事务删除凭据并在旧默认模型仍匹配时清为 null", async () => {
+    const credentials = createProviderCredentialRepository(db);
+    const preferences = createPreferencesRepository(db);
+    await credentials.insertIfAbsent(envelope(TEST_USER_ID, PROVIDER_A, "v1"));
+    await preferences.save(TEST_USER_ID, { defaultModel: "deepseek-v4-flash", systemPrompt: "保留" });
+
+    await expect(
+      deleteProviderCredentialAndNormalizeDefaultModel(db, {
+        userId: TEST_USER_ID,
+        providerId: PROVIDER_A,
+        expectedDefaultModel: "deepseek-v4-flash",
+      }),
+    ).resolves.toEqual({ deleted: true, defaultModelReset: true });
+
+    await expect(credentials.findByUserAndProvider(TEST_USER_ID, PROVIDER_A)).resolves.toBeUndefined();
+    await expect(preferences.findByUserId(TEST_USER_ID)).resolves.toEqual({
+      defaultModel: null,
+      systemPrompt: "保留",
+    });
   });
 
-  it("有行时删除", async () => {
-    const repo = createProviderCredentialRepository(db);
-    await repo.insertIfAbsent(envelope(TEST_USER_ID, PROVIDER_A, "v1"));
+  it("默认模型已被并发改写时仍删除凭据，但不覆盖新偏好", async () => {
+    const credentials = createProviderCredentialRepository(db);
+    const preferences = createPreferencesRepository(db);
+    await credentials.insertIfAbsent(envelope(TEST_USER_ID, PROVIDER_A, "v1"));
+    await preferences.save(TEST_USER_ID, { defaultModel: "new-model", systemPrompt: "新版" });
 
-    await repo.deleteByUserAndProvider(TEST_USER_ID, PROVIDER_A);
-    expect(await repo.findByUserAndProvider(TEST_USER_ID, PROVIDER_A)).toBeUndefined();
+    await expect(
+      deleteProviderCredentialAndNormalizeDefaultModel(db, {
+        userId: TEST_USER_ID,
+        providerId: PROVIDER_A,
+        expectedDefaultModel: "stale-model",
+      }),
+    ).resolves.toEqual({ deleted: true, defaultModelReset: false });
+
+    await expect(credentials.findByUserAndProvider(TEST_USER_ID, PROVIDER_A)).resolves.toBeUndefined();
+    await expect(preferences.findByUserId(TEST_USER_ID)).resolves.toEqual({
+      defaultModel: "new-model",
+      systemPrompt: "新版",
+    });
   });
 
-  it("错误 master key 下仍可删除（不解密， CredentialStore 删损坏行后重存）", async () => {
-    // repository 本身从不解密，所以这里只验证「有任意密文行也能直接删」
-    const repo = createProviderCredentialRepository(db);
-    await repo.insertIfAbsent(envelope(TEST_USER_ID, PROVIDER_A, "corrupt"));
-    await repo.deleteByUserAndProvider(TEST_USER_ID, PROVIDER_A);
-    expect(await repo.findByUserAndProvider(TEST_USER_ID, PROVIDER_A)).toBeUndefined();
+  it("无凭据行时幂等，且 expectedDefaultModel 省略时不改偏好", async () => {
+    const preferences = createPreferencesRepository(db);
+    await preferences.save(TEST_USER_ID, { defaultModel: "m-1", systemPrompt: null });
+
+    await expect(
+      deleteProviderCredentialAndNormalizeDefaultModel(db, {
+        userId: TEST_USER_ID,
+        providerId: PROVIDER_A,
+      }),
+    ).resolves.toEqual({ deleted: false, defaultModelReset: false });
+    await expect(preferences.findByUserId(TEST_USER_ID)).resolves.toEqual({
+      defaultModel: "m-1",
+      systemPrompt: null,
+    });
   });
 });
 

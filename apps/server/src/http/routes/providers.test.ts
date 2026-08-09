@@ -78,9 +78,10 @@ async function registerUser(email: string): Promise<string> {
 }
 
 describe("GET /api/providers 鉴权与挂载", () => {
-  it("未登录返回 401", async () => {
+  it("未登录返回 401 且不缓存", async () => {
     const response = await app.request("/api/providers");
     expect(response.status).toBe(401);
+    expect(response.headers.get("cache-control")).toContain("no-store");
   });
 
   it("已登录普通用户可访问（不要求 admin）", async () => {
@@ -180,7 +181,9 @@ describe("GET /api/providers/:providerId/models", () => {
       headers: { Cookie: cookie },
     });
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: { message: expect.any(String) } });
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "PROVIDER_NOT_FOUND", message: expect.any(String) },
+    });
   });
 
   // N1：404 也带 no-store（新增同名 provider 后，暂存的 404 会让客户端以为它不存在）
@@ -238,10 +241,9 @@ describe("GET /api/providers/:providerId/models", () => {
   });
 });
 
-describe("R1 写端点本期不实现（自然 404）", () => {
-  // 王若宁前端 PR#15 的 R1 写操作指向这些路径，但本期后端只交付 R0 只读。
-  // 它们在认证后应自然落到 notFound（404），后端不为它们注册占位 handler——
-  // 占位 handler 会把未设计的 URL/method 冻结成事实契约。
+describe("management kill switch 关闭时写端点自然 404", () => {
+  // 测试进程使用默认 management=false。三个写路由不注册占位 handler，
+  // 认证后自然落到 notFound；开启时的完整合同由 providers-write.test.ts 覆盖。
   let cookie: string;
   beforeEach(async () => {
     cookie = await registerUser("r1@x.io");

@@ -16,6 +16,8 @@
 
 - [架构说明](architecture.md) — 部署拓扑、代码分层、依赖方向、关键链路
 - [上下文压缩策略](context-compaction.md) — 阈值、守卫、互斥、可见性与调参
+- [Provider 状态与模型目录 API](heu53-provider-config-api.md) — 当前用户视角的只读状态、三态语义与动态模型目录
+- [普通用户 Provider 凭据（BYOK）](heu54-user-provider-credentials.md) — 加密存储、kill switch、写 API、chat/SSE 与前端秘密生命周期
 
 ## 约定
 

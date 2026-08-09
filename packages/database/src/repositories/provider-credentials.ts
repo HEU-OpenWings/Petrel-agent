@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { userProviderCredentials } from "../schema.ts";
+import { userPreferences, userProviderCredentials } from "../schema.ts";
 import type { Database } from "./sessions.ts";
 
 /**
@@ -102,6 +102,26 @@ export function createProviderCredentialRepository(db: Database) {
       return rows;
     },
 
+    /** 查询单个 provider 的展示元数据，不把密文 envelope 带过 agent/service 边界。 */
+    async findMetadataByUserAndProvider(
+      userId: string,
+      providerId: string,
+    ): Promise<ProviderCredentialMetadataRow | undefined> {
+      const rows = await db
+        .select({
+          providerId: userProviderCredentials.providerId,
+          keyHint: userProviderCredentials.keyHint,
+          revision: userProviderCredentials.revision,
+          updatedAt: userProviderCredentials.updatedAt,
+        })
+        .from(userProviderCredentials)
+        .where(
+          and(eq(userProviderCredentials.userId, userId), eq(userProviderCredentials.providerId, providerId)),
+        )
+        .limit(1);
+      return rows[0];
+    },
+
     /**
      * 首次插入一份凭据（revision=1）。已存在 (user, provider) 时**不抛错**，
      * 用 ON CONFLICT DO NOTHING 静默跳过并返回 false——这样调用方的 CAS 重试不依赖
@@ -176,18 +196,80 @@ export function createProviderCredentialRepository(db: Database) {
         .returning();
       return result.length > 0;
     },
-
-    /**
-     * 无版本条件删除（用户显式「删掉我的 key」）。无行幂等成功。
-     * 不走 CAS：用户主动删除就是要删，不因并发更新而失败——若期间别人也存了新 key，
-     * 删掉后该 provider 回落 env（与「删除个人覆盖、恢复共享 env」语义一致）。
-     */
-    async deleteByUserAndProvider(userId: string, providerId: string): Promise<void> {
-      await db
-        .delete(userProviderCredentials)
-        .where(
-          and(eq(userProviderCredentials.userId, userId), eq(userProviderCredentials.providerId, providerId)),
-        );
-    },
   };
+}
+
+/** 跨实例 CAS 多次冲突；message 固定，不携带 SQL 或行内容。 */
+export class ProviderCredentialRevisionConflictError extends Error {
+  constructor() {
+    super("provider 凭据并发更新冲突");
+    this.name = "ProviderCredentialRevisionConflictError";
+  }
+}
+
+export interface DeleteProviderCredentialAndNormalizeInput {
+  userId: string;
+  providerId: string;
+  /** 仅当当前 default_model 仍等于该值时清为 null；undefined 表示无需清理。 */
+  expectedDefaultModel?: string;
+}
+
+export interface DeleteProviderCredentialAndNormalizeResult {
+  deleted: boolean;
+  defaultModelReset: boolean;
+}
+
+const DELETE_CAS_RETRIES = 5;
+
+type TransactionRunner = {
+  transaction<T>(callback: (tx: unknown) => Promise<T>): Promise<T>;
+};
+
+/**
+ * 在同一事务里删除个人凭据并条件归一默认模型。
+ *
+ * `Database` 是 node-postgres / PGlite 的联合类型，两种实现的 transaction callback
+ * 参数名义类型不同，但都提供同一套 Drizzle 查询构造 API。这里把这一个已知差异收敛在
+ * 边界断言里，事务内部继续复用正常 repository，不把 driver 类型泄漏到上层。
+ */
+export async function deleteProviderCredentialAndNormalizeDefaultModel(
+  db: Database,
+  input: DeleteProviderCredentialAndNormalizeInput,
+): Promise<DeleteProviderCredentialAndNormalizeResult> {
+  const runner = db as unknown as TransactionRunner;
+  return runner.transaction(async (rawTx) => {
+    const tx = rawTx as Database;
+    const credentials = createProviderCredentialRepository(tx);
+
+    let deleted = false;
+    for (let attempt = 0; attempt < DELETE_CAS_RETRIES; attempt++) {
+      const current = await credentials.findByUserAndProvider(input.userId, input.providerId);
+      if (!current) break;
+
+      if (await credentials.deleteIfRevision(input.userId, input.providerId, current.revision)) {
+        deleted = true;
+        break;
+      }
+      if (attempt + 1 === DELETE_CAS_RETRIES) {
+        throw new ProviderCredentialRevisionConflictError();
+      }
+    }
+
+    let defaultModelReset = false;
+    if (input.expectedDefaultModel !== undefined) {
+      const updated = await tx
+        .update(userPreferences)
+        .set({ defaultModel: null, updatedAt: sql`now()` })
+        .where(
+          and(
+            eq(userPreferences.userId, input.userId),
+            eq(userPreferences.defaultModel, input.expectedDefaultModel),
+          ),
+        )
+        .returning();
+      defaultModelReset = updated.length > 0;
+    }
+
+    return { deleted, defaultModelReset };
+  });
 }

@@ -90,6 +90,17 @@ export const usePreferencesStore = defineStore("preferences", () => {
     return inflight;
   }
 
+  /**
+   * 令当前快照和所有更早的在飞响应失效，再从服务端强制读取。
+   *
+   * Provider 保存/删除后必须走这里：模型可用性与 defaultModel 可能同时改变，
+   * 继续暴露旧值会让下一轮聊天在刷新窗口内仍发送已经不可用的模型。
+   */
+  function reload() {
+    reset();
+    return ensureLoaded();
+  }
+
   /** 全量保存。失败原样抛给调用方——吞掉的话用户会以为保存成功了 */
   async function save({ defaultModel: model, systemPrompt: prompt }) {
     const startGeneration = generation;
@@ -108,6 +119,7 @@ export const usePreferencesStore = defineStore("preferences", () => {
     loadFailed,
     modelName,
     ensureLoaded,
+    reload,
     save,
   };
 });

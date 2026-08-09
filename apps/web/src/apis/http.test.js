@@ -2,7 +2,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useUserStore } from "@/stores/user";
-import { get, post, request, setUnauthorizedHandler } from "./http.js";
+import { get, HttpError, post, request, setUnauthorizedHandler } from "./http.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -118,6 +118,49 @@ describe("request", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "知识库不存在" }, 404)));
 
     await expect(get("/api/kb/1")).rejects.toThrow("知识库不存在");
+  });
+
+  it("Provider 422 保留 status/code/message，且不触发全局 401 登出", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ error: { code: "CREDENTIAL_REJECTED", message: "API key 被模型服务拒绝" } }, 422),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const userStore = useUserStore();
+    userStore.user = { id: "1", email: "a@x.io", role: "user" };
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+
+    const error = await get("/api/providers/deepseek/test").catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(HttpError);
+    expect(error).toMatchObject({
+      status: 422,
+      code: "CREDENTIAL_REJECTED",
+      message: "API key 被模型服务拒绝",
+      retryAfter: null,
+    });
+    expect(userStore.user).not.toBeNull();
+    expect(handler).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("HttpError 保留 Retry-After", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: { code: "RATE_LIMITED", message: "请稍后重试" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "17" },
+        }),
+      ),
+    );
+
+    const error = await post("/api/action", {}).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(HttpError);
+    expect(error).toMatchObject({ status: 429, code: "RATE_LIMITED", retryAfter: "17" });
   });
 
   it("后端没给文案时回落到状态码", async () => {
