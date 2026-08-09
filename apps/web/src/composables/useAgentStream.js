@@ -65,6 +65,9 @@ export function useAgentStream() {
    */
   const compactions = ref([]);
   const controller = shallowRef(null);
+  /** abort 接口在飞时单独标记。running 只表示生成流还没收尾，无法阻止停止按钮重复请求。 */
+  const stopping = ref(false);
+  let stopRequest = null;
   /** 当前这一轮的会话 id。stop() 要用它调后端接口，而 send 之外没有别的地方知道它。
    * 只在这一轮生成期间有效，send() 收尾时会清空，避免被后续误用于对错会话调 abortChat */
   const activeSessionId = ref(null);
@@ -248,12 +251,33 @@ export function useAgentStream() {
    * 顺序不能反：先断流会让下面那次 await 处在组件收尾流程里，容易被跳过。
    */
   async function stop() {
-    try {
-      if (activeSessionId.value) {
-        await abortChat(activeSessionId.value);
+    if (stopRequest) return stopRequest;
+    if (!running.value) return;
+
+    const sessionId = activeSessionId.value;
+    const request = (async () => {
+      stopping.value = true;
+      try {
+        if (sessionId) {
+          await abortChat(sessionId);
+        }
+      } catch (err) {
+        // 本地仍要断流，否则停止按钮会一直卡住；同时明确告诉用户服务端可能还在跑，
+        // 不能把「界面不再接收」伪装成「生成已成功停止」。
+        error.value = `停止请求失败：${err.message}。已断开当前响应，服务端可能仍在生成`;
+      } finally {
+        disconnect();
       }
+    })();
+    stopRequest = request;
+
+    try {
+      await request;
     } finally {
-      disconnect();
+      if (stopRequest === request) {
+        stopRequest = null;
+        stopping.value = false;
+      }
     }
   }
 
@@ -295,6 +319,7 @@ export function useAgentStream() {
     messages,
     toolCalls,
     running,
+    stopping,
     error,
     warning,
     notice,

@@ -419,4 +419,48 @@ describe("stop", () => {
     await pending;
     expect(stream.running.value).toBe(false);
   });
+
+  it("停止请求在飞时进入 stopping，重复点击只调用一次 abort", async () => {
+    let finishAbort;
+    abortChat.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishAbort = resolve;
+        }),
+    );
+    const stream = useAgentStream();
+    const flow = controllableStream();
+    const pending = stream.send("你好", { sessionId: "session-a" });
+    await tick();
+
+    const first = stream.stop();
+    const second = stream.stop();
+
+    expect(stream.stopping.value).toBe(true);
+    expect(abortChat).toHaveBeenCalledOnce();
+    finishAbort();
+    await Promise.all([first, second]);
+    await pending;
+    expect(stream.stopping.value).toBe(false);
+    expect(stream.running.value).toBe(false);
+
+    flow.close();
+  });
+
+  it("abort 接口失败时仍断开本地流，并显示服务端可能继续生成", async () => {
+    abortChat.mockRejectedValue(new Error("网络错误"));
+    const stream = useAgentStream();
+    const flow = controllableStream();
+    const pending = stream.send("你好", { sessionId: "session-a" });
+    await tick();
+
+    await stream.stop();
+    await pending;
+
+    expect(stream.running.value).toBe(false);
+    expect(stream.stopping.value).toBe(false);
+    expect(stream.error.value).toContain("服务端可能仍在生成");
+
+    flow.close();
+  });
 });

@@ -48,25 +48,35 @@
       <div class="inner">
         <div class="composer-shell">
           <CommandPalette
-            v-if="palette.open.value"
-            :commands="palette.filtered.value"
-            :active-index="palette.activeIndex.value"
+            v-if="slashPalette.open.value"
+            :commands="slashPalette.filtered.value"
+            :active-index="slashPalette.activeIndex.value"
             @pick="onPickCommand"
-            @hover="palette.activeIndex.value = $event"
+            @hover="slashPalette.activeIndex.value = $event"
           />
 
           <MessageInputComponent
             ref="input"
             :model-value="draft"
             :is-loading="running"
-            :send-button-disabled="!running && !draft.trim()"
-            placeholder="输入问题，Enter 发送，Shift+Enter 换行，/ 唤起命令"
+            :is-stopping="stopping"
+            :send-button-disabled="stopping || (!running && !draft.trim())"
+            placeholder="输入问题，Enter 发送，/ 命令，Ctrl+K 全局命令"
             @update:model-value="onDraftChange"
             @send="onSendOrStop"
             @keydown="onKeydown"
           >
             <template #actions-right>
-              <span class="model">{{ modelLabel }}</span>
+              <ComposerModelSelector
+                ref="modelSelector"
+                :models="preferences.models"
+                :model-value="preferences.defaultModel"
+                :label="modelLabel"
+                :loading="!preferences.loaded && !preferences.loadFailed"
+                :saving="modelSaving"
+                :error="modelError"
+                @select="selectModel"
+              />
               <a-tooltip :title="canUseCommands ? '命令' : '清空输入后可使用命令'">
                 <a-button
                   type="text"
@@ -78,10 +88,27 @@
                 </a-button>
               </a-tooltip>
             </template>
+            <template #bottom>
+              <div v-if="modelError" class="composer-error" role="status">{{ modelError }}</div>
+            </template>
           </MessageInputComponent>
         </div>
       </div>
     </footer>
+
+    <Teleport to="body">
+      <GlobalCommandPalette
+        v-if="globalPalette.open.value"
+        ref="globalPaletteDialog"
+        :commands="globalPalette.filtered.value"
+        :active-index="globalPalette.activeIndex.value"
+        :query="globalPalette.query.value"
+        @close="globalPalette.close()"
+        @hover="globalPalette.activeIndex.value = $event"
+        @pick="onPickGlobalCommand"
+        @update:query="updateGlobalQuery"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -92,6 +119,8 @@ import { fetchContextUsage } from "@/apis/chat_api";
 import { fetchMessages } from "@/apis/session_api";
 import CommandPalette from "@/components/chat/CommandPalette.vue";
 import CompactionDivider from "@/components/chat/CompactionDivider.vue";
+import ComposerModelSelector from "@/components/chat/ComposerModelSelector.vue";
+import GlobalCommandPalette from "@/components/chat/GlobalCommandPalette.vue";
 import MessageItem from "@/components/chat/MessageItem.vue";
 import MessageInputComponent from "@/components/MessageInputComponent.vue";
 import { useAgentStream } from "@/composables/useAgentStream";
@@ -105,6 +134,7 @@ const {
   messages,
   toolCalls,
   running,
+  stopping,
   error,
   warning,
   notice,
@@ -127,10 +157,6 @@ const workspace = useWorkspaceStore();
 // 不再是写死的字符串（写死的那份已经和 packages/agent 的默认模型对不上了）
 const modelLabel = computed(() => preferences.modelName || "默认模型");
 
-// AppShell 用 key 强制重挂载来实现「新对话」，卸载时只需要断开本地接收——
-// harness 是常驻的，旧对话的生成会继续跑完并落库，不是真的要停止它
-onUnmounted(disconnect);
-
 // 进对话页时没有当前会话就开一个新的；已经有了（从左栏点进来、或从别的页面切回来）就拉历史。
 // startNew() 也会改 currentId，从而触发下面的 watch 去拉一个后端还不存在的会话——
 // 该接口对不存在的会话刻意返回 200 + 空数组（见 routes/sessions.ts），多打一次而已，
@@ -141,6 +167,14 @@ onMounted(() => {
   void preferences.ensureLoaded();
   if (!sessionStore.currentId) sessionStore.startNew();
   else void loadSession(sessionStore.currentId);
+});
+
+onMounted(() => window.addEventListener("keydown", onWindowKeydown, true));
+// AppShell 用 key 强制重挂载来实现「新对话」，卸载时只断开本地接收；同时移除
+// Ctrl+K 的全局监听，避免每重挂一次 ChatView 就多执行一遍命令。
+onUnmounted(() => {
+  window.removeEventListener("keydown", onWindowKeydown, true);
+  disconnect();
 });
 
 /**
@@ -178,6 +212,11 @@ watch(
 const draft = ref("");
 const scrollArea = ref(null);
 const input = ref(null);
+const modelSelector = ref(null);
+const globalPaletteDialog = ref(null);
+const modelSaving = ref(false);
+const modelError = ref("");
+let pendingModelSave = null;
 
 function newChat() {
   // 必须先断开再 reset：reset() 不会碰 running/controller，
@@ -220,21 +259,70 @@ async function runContext() {
   }
 }
 
-const palette = useCommandPalette([
-  { name: "new", description: "新对话", run: newChat },
+async function openModelSelector() {
+  await preferences.ensureLoaded();
+  await nextTick();
+  modelSelector.value?.open();
+}
+
+async function selectModel(modelId) {
+  if (modelSaving.value) return;
+  modelError.value = "";
+  modelSaving.value = true;
+  const request = (async () => {
+    try {
+      await preferences.save({
+        defaultModel: modelId,
+        systemPrompt: preferences.systemPrompt,
+      });
+      return true;
+    } catch (err) {
+      modelError.value = `模型切换失败：${err.message}`;
+      return false;
+    }
+  })();
+  pendingModelSave = request;
+
+  try {
+    await request;
+  } finally {
+    if (pendingModelSave === request) {
+      pendingModelSave = null;
+      modelSaving.value = false;
+    }
+  }
+}
+
+const commands = [
+  { name: "new", description: "新对话", keywords: ["新建"], run: newChat },
+  { name: "clear", description: "清空上下文并开始新对话", keywords: ["重置"], run: newChat },
+  {
+    name: "model",
+    description: "切换下一条消息使用的模型",
+    keywords: ["模型"],
+    run: () => void openModelSelector(),
+  },
   { name: "compact", description: "压缩上下文", run: runCompact },
   { name: "context", description: "查看上下文占用", run: runContext },
-  { name: "workspace", description: "开合右栏", run: () => layout.toggleRight() },
-  { name: "sidebar", description: "开合左栏", run: () => layout.toggleLeft() },
-]);
+  {
+    name: "workspace",
+    description: "开合右栏",
+    keywords: ["工作区", "引用"],
+    run: () => layout.toggleRight(),
+  },
+  { name: "sidebar", description: "开合左栏", keywords: ["侧栏"], run: () => layout.toggleLeft() },
+];
+
+const slashPalette = useCommandPalette(commands);
+const globalPalette = useCommandPalette(commands);
 
 /** 只在整段输入以 / 开头时唤起面板，避免正文里的斜杠误触发 */
 function onDraftChange(value) {
   draft.value = value;
   if (value.startsWith("/")) {
-    palette.openWith(value.slice(1));
-  } else if (palette.open.value) {
-    palette.close();
+    slashPalette.openWith(value.slice(1));
+  } else if (slashPalette.open.value) {
+    slashPalette.close();
   }
 }
 
@@ -249,46 +337,92 @@ function onSendOrStop() {
 
 // 面板开着时要能点它关闭；只有「面板没开且已有草稿」才禁用，
 // 否则点一下会把用户没发出去的内容冲掉
-const canUseCommands = computed(() => palette.open.value || !draft.value.trim());
+const canUseCommands = computed(() => slashPalette.open.value || !draft.value.trim());
 
 function toggleCommands() {
-  if (palette.open.value) {
-    palette.close();
+  globalPalette.close();
+  if (slashPalette.open.value) {
+    slashPalette.close();
     return;
   }
   // 走到这里说明面板没开，canUseCommands 此时等价于「草稿是否为空」，
   // 非空则拒绝打开面板，避免覆盖草稿
   if (!canUseCommands.value) return;
   draft.value = "/";
-  palette.openWith("");
+  slashPalette.openWith("");
   input.value?.focus();
 }
 
 function onPickCommand(index) {
-  palette.pick(index);
+  slashPalette.pick(index);
   draft.value = "";
 }
 
+function openGlobalCommands() {
+  slashPalette.close();
+  globalPalette.openWith("", { keepOpen: true });
+  void nextTick(() => globalPaletteDialog.value?.focus());
+}
+
+function updateGlobalQuery(value) {
+  globalPalette.openWith(value, { keepOpen: true });
+}
+
+function onPickGlobalCommand(index) {
+  globalPalette.pick(index);
+}
+
+function onWindowKeydown(event) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (globalPalette.open.value) globalPalette.close();
+    else openGlobalCommands();
+    return;
+  }
+  if (!globalPalette.open.value || event.isComposing) return;
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    event.stopPropagation();
+    globalPalette.moveDown();
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    event.stopPropagation();
+    globalPalette.moveUp();
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    globalPalette.close();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    event.stopPropagation();
+    globalPalette.pick();
+  }
+}
+
 function onKeydown(event) {
-  if (palette.open.value) {
+  if (event.isComposing) return;
+
+  if (slashPalette.open.value) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      palette.moveDown();
+      slashPalette.moveDown();
       return;
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      palette.moveUp();
+      slashPalette.moveUp();
       return;
     }
     if (event.key === "Escape") {
       event.preventDefault();
-      palette.close();
+      slashPalette.close();
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      palette.pick();
+      slashPalette.pick();
       draft.value = "";
       return;
     }
@@ -307,6 +441,11 @@ async function submit() {
   // 用系统默认值、后续消息却突然切到用户保存的模型与 prompt。
   // ensureLoaded() 会吞掉加载错误；失败时字段保持 null，仍可按原契约回退系统默认。
   await preferences.ensureLoaded();
+
+  // 用户点模型后立刻按 Enter 时，必须等偏好保存完成；否则界面已表示正在切换，
+  // 这一条消息却悄悄用旧模型。保存失败则保留草稿，让用户处理错误后重试。
+  const modelSave = pendingModelSave;
+  if (modelSave && !(await modelSave)) return;
 
   // 等待期间可能重复触发 submit；第一个调用开始发送后，其余调用在这里退出。
   const text = draft.value.trim();
@@ -422,13 +561,6 @@ watch(
   position: relative;
 }
 
-// 显示当前生效的模型名，值来自 stores/preferences
-.model {
-  margin-right: 4px;
-  color: var(--gray-500);
-  font-size: 12px;
-}
-
 .command-btn {
   display: flex;
   width: 28px;
@@ -447,5 +579,11 @@ watch(
   &:disabled {
     color: var(--gray-300);
   }
+}
+
+.composer-error {
+  padding-top: 6px;
+  color: var(--color-error-600);
+  font-size: 12px;
 }
 </style>

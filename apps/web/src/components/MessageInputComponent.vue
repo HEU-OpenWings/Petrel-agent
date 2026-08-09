@@ -40,10 +40,11 @@
 
     <div class="send-button-container">
       <slot name="actions-right"></slot>
-      <a-tooltip :title="isLoading ? '停止回答' : ''">
+      <a-tooltip :title="sendTooltip">
         <a-button
           @click="handleSendOrStop"
-          :disabled="sendButtonDisabled"
+          :disabled="sendButtonDisabled || isStopping"
+          :aria-label="sendTooltip"
           type="link"
           class="send-button"
         >
@@ -86,6 +87,10 @@ const props = defineProps({
     default: "输入问题...",
   },
   isLoading: {
+    type: Boolean,
+    default: false,
+  },
+  isStopping: {
     type: Boolean,
     default: false,
   },
@@ -140,10 +145,19 @@ const iconComponents = {
 
 // 根据传入的图标名动态获取组件
 const getIcon = computed(() => {
+  if (props.isStopping) {
+    return LoadingOutlined;
+  }
   if (props.isLoading) {
     return PauseOutlined;
   }
   return iconComponents[props.sendIcon] || ArrowUpOutlined;
+});
+
+const sendTooltip = computed(() => {
+  if (props.isStopping) return "正在停止回答";
+  if (props.isLoading) return "停止回答";
+  return "发送消息";
 });
 
 // 创建本地引用以进行双向绑定
@@ -165,6 +179,7 @@ const handleInput = (e) => {
 
 // 处理发送按钮点击
 const handleSendOrStop = () => {
+  if (props.isStopping) return;
   emit("send");
 };
 
