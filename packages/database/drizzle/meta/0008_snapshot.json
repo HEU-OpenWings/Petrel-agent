@@ -1,5 +1,5 @@
 {
-  "id": "653c4edf-221a-4a6c-a221-82ff1e004016",
+  "id": "ebf22168-c0f3-4cba-81d5-2000f48b62e6",
   "prevId": "c936cdec-b9c0-468b-9b19-d287eeae6ace",
   "version": "7",
   "dialect": "postgresql",
@@ -425,144 +425,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.user_provider_credentials": {
-      "name": "user_provider_credentials",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "provider_id": {
-          "name": "provider_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "format_version": {
-          "name": "format_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "key_id": {
-          "name": "key_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "nonce": {
-          "name": "nonce",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ciphertext": {
-          "name": "ciphertext",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "auth_tag": {
-          "name": "auth_tag",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "key_hint": {
-          "name": "key_hint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "user_provider_credentials_user_id_users_id_fk": {
-          "name": "user_provider_credentials_user_id_users_id_fk",
-          "tableFrom": "user_provider_credentials",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "user_provider_credentials_user_id_provider_id_pk": {
-          "name": "user_provider_credentials_user_id_provider_id_pk",
-          "columns": [
-            "user_id",
-            "provider_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "user_provider_credentials_format_check": {
-          "name": "user_provider_credentials_format_check",
-          "value": "\"user_provider_credentials\".\"format_version\" = 1"
-        },
-        "user_provider_credentials_revision_check": {
-          "name": "user_provider_credentials_revision_check",
-          "value": "\"user_provider_credentials\".\"revision\" > 0"
-        },
-        "user_provider_credentials_key_id_check": {
-          "name": "user_provider_credentials_key_id_check",
-          "value": "\"user_provider_credentials\".\"key_id\" ~ '^[A-Za-z0-9_-]+$'"
-        },
-        "user_provider_credentials_nonce_check": {
-          "name": "user_provider_credentials_nonce_check",
-          "value": "\"user_provider_credentials\".\"nonce\" ~ '^[A-Za-z0-9_-]+$'"
-        },
-        "user_provider_credentials_ciphertext_check": {
-          "name": "user_provider_credentials_ciphertext_check",
-          "value": "\"user_provider_credentials\".\"ciphertext\" ~ '^[A-Za-z0-9_-]+$'"
-        },
-        "user_provider_credentials_auth_tag_check": {
-          "name": "user_provider_credentials_auth_tag_check",
-          "value": "\"user_provider_credentials\".\"auth_tag\" ~ '^[A-Za-z0-9_-]+$'"
-        },
-        "user_provider_credentials_key_hint_check": {
-          "name": "user_provider_credentials_key_hint_check",
-          "value": "length(\"user_provider_credentials\".\"key_hint\") BETWEEN 1 AND 4 AND \"user_provider_credentials\".\"key_hint\" ~ '^[\\x21-\\x7E]+$'"
-        },
-        "user_provider_credentials_provider_id_check": {
-          "name": "user_provider_credentials_provider_id_check",
-          "value": "length(\"user_provider_credentials\".\"provider_id\") BETWEEN 1 AND 128"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.user_quota_limits": {
       "name": "user_quota_limits",
       "schema": "",
@@ -675,6 +537,13 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
+        },
+        "token_version": {
+          "name": "token_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         },
         "created_at": {
           "name": "created_at",

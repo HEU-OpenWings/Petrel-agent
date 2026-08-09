@@ -1,13 +1,13 @@
-import { marked } from 'marked';
-import dayjs, { parseToShanghai } from '@/utils/time';
-import chatExportTemplate from './templates/chat-export-template.html?raw';
+import { marked } from "marked";
+import dayjs, { parseToShanghai } from "@/utils/time";
+import chatExportTemplate from "./templates/chat-export-template.html?raw";
 
 // 统一的 Markdown 渲染配置
 marked.setOptions({
   gfm: true,
   breaks: true,
   mangle: false,
-  headerIds: false
+  headerIds: false,
 });
 
 export class ChatExporter {
@@ -17,30 +17,30 @@ export class ChatExporter {
    */
   static async exportToHTML(options = {}) {
     const {
-      chatTitle = '新对话',
-      agentName = '智能助手',
-      agentDescription = '',
-      messages = []
+      chatTitle = "新对话",
+      agentName = "智能助手",
+      agentDescription = "",
+      messages = [],
     } = options || {};
 
     try {
-      const htmlContent = this.generateHTML({
+      const htmlContent = ChatExporter.generateHTML({
         chatTitle,
         agentName,
         agentDescription,
-        messages
+        messages,
       });
 
-      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+      const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8" });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      const timestamp = dayjs().tz('Asia/Shanghai').format('YYYYMMDD-HHmmss');
-      const safeTitle = chatTitle.replace(/[\\/:*?"<>|]/g, '_');
+      const link = document.createElement("a");
+      const timestamp = dayjs().tz("Asia/Shanghai").format("YYYYMMDD-HHmmss");
+      const safeTitle = chatTitle.replace(/[\\/:*?"<>|]/g, "_");
       const filename = `${safeTitle}-${timestamp}.html`;
 
       link.href = url;
       link.download = filename;
-      link.style.display = 'none';
+      link.style.display = "none";
 
       document.body.appendChild(link);
       link.click();
@@ -49,7 +49,7 @@ export class ChatExporter {
 
       return { success: true, filename };
     } catch (error) {
-      console.error('导出对话失败:', error);
+      console.error("导出对话失败:", error);
       throw new Error(`导出失败: ${error.message}`);
     }
   }
@@ -58,26 +58,21 @@ export class ChatExporter {
    * 生成完整 HTML 内容
    */
   static generateHTML(options) {
-    const {
-      chatTitle,
-      agentName,
-      agentDescription,
-      messages
-    } = options;
+    const { chatTitle, agentName, agentDescription, messages } = options;
 
-    const flattenedMessages = this.flattenMessages(messages);
+    const flattenedMessages = ChatExporter.flattenMessages(messages);
     if (flattenedMessages.length === 0) {
-      throw new Error('没有可导出的对话内容');
+      throw new Error("没有可导出的对话内容");
     }
 
-    const messagesHTML = this.generateMessagesHTML(flattenedMessages, agentName);
+    const messagesHTML = ChatExporter.generateMessagesHTML(flattenedMessages, agentName);
 
-    return this.generateHTMLTemplate({
+    return ChatExporter.generateHTMLTemplate({
       chatTitle,
       agentName,
       agentDescription,
-      exportTime: dayjs().tz('Asia/Shanghai').format('YYYY年MM月DD日 HH:mm:ss'),
-      messagesHTML
+      exportTime: dayjs().tz("Asia/Shanghai").format("YYYY年MM月DD日 HH:mm:ss"),
+      messagesHTML,
     });
   }
 
@@ -87,23 +82,25 @@ export class ChatExporter {
   static flattenMessages(messages = []) {
     const result = [];
 
-    console.log('[ChatExporter] flattenMessages input:', {
+    console.log("[ChatExporter] flattenMessages input:", {
       messagesLength: messages?.length || 0,
-      messagesType: Array.isArray(messages) ? 'array' : typeof messages,
-      firstMessage: messages?.[0] ? {
-        hasMessages: Array.isArray(messages[0].messages),
-        hasType: !!messages[0].type,
-        hasRole: !!messages[0].role,
-        hasContent: !!messages[0].content,
-        keys: Object.keys(messages[0])
-      } : null
+      messagesType: Array.isArray(messages) ? "array" : typeof messages,
+      firstMessage: messages?.[0]
+        ? {
+            hasMessages: Array.isArray(messages[0].messages),
+            hasType: !!messages[0].type,
+            hasRole: !!messages[0].role,
+            hasContent: !!messages[0].content,
+            keys: Object.keys(messages[0]),
+          }
+        : null,
     });
 
-    (messages || []).forEach(item => {
+    (messages || []).forEach((item) => {
       if (!item) return;
 
       if (Array.isArray(item.messages)) {
-        item.messages.forEach(msg => {
+        item.messages.forEach((msg) => {
           if (msg) result.push(msg);
         });
         return;
@@ -122,60 +119,62 @@ export class ChatExporter {
    * 生成对话消息的 HTML 片段
    */
   static generateMessagesHTML(messages, agentName) {
-    return messages.map(msg => {
-      const isUserMessage = ['human', 'user'].includes(msg?.type) || msg?.role === 'user';
-      const avatar = isUserMessage ? '👤' : '🤖';
-      const senderLabel = isUserMessage ? '用户' : (agentName || '智能助手');
-      const messageClass = isUserMessage ? 'user-message' : 'ai-message';
-      const timestampRaw = this.getMessageTimestamp(msg);
-      const timestamp = this.escapeHtml(this.formatTimestamp(timestampRaw));
+    return messages
+      .map((msg) => {
+        const isUserMessage = ["human", "user"].includes(msg?.type) || msg?.role === "user";
+        const avatar = isUserMessage ? "👤" : "🤖";
+        const senderLabel = isUserMessage ? "用户" : agentName || "智能助手";
+        const messageClass = isUserMessage ? "user-message" : "ai-message";
+        const timestampRaw = ChatExporter.getMessageTimestamp(msg);
+        const timestamp = ChatExporter.escapeHtml(ChatExporter.formatTimestamp(timestampRaw));
 
-      const { content, reasoning } = this.extractMessageContent(msg);
-      const contentHTML = content ? this.renderMarkdown(content) : '';
-      const reasoningHTML = !isUserMessage ? this.generateReasoningHTML(reasoning) : '';
-      const toolCallsHTML = !isUserMessage ? this.generateToolCallsHTML(msg) : '';
+        const { content, reasoning } = ChatExporter.extractMessageContent(msg);
+        const contentHTML = content ? ChatExporter.renderMarkdown(content) : "";
+        const reasoningHTML = !isUserMessage ? ChatExporter.generateReasoningHTML(reasoning) : "";
+        const toolCallsHTML = !isUserMessage ? ChatExporter.generateToolCallsHTML(msg) : "";
 
-      const bodySegments = [
-        reasoningHTML,
-        contentHTML ? `<div class="markdown-body">${contentHTML}</div>` : '',
-        toolCallsHTML
-      ].filter(Boolean);
+        const bodySegments = [
+          reasoningHTML,
+          contentHTML ? `<div class="markdown-body">${contentHTML}</div>` : "",
+          toolCallsHTML,
+        ].filter(Boolean);
 
-      return `
+        return `
         <div class="message ${messageClass}">
           <div class="message-header">
             <span class="avatar">${avatar}</span>
-            <span class="sender">${this.escapeHtml(senderLabel)}</span>
+            <span class="sender">${ChatExporter.escapeHtml(senderLabel)}</span>
             <span class="time">${timestamp}</span>
           </div>
           <div class="message-content">
-            ${bodySegments.length > 0 ? bodySegments.join('') : '<div class="empty-message">（此消息暂无可展示内容）</div>'}
+            ${bodySegments.length > 0 ? bodySegments.join("") : '<div class="empty-message">（此消息暂无可展示内容）</div>'}
           </div>
         </div>
       `;
-    }).join('');
+      })
+      .join("");
   }
 
   /**
    * 拆分消息内容与推理文本
    */
   static extractMessageContent(msg = {}) {
-    const content = this.normalizeContent(msg?.content);
-    let reasoning = msg?.additional_kwargs?.reasoning_content || msg?.reasoning_content || '';
+    const content = ChatExporter.normalizeContent(msg?.content);
+    let reasoning = msg?.additional_kwargs?.reasoning_content || msg?.reasoning_content || "";
     let visibleContent = content;
 
-    if (!reasoning && content.includes('<think')) {
+    if (!reasoning && content.includes("<think")) {
       const thinkRegex = /<think>([\s\S]*?)<\/think>|<think>([\s\S]*)$/i;
       const match = content.match(thinkRegex);
       if (match) {
-        reasoning = (match[1] || match[2] || '').trim();
-        visibleContent = content.replace(match[0], '').trim();
+        reasoning = (match[1] || match[2] || "").trim();
+        visibleContent = content.replace(match[0], "").trim();
       }
     }
 
     return {
       content: visibleContent,
-      reasoning
+      reasoning,
     };
   }
 
@@ -183,24 +182,28 @@ export class ChatExporter {
    * 标准化消息内容
    */
   static normalizeContent(raw) {
-    if (raw == null) return '';
-    if (typeof raw === 'string') return raw;
+    if (raw == null) return "";
+    if (typeof raw === "string") return raw;
 
     if (Array.isArray(raw)) {
-      return raw.map(item => {
-        if (!item) return '';
-        if (typeof item === 'string') return item;
-        if (typeof item === 'object') {
-          return item.text || item.content || item.value || '';
-        }
-        return String(item);
-      }).filter(Boolean).join('\n').trim();
+      return raw
+        .map((item) => {
+          if (!item) return "";
+          if (typeof item === "string") return item;
+          if (typeof item === "object") {
+            return item.text || item.content || item.value || "";
+          }
+          return String(item);
+        })
+        .filter(Boolean)
+        .join("\n")
+        .trim();
     }
 
-    if (typeof raw === 'object') {
-      if (typeof raw.text === 'string') return raw.text;
-      if (typeof raw.content === 'string') return raw.content;
-      if (Array.isArray(raw.content)) return this.normalizeContent(raw.content);
+    if (typeof raw === "object") {
+      if (typeof raw.text === "string") return raw.text;
+      if (typeof raw.content === "string") return raw.content;
+      if (Array.isArray(raw.content)) return ChatExporter.normalizeContent(raw.content);
       try {
         return JSON.stringify(raw, null, 2);
       } catch {
@@ -215,10 +218,10 @@ export class ChatExporter {
    * 生成推理过程 HTML
    */
   static generateReasoningHTML(reasoning) {
-    if (!reasoning) return '';
+    if (!reasoning) return "";
 
-    const reasoningHTML = this.renderMarkdown(reasoning);
-    if (!reasoningHTML) return '';
+    const reasoningHTML = ChatExporter.renderMarkdown(reasoning);
+    if (!reasoningHTML) return "";
 
     return `
       <details class="reasoning-section">
@@ -234,41 +237,51 @@ export class ChatExporter {
    * 生成工具调用 HTML
    */
   static generateToolCallsHTML(msg = {}) {
-    const toolCalls = this.normalizeToolCalls(msg);
-    if (toolCalls.length === 0) return '';
+    const toolCalls = ChatExporter.normalizeToolCalls(msg);
+    if (toolCalls.length === 0) return "";
 
-    const sections = toolCalls.map(toolCall => {
-      const toolName = this.escapeHtml(toolCall?.function?.name || toolCall?.name || '工具调用');
-      const argsSource = toolCall?.args ?? toolCall?.function?.arguments;
-      const args = this.stringifyToolArgs(argsSource);
-      const result = this.normalizeToolResult(toolCall?.tool_call_result?.content);
-      const isFinished = toolCall?.status === 'success';
-      const stateClass = isFinished ? 'done' : 'pending';
-      const stateLabel = isFinished ? '已完成' : '执行中';
+    const sections = toolCalls
+      .map((toolCall) => {
+        const toolName = ChatExporter.escapeHtml(toolCall?.function?.name || toolCall?.name || "工具调用");
+        const argsSource = toolCall?.args ?? toolCall?.function?.arguments;
+        const args = ChatExporter.stringifyToolArgs(argsSource);
+        const result = ChatExporter.normalizeToolResult(toolCall?.tool_call_result?.content);
+        const isFinished = toolCall?.status === "success";
+        const stateClass = isFinished ? "done" : "pending";
+        const stateLabel = isFinished ? "已完成" : "执行中";
 
-      return `
-        <details class="tool-call" ${isFinished ? '' : 'open'}>
+        return `
+        <details class="tool-call" ${isFinished ? "" : "open"}>
           <summary>
             <span class="tool-call-title">🔧 ${toolName}</span>
             <span class="tool-call-state ${stateClass}">${stateLabel}</span>
           </summary>
           <div class="tool-call-body">
-            ${args ? `
+            ${
+              args
+                ? `
               <div class="tool-call-args">
                 <strong>参数</strong>
-                <pre>${this.escapeHtml(args)}</pre>
+                <pre>${ChatExporter.escapeHtml(args)}</pre>
               </div>
-            ` : ''}
-            ${isFinished && result ? `
+            `
+                : ""
+            }
+            ${
+              isFinished && result
+                ? `
               <div class="tool-call-result">
                 <strong>结果</strong>
-                <pre>${this.escapeHtml(result)}</pre>
+                <pre>${ChatExporter.escapeHtml(result)}</pre>
               </div>
-            ` : ''}
+            `
+                : ""
+            }
           </div>
         </details>
       `;
-    }).join('');
+      })
+      .join("");
 
     return `<div class="tool-calls">${sections}</div>`;
   }
@@ -277,18 +290,18 @@ export class ChatExporter {
     const rawCalls = msg.tool_calls || msg.additional_kwargs?.tool_calls;
     if (!rawCalls) return [];
     if (Array.isArray(rawCalls)) return rawCalls.filter(Boolean);
-    if (typeof rawCalls === 'object') {
+    if (typeof rawCalls === "object") {
       return Object.values(rawCalls).filter(Boolean);
     }
     return [];
   }
 
   static stringifyToolArgs(rawArgs) {
-    if (rawArgs == null || rawArgs === '') return '';
+    if (rawArgs == null || rawArgs === "") return "";
 
-    if (typeof rawArgs === 'string') {
+    if (typeof rawArgs === "string") {
       const trimmed = rawArgs.trim();
-      if (!trimmed) return '';
+      if (!trimmed) return "";
       try {
         return JSON.stringify(JSON.parse(trimmed), null, 2);
       } catch {
@@ -296,7 +309,7 @@ export class ChatExporter {
       }
     }
 
-    if (typeof rawArgs === 'object') {
+    if (typeof rawArgs === "object") {
       try {
         return JSON.stringify(rawArgs, null, 2);
       } catch {
@@ -308,23 +321,27 @@ export class ChatExporter {
   }
 
   static normalizeToolResult(result) {
-    if (!result) return '';
-    if (typeof result === 'string') return result.trim();
+    if (!result) return "";
+    if (typeof result === "string") return result.trim();
 
     if (Array.isArray(result)) {
-      return result.map(item => {
-        if (!item) return '';
-        if (typeof item === 'string') return item;
-        if (typeof item === 'object') {
-          return item.text || item.content || JSON.stringify(item, null, 2);
-        }
-        return String(item);
-      }).filter(Boolean).join('\n\n').trim();
+      return result
+        .map((item) => {
+          if (!item) return "";
+          if (typeof item === "string") return item;
+          if (typeof item === "object") {
+            return item.text || item.content || JSON.stringify(item, null, 2);
+          }
+          return String(item);
+        })
+        .filter(Boolean)
+        .join("\n\n")
+        .trim();
     }
 
-    if (typeof result === 'object') {
-      if (typeof result.content !== 'undefined') {
-        return this.normalizeToolResult(result.content);
+    if (typeof result === "object") {
+      if (typeof result.content !== "undefined") {
+        return ChatExporter.normalizeToolResult(result.content);
       }
       try {
         return JSON.stringify(result, null, 2);
@@ -340,12 +357,12 @@ export class ChatExporter {
    * 统一的 Markdown 渲染，失败时回退到简单换行
    */
   static renderMarkdown(content) {
-    if (!content) return '';
+    if (!content) return "";
     try {
       return marked.parse(content).trim();
     } catch (error) {
-      console.warn('Markdown 渲染失败，回退为纯文本:', error);
-      return this.escapeHtml(content).replace(/\n/g, '<br>');
+      console.warn("Markdown 渲染失败，回退为纯文本:", error);
+      return ChatExporter.escapeHtml(content).replace(/\n/g, "<br>");
     }
   }
 
@@ -353,13 +370,13 @@ export class ChatExporter {
    * HTML 转义
    */
   static escapeHtml(value) {
-    if (value == null) return '';
+    if (value == null) return "";
     return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   /**
@@ -375,35 +392,35 @@ export class ChatExporter {
       msg.datetime,
       msg.date,
       msg.additional_kwargs?.timestamp,
-      msg.additional_kwargs?.created_at
+      msg.additional_kwargs?.created_at,
     ];
 
-    return candidates.find(value => value !== undefined && value !== null);
+    return candidates.find((value) => value !== undefined && value !== null);
   }
 
   /**
    * 格式化时间戳
    */
   static formatTimestamp(raw) {
-    const fallback = dayjs().tz('Asia/Shanghai');
+    const fallback = dayjs().tz("Asia/Shanghai");
 
     if (raw instanceof Date) {
-      return dayjs(raw).tz('Asia/Shanghai').format('YYYY年MM月DD日 HH:mm:ss');
+      return dayjs(raw).tz("Asia/Shanghai").format("YYYY年MM月DD日 HH:mm:ss");
     }
 
     if (raw || raw === 0) {
-      if (typeof raw === 'number') {
+      if (typeof raw === "number") {
         const value = raw < 1e12 ? raw * 1000 : raw;
-        return dayjs(value).tz('Asia/Shanghai').format('YYYY年MM月DD日 HH:mm:ss');
+        return dayjs(value).tz("Asia/Shanghai").format("YYYY年MM月DD日 HH:mm:ss");
       }
 
       const parsed = parseToShanghai(raw);
       if (parsed) {
-        return parsed.format('YYYY年MM月DD日 HH:mm:ss');
+        return parsed.format("YYYY年MM月DD日 HH:mm:ss");
       }
     }
 
-    return fallback.format('YYYY年MM月DD日 HH:mm:ss');
+    return fallback.format("YYYY年MM月DD日 HH:mm:ss");
   }
 
   /**
@@ -412,23 +429,20 @@ export class ChatExporter {
   static generateHTMLTemplate(options) {
     const { chatTitle, agentName, agentDescription, exportTime, messagesHTML } = options;
 
-    const safeTitle = this.escapeHtml(chatTitle);
-    const safeAgentName = this.escapeHtml(agentName);
-    const safeDescription = this.escapeHtml(agentDescription).replace(/\n/g, '<br>');
-    const safeExportTime = this.escapeHtml(exportTime);
+    const safeTitle = ChatExporter.escapeHtml(chatTitle);
+    const safeAgentName = ChatExporter.escapeHtml(agentName);
+    const safeDescription = ChatExporter.escapeHtml(agentDescription).replace(/\n/g, "<br>");
+    const safeExportTime = ChatExporter.escapeHtml(exportTime);
 
-    const descriptionBlock = agentDescription
-      ? `<br><strong>描述:</strong> ${safeDescription}`
-      : '';
+    const descriptionBlock = agentDescription ? `<br><strong>描述:</strong> ${safeDescription}` : "";
 
     return chatExportTemplate
       .replace(/{{TITLE}}/g, safeTitle)
-      .replace('{{AGENT_NAME}}', safeAgentName)
-      .replace('{{DESCRIPTION_BLOCK}}', descriptionBlock)
-      .replace('{{EXPORT_TIME}}', safeExportTime)
-      .replace('{{MESSAGES}}', messagesHTML);
+      .replace("{{AGENT_NAME}}", safeAgentName)
+      .replace("{{DESCRIPTION_BLOCK}}", descriptionBlock)
+      .replace("{{EXPORT_TIME}}", safeExportTime)
+      .replace("{{MESSAGES}}", messagesHTML);
   }
-
 }
 
 export default ChatExporter;

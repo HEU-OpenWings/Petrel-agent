@@ -14,20 +14,20 @@
 </template>
 
 <script setup>
-import { X } from 'lucide-vue-next';
+import { X } from "lucide-vue-next";
 
 const props = defineProps({
   imageData: {
     type: Object,
-    default: null
-  }
+    default: null,
+  },
 });
 
-const emit = defineEmits(['remove']);
+const emit = defineEmits(["remove"]);
 
 // 移除图片
 const handleRemove = () => {
-  emit('remove');
+  emit("remove");
 };
 </script>
 

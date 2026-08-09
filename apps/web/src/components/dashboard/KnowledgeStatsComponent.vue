@@ -101,51 +101,51 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick, computed } from 'vue'
-import * as echarts from 'echarts'
-import { getColorByIndex, getColorPalette } from '@/utils/chartColors'
-import { useThemeStore } from '@/stores/theme'
+import * as echarts from "echarts";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useThemeStore } from "@/stores/theme";
+import { getColorByIndex, getColorPalette } from "@/utils/chartColors";
 
 // CSS 变量解析工具函数
 function getCSSVariable(variableName, element = document.documentElement) {
-  return getComputedStyle(element).getPropertyValue(variableName).trim()
+  return getComputedStyle(element).getPropertyValue(variableName).trim();
 }
 
 // theme store
-const themeStore = useThemeStore()
+const themeStore = useThemeStore();
 
 // Props
 const props = defineProps({
   knowledgeStats: {
     type: Object,
-    default: () => ({})
+    default: () => ({}),
   },
   loading: {
     type: Boolean,
-    default: false
-  }
-})
+    default: false,
+  },
+});
 
 // Chart refs
-const dbTypeChartRef = ref(null)
-const fileTypeChartRef = ref(null)
-let dbTypeChart = null
-let fileTypeChart = null
+const dbTypeChartRef = ref(null);
+const fileTypeChartRef = ref(null);
+let dbTypeChart = null;
+let fileTypeChart = null;
 
 // File type chart data for carousel
-const fileTypeData = ref([])
-const totalFiles = ref(0)
-const currentCarouselIndex = ref(0)
-let carouselTimer = null
+const fileTypeData = ref([]);
+const totalFiles = ref(0);
+const currentCarouselIndex = ref(0);
+let carouselTimer = null;
 
 // 计算属性
 const formattedStorageSize = computed(() => {
-  const size = props.knowledgeStats?.total_storage_size || 0
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`
-  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`
-  return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`
-})
+  const size = props.knowledgeStats?.total_storage_size || 0;
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+});
 
 // const averageFilesPerDatabase = computed(() => {
 //   const databases = props.knowledgeStats?.total_databases || 0
@@ -160,282 +160,293 @@ const formattedStorageSize = computed(() => {
 // })
 
 // 使用统一的调色盘
-const getLegendColorByIndex = (index) => getColorByIndex(index)
-
+const getLegendColorByIndex = (index) => getColorByIndex(index);
 
 // 初始化数据库类型分布图 - 横向分段条
-const dbTypeLegend = ref([])
+const dbTypeLegend = ref([]);
 const initDbTypeChart = () => {
-  if (!dbTypeChartRef.value || !props.knowledgeStats?.databases_by_type) return
+  if (!dbTypeChartRef.value || !props.knowledgeStats?.databases_by_type) return;
 
   const entries = Object.entries(props.knowledgeStats.databases_by_type)
-    .map(([type, count]) => ({ name: type || '未知', value: count }))
-    .filter(item => item.value > 0)
+    .map(([type, count]) => ({ name: type || "未知", value: count }))
+    .filter((item) => item.value > 0);
 
   // update legend data
-  dbTypeLegend.value = entries
+  dbTypeLegend.value = entries;
 
   if (!dbTypeChart) {
-    dbTypeChart = echarts.init(dbTypeChartRef.value)
+    dbTypeChart = echarts.init(dbTypeChartRef.value);
   }
 
-  const total = entries.reduce((sum, item) => sum + item.value, 0)
+  const total = entries.reduce((sum, item) => sum + item.value, 0);
 
   // Build stacked bar series, but render with neutral color and separators
   const series = entries.map((item, idx) => ({
     name: item.name,
-    type: 'bar',
-    stack: 'total',
+    type: "bar",
+    stack: "total",
     barWidth: 28,
     data: [item.value],
     itemStyle: {
       color: getLegendColorByIndex(idx),
-      borderColor: getCSSVariable('--gray-0'),
+      borderColor: getCSSVariable("--gray-0"),
       borderWidth: 2,
-      borderJoin: 'miter'
+      borderJoin: "miter",
     },
     emphasis: {
       itemStyle: {
-        color: getLegendColorByIndex(idx)
-      }
-    }
-  }))
+        color: getLegendColorByIndex(idx),
+      },
+    },
+  }));
 
   const option = {
     animation: false,
     tooltip: {
-      trigger: 'item',
-      backgroundColor: getCSSVariable('--gray-0'),
-      borderColor: getCSSVariable('--gray-200'),
+      trigger: "item",
+      backgroundColor: getCSSVariable("--gray-0"),
+      borderColor: getCSSVariable("--gray-200"),
       borderWidth: 1,
-      textStyle: { color: getCSSVariable('--gray-600') },
+      textStyle: { color: getCSSVariable("--gray-600") },
       formatter: (params) => {
-        const value = params.value || 0
-        return `${params.seriesName}: ${value}/${total}`
-      }
+        const value = params.value || 0;
+        return `${params.seriesName}: ${value}/${total}`;
+      },
     },
     grid: { left: 0, right: 0, top: 10, bottom: 10, containLabel: false },
     xAxis: {
-      type: 'value',
+      type: "value",
       show: false,
-      max: total > 0 ? total : undefined
+      max: total > 0 ? total : undefined,
     },
     yAxis: {
-      type: 'category',
+      type: "category",
       show: false,
-      data: ['all']
+      data: ["all"],
     },
-    series
-  }
+    series,
+  };
 
-  dbTypeChart.setOption(option, true)
-}
+  dbTypeChart.setOption(option, true);
+};
 
 // 初始化文件类型分布图
 const initFileTypeChart = () => {
-  if (!fileTypeChartRef.value) return
+  if (!fileTypeChartRef.value) return;
 
   // 如果已存在图表实例，先销毁
   if (fileTypeChart) {
-    fileTypeChart.dispose()
-    fileTypeChart = null
+    fileTypeChart.dispose();
+    fileTypeChart = null;
   }
 
-  fileTypeChart = echarts.init(fileTypeChartRef.value)
+  fileTypeChart = echarts.init(fileTypeChartRef.value);
 
   // 检查是否有文件类型数据 - 兼容旧字段名和新字段名
-  const fileTypesData = props.knowledgeStats?.files_by_type || props.knowledgeStats?.file_type_distribution || {}
+  const fileTypesData =
+    props.knowledgeStats?.files_by_type || props.knowledgeStats?.file_type_distribution || {};
   if (Object.keys(fileTypesData).length > 0) {
-    const data = Object.entries(fileTypesData).map(([type, count]) => ({
-      name: type || '未知',
-      value: count
-    })).sort((a, b) => b.value - a.value) // 按数量排序
+    const data = Object.entries(fileTypesData)
+      .map(([type, count]) => ({
+        name: type || "未知",
+        value: count,
+      }))
+      .sort((a, b) => b.value - a.value); // 按数量排序
 
     // 设置轮播数据
-    fileTypeData.value = data
-    totalFiles.value = data.reduce((sum, item) => sum + item.value, 0)
+    fileTypeData.value = data;
+    totalFiles.value = data.reduce((sum, item) => sum + item.value, 0);
 
     // 启动轮播
-    startCarousel()
+    startCarousel();
 
     const option = {
       tooltip: {
-        trigger: 'item',
-        backgroundColor: getCSSVariable('--gray-0'),
-        borderColor: getCSSVariable('--gray-200'),
+        trigger: "item",
+        backgroundColor: getCSSVariable("--gray-0"),
+        borderColor: getCSSVariable("--gray-200"),
         borderWidth: 1,
         textStyle: {
-          color: getCSSVariable('--gray-600')
+          color: getCSSVariable("--gray-600"),
         },
-        formatter: '{a} <br/>{b}: {c} ({d}%)'
+        formatter: "{a} <br/>{b}: {c} ({d}%)",
       },
       legend: {
-        orient: 'horizontal',
-        bottom: '5%',
-        left: 'center',
+        orient: "horizontal",
+        bottom: "5%",
+        left: "center",
         itemGap: 16,
         itemWidth: 10,
         itemHeight: 10,
         textStyle: {
           fontSize: 11,
-          color: getCSSVariable('--gray-600')
-        }
+          color: getCSSVariable("--gray-600"),
+        },
       },
-      series: [{
-        name: '文件类型',
-        type: 'pie',
-        radius: ['45%', '75%'], // 调整为更大的环，为中心信息留出更多空间
-        center: ['50%', '45%'], // 向上移动，为中心和底部图例留出空间
-        avoidLabelOverlap: true, // 避免标签重叠
-        itemStyle: {
-          borderRadius: 8,
-          borderColor: getCSSVariable('--gray-0'),
-          borderWidth: 2
-        },
-        label: {
-          show: false // 隐藏饼图上的标签，使用图例代替
-        },
-        emphasis: {
+      series: [
+        {
+          name: "文件类型",
+          type: "pie",
+          radius: ["45%", "75%"], // 调整为更大的环，为中心信息留出更多空间
+          center: ["50%", "45%"], // 向上移动，为中心和底部图例留出空间
+          avoidLabelOverlap: true, // 避免标签重叠
           itemStyle: {
-            shadowBlur: 10,
-            shadowOffsetX: 0,
-            shadowColor: getCSSVariable('--shadow-3')
-          }
+            borderRadius: 8,
+            borderColor: getCSSVariable("--gray-0"),
+            borderWidth: 2,
+          },
+          label: {
+            show: false, // 隐藏饼图上的标签，使用图例代替
+          },
+          emphasis: {
+            itemStyle: {
+              shadowBlur: 10,
+              shadowOffsetX: 0,
+              shadowColor: getCSSVariable("--shadow-3"),
+            },
+          },
+          labelLine: {
+            show: false, // 隐藏标签线
+          },
+          data: data,
+          color: getColorPalette(),
         },
-        labelLine: {
-          show: false // 隐藏标签线
-        },
-        data: data,
-        color: getColorPalette()
-      }]
-    }
+      ],
+    };
 
-    fileTypeChart.setOption(option)
+    fileTypeChart.setOption(option);
   } else {
     // 清空轮播数据
-    fileTypeData.value = []
-    totalFiles.value = 0
-    stopCarousel()
+    fileTypeData.value = [];
+    totalFiles.value = 0;
+    stopCarousel();
 
     // 如果没有文件类型数据，显示一个占位图表
     const option = {
       tooltip: {
-        trigger: 'item',
-        backgroundColor: getCSSVariable('--gray-0'),
-        borderColor: getCSSVariable('--gray-200'),
+        trigger: "item",
+        backgroundColor: getCSSVariable("--gray-0"),
+        borderColor: getCSSVariable("--gray-200"),
         borderWidth: 1,
         textStyle: {
-          color: getCSSVariable('--gray-600')
+          color: getCSSVariable("--gray-600"),
         },
-        formatter: '{a} <br/>{b}: {c} ({d}%)'
+        formatter: "{a} <br/>{b}: {c} ({d}%)",
       },
-      series: [{
-        name: '文件类型',
-        type: 'pie',
-        radius: ['45%', '75%'],
-        center: ['50%', '45%'],
-        avoidLabelOverlap: true,
-        itemStyle: {
-          borderRadius: 8,
-          borderColor: getCSSVariable('--gray-0'),
-          borderWidth: 2
-        },
-        label: {
-          show: false
-        },
-        emphasis: {
+      series: [
+        {
+          name: "文件类型",
+          type: "pie",
+          radius: ["45%", "75%"],
+          center: ["50%", "45%"],
+          avoidLabelOverlap: true,
           itemStyle: {
-            shadowBlur: 10,
-            shadowOffsetX: 0,
-            shadowColor: getCSSVariable('--shadow-3')
-          }
+            borderRadius: 8,
+            borderColor: getCSSVariable("--gray-0"),
+            borderWidth: 2,
+          },
+          label: {
+            show: false,
+          },
+          emphasis: {
+            itemStyle: {
+              shadowBlur: 10,
+              shadowOffsetX: 0,
+              shadowColor: getCSSVariable("--shadow-3"),
+            },
+          },
+          labelLine: {
+            show: false,
+          },
+          data: [{ name: "暂无数据", value: 1 }],
+          color: [getCSSVariable("--color-info-500")],
         },
-        labelLine: {
-          show: false
-        },
-        data: [
-          { name: '暂无数据', value: 1 }
-        ],
-        color: [getCSSVariable('--color-info-500')]
-      }]
-    }
+      ],
+    };
 
-    fileTypeChart.setOption(option)
+    fileTypeChart.setOption(option);
   }
-}
+};
 
 // 轮播功能
 const startCarousel = () => {
-  stopCarousel() // 先停止之前的轮播
-  if (fileTypeData.value.length <= 1) return
+  stopCarousel(); // 先停止之前的轮播
+  if (fileTypeData.value.length <= 1) return;
 
   // 重置索引
-  currentCarouselIndex.value = 0
+  currentCarouselIndex.value = 0;
 
   // 启动新的轮播，每3秒切换一次
   carouselTimer = setInterval(() => {
-    currentCarouselIndex.value = (currentCarouselIndex.value + 1) % fileTypeData.value.length
-  }, 3000)
-}
+    currentCarouselIndex.value = (currentCarouselIndex.value + 1) % fileTypeData.value.length;
+  }, 3000);
+};
 
 const stopCarousel = () => {
   if (carouselTimer) {
-    clearInterval(carouselTimer)
-    carouselTimer = null
+    clearInterval(carouselTimer);
+    carouselTimer = null;
   }
-}
+};
 
 // 更新图表
 const updateCharts = () => {
   nextTick(() => {
-    initDbTypeChart()
-    initFileTypeChart()
-  })
-}
+    initDbTypeChart();
+    initFileTypeChart();
+  });
+};
 
 // 监听数据变化
-watch(() => props.knowledgeStats, () => {
-  updateCharts()
-}, { deep: true })
+watch(
+  () => props.knowledgeStats,
+  () => {
+    updateCharts();
+  },
+  { deep: true },
+);
 
 // 窗口大小变化时重新调整图表
 const handleResize = () => {
-  if (dbTypeChart) dbTypeChart.resize()
-  if (fileTypeChart) fileTypeChart.resize()
-}
+  if (dbTypeChart) dbTypeChart.resize();
+  if (fileTypeChart) fileTypeChart.resize();
+};
 
 onMounted(() => {
-  updateCharts()
-  window.addEventListener('resize', handleResize)
-})
+  updateCharts();
+  window.addEventListener("resize", handleResize);
+});
 
 // 监听主题变化，重新渲染图表
-watch(() => themeStore.isDark, () => {
-  if (props.knowledgeStats && (dbTypeChart || fileTypeChart)) {
-    nextTick(() => {
-      updateCharts()
-    })
-  }
-})
+watch(
+  () => themeStore.isDark,
+  () => {
+    if (props.knowledgeStats && (dbTypeChart || fileTypeChart)) {
+      nextTick(() => {
+        updateCharts();
+      });
+    }
+  },
+);
 
 // 组件卸载时清理
 const cleanup = () => {
-  window.removeEventListener('resize', handleResize)
-  stopCarousel() // 停止轮播
+  window.removeEventListener("resize", handleResize);
+  stopCarousel(); // 停止轮播
   if (dbTypeChart) {
-    dbTypeChart.dispose()
-    dbTypeChart = null
+    dbTypeChart.dispose();
+    dbTypeChart = null;
   }
   if (fileTypeChart) {
-    fileTypeChart.dispose()
-    fileTypeChart = null
+    fileTypeChart.dispose();
+    fileTypeChart = null;
   }
-}
+};
 
 // 导出清理函数供父组件调用
 defineExpose({
-  cleanup
-})
+  cleanup,
+});
 </script>
 
 <style scoped lang="less">

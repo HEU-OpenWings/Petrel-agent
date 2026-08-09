@@ -171,11 +171,10 @@ src/
 
 ### 已知问题：前端的三个基建缺口
 
-1. **前端目前零 lint 覆盖**，而且两头都断：根 `biome.json` 的 `files.includes` 里有
-   `"!apps/web"`，所以 `pnpm run lint` 根本不看前端；而 `apps/web` 自己的 `lint` 脚本是
-   `eslint . --fix`，装的是 ESLint 9 却只有 ESLint 8 时代的 `.eslintrc.cjs`，直接报找不到配置。
-   两条路都跑不通，意味着本轮新增的前端代码没有经过任何静态检查。
-   修法见 §4「修 lint」——迁到 `eslint.config.js`，或者直接把 `apps/web` 纳入 Biome。
+1. **前端 lint 已接入 Biome**（HEU-46 完成）：根 `biome.json` 已移除 `!apps/web` 排除，
+   `pnpm run lint` 统一覆盖前端与后端。前端从 v0.4 的 ESLint 迁移至 Biome，232 个文件
+   零错误通过。`.vue` 文件的 `noUnusedVariables` / `noUnusedImports` 因 Biome 不解析
+   `<template>` 暂关闭，待 Biome 支持 Vue template 后重新开启。
 2. **组件层（`.vue`）没有自动化测试**。原因是根 `vitest.config.ts` 没挂 `@vitejs/plugin-vue`
    （该插件已经装在 `apps/web` 里），vitest 解析不了 `.vue` 文件；**不是「缺 `@vue/test-utils`」**。
    composable / store / api 这些 `.js` 已经有测试并跟着 `pnpm test` 一起跑（本轮新增
@@ -198,8 +197,7 @@ src/
 - **旧对话代码已无路由引用**但文件仍在：`AgentView` · `AgentSingleView` ·
   `AgentChatComponent` · `AgentMessageComponent` · `AgentInputArea` · `ChatSidebarComponent` ·
   `AgentConfigSidebar` · `ToolCallingResult/*`，合计约 8000 行。
-- **`pnpm run lint` 不可用**（v0.4 遗留）：依赖是 eslint 9，只认 `eslint.config.js`，
-  而仓库里是旧格式 `.eslintrc.cjs`。
+- **`pnpm run lint` 已可用**（HEU-46 完成）：已从 ESLint 迁移到 Biome，全仓统一静态检查。
 
 ## 3. 与后端的契约
 
@@ -237,7 +235,7 @@ event: error   data: { message }
   `GraphDetailPanel` · `KnowledgeGraphSection`）+ 思维导图（`MindMapSection`），
   连同 `@antv/g6` · `sigma` · `graphology` · `d3` · `markmap-*` 依赖一并移除。
   收益明显：`GraphCanvas` 单个 chunk 就有 1.16 MB
-- **修 lint**：迁到 `eslint.config.js`，或直接换 Biome 与 agent-server 统一
+- **修 lint**：✅ 已完成（HEU-46）。迁到 Biome 与 agent-server 统一
 - **补组件层测试基建**：根 `vitest.config.ts` 挂 `@vitejs/plugin-vue`（该依赖只装在
   `apps/web/package.json` 里），否则任何 `import` 了 `.vue` 的测试都跑不起来，
   `apps/web` 的组件层零测试覆盖；连带把 `apps/web` 纳入 typecheck 与 Biome。见 §2「基建缺口」

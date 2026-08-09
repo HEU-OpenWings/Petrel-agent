@@ -61,15 +61,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, useSlots } from 'vue';
 import {
-  SendOutlined,
   ArrowUpOutlined,
   LoadingOutlined,
   PauseOutlined,
-  PlusOutlined
-} from '@ant-design/icons-vue';
-
+  PlusOutlined,
+  SendOutlined,
+} from "@ant-design/icons-vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useSlots, watch } from "vue";
 
 const inputRef = ref(null);
 const isSingleLine = ref(true);
@@ -80,63 +79,63 @@ const debounceTimer = ref(null);
 const props = defineProps({
   modelValue: {
     type: String,
-    default: ''
+    default: "",
   },
   placeholder: {
     type: String,
-    default: '输入问题...'
+    default: "输入问题...",
   },
   isLoading: {
     type: Boolean,
-    default: false
+    default: false,
   },
   disabled: {
     type: Boolean,
-    default: false
+    default: false,
   },
   sendButtonDisabled: {
     type: Boolean,
-    default: false
+    default: false,
   },
   autoSize: {
     type: Object,
-    default: () => ({ minRows: 2, maxRows: 6 })
+    default: () => ({ minRows: 2, maxRows: 6 }),
   },
   sendIcon: {
     type: String,
-    default: 'ArrowUpOutlined'
+    default: "ArrowUpOutlined",
   },
   customClasses: {
     type: Object,
-    default: () => ({})
-  }
+    default: () => ({}),
+  },
 });
 
-const emit = defineEmits(['update:modelValue', 'send', 'keydown']);
+const emit = defineEmits(["update:modelValue", "send", "keydown"]);
 const slots = useSlots();
 const hasOptionsLeft = computed(() => {
-  const slot = slots['options-left'];
+  const slot = slots["options-left"];
   if (!slot) {
     return false;
   }
   const renderedNodes = slot();
-  return Boolean(renderedNodes && renderedNodes.length);
+  return Boolean(renderedNodes?.length);
 });
 
 const hasActionsLeft = computed(() => {
-  const slot = slots['actions-left'];
+  const slot = slots["actions-left"];
   if (!slot) {
     return false;
   }
   const renderedNodes = slot();
-  return Boolean(renderedNodes && renderedNodes.length);
+  return Boolean(renderedNodes?.length);
 });
 
 // 图标映射
 const iconComponents = {
-  'SendOutlined': SendOutlined,
-  'ArrowUpOutlined': ArrowUpOutlined,
-  'PauseOutlined': PauseOutlined
+  SendOutlined: SendOutlined,
+  ArrowUpOutlined: ArrowUpOutlined,
+  PauseOutlined: PauseOutlined,
 };
 
 // 根据传入的图标名动态获取组件
@@ -150,24 +149,23 @@ const getIcon = computed(() => {
 // 创建本地引用以进行双向绑定
 const inputValue = computed({
   get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val)
+  set: (val) => emit("update:modelValue", val),
 });
-
 
 // 处理键盘事件
 const handleKeyPress = (e) => {
-  emit('keydown', e);
+  emit("keydown", e);
 };
 
 // 处理输入事件
 const handleInput = (e) => {
   const value = e.target.value;
-  emit('update:modelValue', value);
+  emit("update:modelValue", value);
 };
 
 // 处理发送按钮点击
 const handleSendOrStop = () => {
-  emit('send');
+  emit("send");
 };
 
 // 用于存储固定的单行宽度基准
@@ -182,13 +180,13 @@ const checkLineCount = () => {
   const content = inputValue.value;
 
   // 主要判断依据：内容是否包含换行符
-  const hasNewlines = content.includes('\n');
+  const hasNewlines = content.includes("\n");
 
   // 辅助判断：内容是否超出单行宽度（使用固定的单行宽度基准）
   let contentExceedsWidth = false;
   if (!hasNewlines && content.trim() && singleLineWidth.value > 0) {
     // 使用固定的单行宽度作为测量基准，避免因模式切换导致的宽度变化
-    const measureDiv = document.createElement('div');
+    const measureDiv = document.createElement("div");
     measureDiv.style.cssText = `
       position: absolute;
       visibility: hidden;
@@ -214,15 +212,13 @@ const checkLineCount = () => {
   // 根据模式调整高度
   if (shouldBeMultiLine) {
     // 多行模式：让textarea自适应内容高度
-    textarea.style.height = 'auto';
+    textarea.style.height = "auto";
     textarea.style.height = `${Math.max(textarea.scrollHeight, singleLineHeight.value)}px`;
   } else {
     // 单行模式：清除内联样式，让CSS控制高度
-    textarea.style.height = '';
+    textarea.style.height = "";
   }
 };
-
-
 
 // 聚焦输入框
 const focusInput = () => {
@@ -284,9 +280,8 @@ defineExpose({
   focus: () => inputRef.value?.focus(),
   closeOptions: () => {
     optionsExpanded.value = false;
-  }
+  },
 });
-
 </script>
 
 <style lang="less" scoped>

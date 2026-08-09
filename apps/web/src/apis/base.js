@@ -2,8 +2,9 @@
  * @deprecated v0.4 遗留的 HTTP 封装，仍被知识库 / Dashboard / 评测等旧页面使用。
  * 新代码请用 ./http.js。两者收敛的时机是旧页面按 HEU-21 / HEU-28 重写时。
  */
-import { useUserStore, checkAdminPermission, checkSuperAdminPermission } from '@/stores/user'
-import { message } from 'ant-design-vue'
+
+import { message } from "ant-design-vue";
+import { checkAdminPermission, checkSuperAdminPermission, useUserStore } from "@/stores/user";
 
 /**
  * 基础API请求封装
@@ -18,62 +19,62 @@ import { message } from 'ant-design-vue'
  * @param {string} responseType - 响应类型: 'json' | 'text' | 'blob'
  * @returns {Promise} - 请求结果
  */
-export async function apiRequest(url, options = {}, requiresAuth = true, responseType = 'json') {
+export async function apiRequest(url, options = {}, requiresAuth = true, responseType = "json") {
   try {
-    const isFormData = options?.body instanceof FormData
+    const isFormData = options?.body instanceof FormData;
     // 默认请求配置
     const requestOptions = {
       ...options,
       headers: {
-        ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
+        ...(!isFormData ? { "Content-Type": "application/json" } : {}),
         ...options.headers,
       },
-    }
+    };
 
     // 如果需要认证，添加认证头
     if (requiresAuth) {
-      const userStore = useUserStore()
+      const userStore = useUserStore();
       if (!userStore.isLoggedIn) {
-        throw new Error('用户未登录')
+        throw new Error("用户未登录");
       }
 
-      Object.assign(requestOptions.headers, userStore.getAuthHeaders())
+      Object.assign(requestOptions.headers, userStore.getAuthHeaders());
     }
 
     // 发送请求
-    const response = await fetch(url, requestOptions)
+    const response = await fetch(url, requestOptions);
 
     // 处理API返回的错误
     if (!response.ok) {
       // 尝试解析错误信息
-      let errorMessage = `请求失败: ${response.status}, ${response.statusText}`
-      let errorData = null
+      let errorMessage = `请求失败: ${response.status}, ${response.statusText}`;
+      let errorData = null;
 
-      console.log('API请求失败:', {
+      console.log("API请求失败:", {
         url,
         status: response.status,
         statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries())
+        headers: Object.fromEntries(response.headers.entries()),
       });
 
       try {
-        errorData = await response.json()
-        errorMessage = errorData.detail || errorData.message || errorMessage
-        console.log('API错误详情:', errorData);
+        errorData = await response.json();
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+        console.log("API错误详情:", errorData);
 
         // 如果是422错误，打印更详细的信息
         if (response.status === 422) {
-          console.error('422验证错误详情:', {
+          console.error("422验证错误详情:", {
             url,
             requestMethod: requestOptions.method,
             requestHeaders: requestOptions.headers,
             requestBody: requestOptions.body,
-            responseData: errorData
+            responseData: errorData,
           });
         }
       } catch (e) {
         // 如果无法解析JSON，使用默认错误信息
-        console.log('无法解析错误响应JSON:', e);
+        console.log("无法解析错误响应JSON:", e);
       }
 
       // 特殊处理401和403错误
@@ -83,55 +84,56 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
       // 按普通错误抛出，交给调用方自己的 catch 处理。
       if (response.status === 401 && requiresAuth) {
         // 如果是认证失败，可能需要重新登录
-        const userStore = useUserStore()
+        const userStore = useUserStore();
 
         // 检查是否是token过期
-        const isTokenExpired = errorData &&
-          (errorData.detail?.includes('令牌已过期') ||
-           errorData.detail?.includes('token expired') ||
-           errorMessage?.includes('令牌已过期') ||
-           errorMessage?.includes('token expired'))
+        const isTokenExpired =
+          errorData &&
+          (errorData.detail?.includes("令牌已过期") ||
+            errorData.detail?.includes("token expired") ||
+            errorMessage?.includes("令牌已过期") ||
+            errorMessage?.includes("token expired"));
 
-        message.error(isTokenExpired ? '登录已过期，请重新登录' : '认证失败，请重新登录')
+        message.error(isTokenExpired ? "登录已过期，请重新登录" : "认证失败，请重新登录");
 
         // 如果用户当前认为自己已登录，则登出
         if (userStore.isLoggedIn) {
-          userStore.logout()
+          userStore.logout();
         }
 
         // 使用setTimeout确保消息显示后再跳转
         setTimeout(() => {
-          window.location.href = '/login'
-        }, 1500)
+          window.location.href = "/login";
+        }, 1500);
 
-        throw new Error('未授权，请先登录')
+        throw new Error("未授权，请先登录");
       } else if (response.status === 403) {
-        throw new Error('没有权限执行此操作')
+        throw new Error("没有权限执行此操作");
       } else if (response.status === 500) {
-        throw new Error('Server 500 Error, please check the log use `docker logs api-dev`')
+        throw new Error("Server 500 Error, please check the log use `docker logs api-dev`");
       }
 
-      throw new Error(errorMessage)
+      throw new Error(errorMessage);
     }
 
     // 根据responseType处理响应
-    if (responseType === 'blob') {
-      return response
-    } else if (responseType === 'json') {
+    if (responseType === "blob") {
+      return response;
+    } else if (responseType === "json") {
       // 检查Content-Type以确定如何处理响应
-      const contentType = response.headers.get('Content-Type')
-      if (contentType && contentType.includes('application/json')) {
-        return await response.json()
+      const contentType = response.headers.get("Content-Type");
+      if (contentType?.includes("application/json")) {
+        return await response.json();
       }
-      return await response.text()
-    } else if (responseType === 'text') {
-      return await response.text()
+      return await response.text();
+    } else if (responseType === "text") {
+      return await response.text();
     } else {
-      return response
+      return response;
     }
   } catch (error) {
-    console.error('API请求错误:', error)
-    throw error
+    console.error("API请求错误:", error);
+    throw error;
   }
 }
 
@@ -143,18 +145,18 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
  * @param {string} responseType - 响应类型: 'json' | 'text' | 'blob'
  * @returns {Promise} - 请求结果
  */
-export function apiGet(url, options = {}, requiresAuth = true, responseType = 'json') {
-  return apiRequest(url, { method: 'GET', ...options }, requiresAuth, responseType)
+export function apiGet(url, options = {}, requiresAuth = true, responseType = "json") {
+  return apiRequest(url, { method: "GET", ...options }, requiresAuth, responseType);
 }
 
-export function apiAdminGet(url, options = {}, responseType = 'json') {
-  checkAdminPermission()
-  return apiGet(url, options, true, responseType)
+export function apiAdminGet(url, options = {}, responseType = "json") {
+  checkAdminPermission();
+  return apiGet(url, options, true, responseType);
 }
 
-export function apiSuperAdminGet(url, options = {}, responseType = 'json') {
-  checkSuperAdminPermission()
-  return apiGet(url, options, true, responseType)
+export function apiSuperAdminGet(url, options = {}, responseType = "json") {
+  checkSuperAdminPermission();
+  return apiGet(url, options, true, responseType);
 }
 
 /**
@@ -166,27 +168,27 @@ export function apiSuperAdminGet(url, options = {}, responseType = 'json') {
  * @param {string} responseType - 响应类型: 'json' | 'text' | 'blob'
  * @returns {Promise} - 请求结果
  */
-export function apiPost(url, data = {}, options = {}, requiresAuth = true, responseType = 'json') {
+export function apiPost(url, data = {}, options = {}, requiresAuth = true, responseType = "json") {
   return apiRequest(
     url,
     {
-      method: 'POST',
+      method: "POST",
       body: data instanceof FormData ? data : JSON.stringify(data),
-      ...options
+      ...options,
     },
     requiresAuth,
-    responseType
-  )
+    responseType,
+  );
 }
 
-export function apiAdminPost(url, data = {}, options = {}, responseType = 'json') {
-  checkAdminPermission()
-  return apiPost(url, data, options, true, responseType)
+export function apiAdminPost(url, data = {}, options = {}, responseType = "json") {
+  checkAdminPermission();
+  return apiPost(url, data, options, true, responseType);
 }
 
-export function apiSuperAdminPost(url, data = {}, options = {}, responseType = 'json') {
-  checkSuperAdminPermission()
-  return apiPost(url, data, options, true, responseType)
+export function apiSuperAdminPost(url, data = {}, options = {}, responseType = "json") {
+  checkSuperAdminPermission();
+  return apiPost(url, data, options, true, responseType);
 }
 
 /**
@@ -198,27 +200,27 @@ export function apiSuperAdminPost(url, data = {}, options = {}, responseType = '
  * @param {string} responseType - 响应类型: 'json' | 'text' | 'blob'
  * @returns {Promise} - 请求结果
  */
-export function apiPut(url, data = {}, options = {}, requiresAuth = true, responseType = 'json') {
+export function apiPut(url, data = {}, options = {}, requiresAuth = true, responseType = "json") {
   return apiRequest(
     url,
     {
-      method: 'PUT',
+      method: "PUT",
       body: data instanceof FormData ? data : JSON.stringify(data),
-      ...options
+      ...options,
     },
     requiresAuth,
-    responseType
-  )
+    responseType,
+  );
 }
 
-export function apiAdminPut(url, data = {}, options = {}, responseType = 'json') {
-  checkAdminPermission()
-  return apiPut(url, data, options, true, responseType)
+export function apiAdminPut(url, data = {}, options = {}, responseType = "json") {
+  checkAdminPermission();
+  return apiPut(url, data, options, true, responseType);
 }
 
-export function apiSuperAdminPut(url, data = {}, options = {}, responseType = 'json') {
-  checkSuperAdminPermission()
-  return apiPut(url, data, options, true, responseType)
+export function apiSuperAdminPut(url, data = {}, options = {}, responseType = "json") {
+  checkSuperAdminPermission();
+  return apiPut(url, data, options, true, responseType);
 }
 
 /**
@@ -229,18 +231,16 @@ export function apiSuperAdminPut(url, data = {}, options = {}, responseType = 'j
  * @param {string} responseType - 响应类型: 'json' | 'text' | 'blob'
  * @returns {Promise} - 请求结果
  */
-export function apiDelete(url, options = {}, requiresAuth = true, responseType = 'json') {
-  return apiRequest(url, { method: 'DELETE', ...options }, requiresAuth, responseType)
+export function apiDelete(url, options = {}, requiresAuth = true, responseType = "json") {
+  return apiRequest(url, { method: "DELETE", ...options }, requiresAuth, responseType);
 }
-
 
 export function apiAdminDelete(url, options = {}) {
-  checkAdminPermission()
-  return apiDelete(url, options, true)
+  checkAdminPermission();
+  return apiDelete(url, options, true);
 }
 
-
 export function apiSuperAdminDelete(url, options = {}) {
-  checkSuperAdminPermission()
-  return apiDelete(url, options, true)
+  checkSuperAdminPermission();
+  return apiDelete(url, options, true);
 }

@@ -261,6 +261,7 @@ describe("login", () => {
     await registerVerified("a@x.io");
     const { createUserRepository } = await import("@petrel/database");
     const found = await createUserRepository(db).findByEmail("a@x.io");
+    // biome-ignore lint/style/noNonNullAssertion: 上一行刚注册过，必然查得到
     await createUserRepository(db).setDisabled(found!.id, true);
 
     await expect(service.login("a@x.io", PASSWORD)).rejects.toMatchObject({ status: 401 });
@@ -465,6 +466,10 @@ describe("changePassword", () => {
       message: "当前密码不正确",
     });
     await expect(service.login("a@x.io", OLD)).resolves.toMatchObject({ email: "a@x.io" });
+    // 失败的改密不得自增 tokenVersion：否则攻击者可以靠乱猜密码把别人全部踢下线
+    const { createUserRepository } = await import("@petrel/database");
+    const found = await createUserRepository(db).findByEmail("a@x.io");
+    expect(found?.tokenVersion).toBe(0);
   });
 
   it("新密码太短返回 400", async () => {

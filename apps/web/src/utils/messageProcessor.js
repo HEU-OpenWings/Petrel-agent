@@ -12,7 +12,7 @@ export class MessageProcessor {
 
     // 构建工具响应映射
     for (const item of msgs) {
-      if (item.type === 'tool') {
+      if (item.type === "tool") {
         // 使用多种可能的ID字段来匹配工具调用
         const toolCallId = item.tool_call_id || item.id;
         if (toolCallId) {
@@ -22,17 +22,17 @@ export class MessageProcessor {
     }
 
     // 合并工具调用和响应
-    const convertedMsgs = msgs.map(item => {
-      if (item.type === 'ai' && item.tool_calls && item.tool_calls.length > 0) {
+    const convertedMsgs = msgs.map((item) => {
+      if (item.type === "ai" && item.tool_calls && item.tool_calls.length > 0) {
         return {
           ...item,
-          tool_calls: item.tool_calls.map(toolCall => {
+          tool_calls: item.tool_calls.map((toolCall) => {
             const toolResponse = toolResponseMap.get(toolCall.id);
             return {
               ...toolCall,
-              tool_call_result: toolResponse || null
+              tool_call_result: toolResponse || null,
             };
-          })
+          }),
         };
       }
       return item;
@@ -49,31 +49,31 @@ export class MessageProcessor {
   static convertServerHistoryToMessages(serverHistory) {
     // Filter out standalone 'tool' messages since tool results are already in AI messages' tool_calls
     // Backend new storage: tool results are embedded in AI messages' tool_calls array with tool_call_result field
-    const filteredHistory = serverHistory.filter(item => item.type !== 'tool');
+    const filteredHistory = serverHistory.filter((item) => item.type !== "tool");
 
     // 按照对话分组
     const conversations = [];
     let currentConv = null;
 
     for (const item of filteredHistory) {
-      if (item.type === 'human') {
+      if (item.type === "human") {
         // Start new conversation, finalize previous one
         if (currentConv) {
           // Find the last AI message and mark it as final
           for (let i = currentConv.messages.length - 1; i >= 0; i--) {
-            if (currentConv.messages[i].type === 'ai') {
+            if (currentConv.messages[i].type === "ai") {
               currentConv.messages[i].isLast = true;
-              currentConv.status = 'finished';
+              currentConv.status = "finished";
               break;
             }
           }
         }
         currentConv = {
           messages: [item],
-          status: 'loading'
+          status: "loading",
         };
         conversations.push(currentConv);
-      } else if (item.type === 'ai' && currentConv) {
+      } else if (item.type === "ai" && currentConv) {
         currentConv.messages.push(item);
       }
     }
@@ -82,9 +82,9 @@ export class MessageProcessor {
     if (currentConv && currentConv.messages.length > 0) {
       // Find the last AI message and mark it as final
       for (let i = currentConv.messages.length - 1; i >= 0; i--) {
-        if (currentConv.messages[i].type === 'ai') {
+        if (currentConv.messages[i].type === "ai") {
           currentConv.messages[i].isLast = true;
-          currentConv.status = 'finished';
+          currentConv.status = "finished";
           break;
         }
       }
@@ -105,16 +105,16 @@ export class MessageProcessor {
     const result = JSON.parse(JSON.stringify(chunks[0]));
 
     // 处理用户消息的内容格式 - 确保显示纯文本
-    if (result.type === 'human' || result.role === 'user') {
+    if (result.type === "human" || result.role === "user") {
       // 如果content是数组格式（LangChain多模态消息），提取文本部分
       if (Array.isArray(result.content)) {
-        const textPart = result.content.find(item => item.type === 'text');
-        result.content = textPart ? textPart.text : '';
+        const textPart = result.content.find((item) => item.type === "text");
+        result.content = textPart ? textPart.text : "";
       } else {
-        result.content = result.content || '';
+        result.content = result.content || "";
       }
     } else {
-      result.content = result.content || '';
+      result.content = result.content || "";
     }
 
     // 合并后续chunks
@@ -129,7 +129,7 @@ export class MessageProcessor {
       // 合并reasoning_content
       if (chunk.reasoning_content) {
         if (!result.reasoning_content) {
-          result.reasoning_content = '';
+          result.reasoning_content = "";
         }
         result.reasoning_content += chunk.reasoning_content;
       }
@@ -138,7 +138,7 @@ export class MessageProcessor {
       if (chunk.additional_kwargs?.reasoning_content) {
         if (!result.additional_kwargs) result.additional_kwargs = {};
         if (!result.additional_kwargs.reasoning_content) {
-          result.additional_kwargs.reasoning_content = '';
+          result.additional_kwargs.reasoning_content = "";
         }
         result.additional_kwargs.reasoning_content += chunk.additional_kwargs.reasoning_content;
       }
@@ -148,8 +148,8 @@ export class MessageProcessor {
     }
 
     // 处理AIMessageChunk类型
-    if (result.type === 'AIMessageChunk') {
-      result.type = 'ai';
+    if (result.type === "AIMessageChunk") {
+      result.type = "ai";
     }
 
     return result;
@@ -168,9 +168,7 @@ export class MessageProcessor {
 
       for (const toolCallChunk of chunk.tool_call_chunks) {
         // 使用 index 来标识工具调用（因为可能有多个工具调用）
-        const existingToolCallIndex = result.tool_calls.findIndex(
-          t => t.index === toolCallChunk.index
-        );
+        const existingToolCallIndex = result.tool_calls.findIndex((t) => t.index === toolCallChunk.index);
 
         if (existingToolCallIndex !== -1) {
           // 合并相同index的tool call
@@ -189,7 +187,7 @@ export class MessageProcessor {
           // 合并参数
           if (toolCallChunk.args) {
             if (!existingToolCall.function) existingToolCall.function = {};
-            if (!existingToolCall.function.arguments) existingToolCall.function.arguments = '';
+            if (!existingToolCall.function.arguments) existingToolCall.function.arguments = "";
             existingToolCall.function.arguments += toolCallChunk.args;
           }
         } else {
@@ -199,8 +197,8 @@ export class MessageProcessor {
             id: toolCallChunk.id,
             function: {
               name: toolCallChunk.name || null,
-              arguments: toolCallChunk.args || ''
-            }
+              arguments: toolCallChunk.args || "",
+            },
           };
           result.tool_calls.push(newToolCall);
         }
@@ -219,13 +217,13 @@ export class MessageProcessor {
   static async processResponseChunk(data, onGoingConv, state, getAgentHistory, handleError) {
     try {
       switch (data.status) {
-        case 'init':
+        case "init":
           // 代表服务端收到请求并返回第一个响应
           state.waitingServerResponse = false;
           onGoingConv.msgChunks[data.request_id] = [data.msg];
           break;
 
-        case 'loading':
+        case "loading":
           if (data.msg.id) {
             if (!onGoingConv.msgChunks[data.msg.id]) {
               onGoingConv.msgChunks[data.msg.id] = [];
@@ -234,20 +232,20 @@ export class MessageProcessor {
           }
           break;
 
-        case 'error':
+        case "error":
           console.error("流式处理出错:", data.message);
-          handleError(new Error(data.message), 'stream');
+          handleError(new Error(data.message), "stream");
           break;
 
-        case 'finished':
+        case "finished":
           await getAgentHistory();
           break;
 
         default:
-          console.warn('未知的响应状态:', data.status);
+          console.warn("未知的响应状态:", data.status);
       }
     } catch (error) {
-      handleError(error, 'stream');
+      handleError(error, "stream");
     }
   }
 
@@ -261,7 +259,7 @@ export class MessageProcessor {
   static async handleStreamResponse(response, processChunk, scrollToBottom, handleError) {
     try {
       const reader = response.body.getReader();
-      let buffer = '';
+      let buffer = "";
       const decoder = new TextDecoder();
 
       while (true) {
@@ -269,8 +267,8 @@ export class MessageProcessor {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // 保留最后一行可能不完整的内容
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // 保留最后一行可能不完整的内容
 
         for (const line of lines) {
           if (line.trim()) {
@@ -278,7 +276,7 @@ export class MessageProcessor {
               const data = JSON.parse(line.trim());
               await processChunk(data);
             } catch (e) {
-              console.debug('解析JSON出错:', e.message);
+              console.debug("解析JSON出错:", e.message);
             }
           }
         }
@@ -290,12 +288,12 @@ export class MessageProcessor {
         try {
           const data = JSON.parse(buffer.trim());
           await processChunk(data);
-        } catch (e) {
-          console.warn('最终缓冲区内容无法解析:', buffer);
+        } catch (_e) {
+          console.warn("最终缓冲区内容无法解析:", buffer);
         }
       }
     } catch (error) {
-      handleError(error, 'stream');
+      handleError(error, "stream");
     }
   }
 }

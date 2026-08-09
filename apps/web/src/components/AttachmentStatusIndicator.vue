@@ -57,26 +57,21 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
-import {
-  Paperclip,
-  FileText,
-  File,
-  X
-} from 'lucide-vue-next';
+import { File, FileText, Paperclip, X } from "lucide-vue-next";
+import { computed, ref } from "vue";
 
 const props = defineProps({
   attachments: {
     type: Array,
-    default: () => []
+    default: () => [],
   },
   disabled: {
     type: Boolean,
-    default: false
-  }
+    default: false,
+  },
 });
 
-const emit = defineEmits(['remove']);
+const emit = defineEmits(["remove"]);
 
 const detailsVisible = ref(false);
 
@@ -88,40 +83,40 @@ const hasAttachments = computed(() => {
 // 根据文件类型获取图标
 const getFileIcon = (fileType) => {
   const iconMap = {
-    'text/plain': FileText,
-    'text/markdown': FileText,
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': File,
-    'text/html': File,
-    'text/htm': File,
+    "text/plain": FileText,
+    "text/markdown": FileText,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": File,
+    "text/html": File,
+    "text/htm": File,
   };
   return iconMap[fileType] || File;
 };
 
 // 格式化文件大小
 const formatFileSize = (bytes) => {
-  if (!bytes || bytes === 0) return '0 B';
+  if (!bytes || bytes === 0) return "0 B";
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  return `${parseFloat((bytes / k ** i).toFixed(1))} ${sizes[i]}`;
 };
 
 // 获取状态标签
 const getStatusLabel = (status) => {
   const statusMap = {
-    'uploaded': '已上传',
-    'processing': '处理中',
-    'parsed': '已解析',
-    'failed': '解析失败',
-    'pending': '待处理'
+    uploaded: "已上传",
+    processing: "处理中",
+    parsed: "已解析",
+    failed: "解析失败",
+    pending: "待处理",
   };
-  return statusMap[status] || status || '未知';
+  return statusMap[status] || status || "未知";
 };
 
 // 处理删除附件
 const handleRemoveAttachment = (fileId) => {
   if (props.disabled) return;
-  emit('remove', fileId);
+  emit("remove", fileId);
 };
 </script>
 

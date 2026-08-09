@@ -60,6 +60,7 @@ beforeEach(async () => {
   });
   const body = (await response.json()) as { user: { id: string } };
   // 验证流程本身在 routes/auth.test.ts 覆盖，这里直接置为已验证再登录
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
   const login = await app.request("/api/auth/login", {
     method: "POST",
@@ -67,6 +68,7 @@ beforeEach(async () => {
     body: JSON.stringify({ email: "a@x.io", password: "hunter2hunter2" }),
   });
   cookie = (login.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   service = createSessionService(state.db!, body.user.id);
 });
 

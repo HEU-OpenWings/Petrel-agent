@@ -8,17 +8,17 @@
 </template>
 
 <script setup>
-import { defineProps } from 'vue';
+import { defineProps } from "vue";
 
 const props = defineProps({
   visible: {
     type: Boolean,
-    default: false
+    default: false,
   },
   text: {
     type: String,
-    default: '加载中...'
-  }
+    default: "加载中...",
+  },
 });
 </script>
 

@@ -39,6 +39,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await reset();
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   const user = await createUserRepository(state.db!).create({
     email: "a@x.io",
     passwordHash: "scrypt$a$b",
@@ -125,11 +126,45 @@ describe("requireAuth", () => {
   // 每请求查库的意义就在这条：禁用必须立即生效，不能等 token 自然过期
   it("token 合法但用户已被禁用返回 401", async () => {
     const cookie = await issue(userId);
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     await createUserRepository(state.db!).setDisabled(userId, true);
 
     const response = await app.request("/protected/whoami", { headers: { Cookie: cookie } });
 
     expect(response.status).toBe(401);
+  });
+
+  // 每请求查库的意义的另一半：tokenVersion 自增后（改密码 / 退出所有设备），
+  // 旧 token 立即失效，不需要等 7 天过期
+  it("tokenVersion 已自增时旧 token 返回 401", async () => {
+    const cookie = await issue(userId);
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+    await createUserRepository(state.db!).bumpTokenVersion(userId);
+
+    const response = await app.request("/protected/whoami", { headers: { Cookie: cookie } });
+
+    expect(response.status).toBe(401);
+  });
+
+  // 升级前签发的旧 token 没有 tv 字段（undefined ≠ 0），部署后全部失效一次——安全侧默认
+  it("token 里没有 tv 字段返回 401", async () => {
+    const legacy = await sign({ sub: userId, role: "user", exp: nowInSeconds() + 3600 }, env.jwtSecret);
+
+    const response = await app.request("/protected/whoami", {
+      headers: { Cookie: `${COOKIE_NAME}=${legacy}` },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("重新签发后（新 tokenVersion）恢复可用", async () => {
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+    await createUserRepository(state.db!).bumpTokenVersion(userId);
+    const cookie = await issue(userId);
+
+    const response = await app.request("/protected/whoami", { headers: { Cookie: cookie } });
+
+    expect(response.status).toBe(200);
   });
 
   // 角色以库里为准，不信 token 里的那份
@@ -144,6 +179,7 @@ describe("requireAuth", () => {
 
 describe("requireAdmin", () => {
   it("admin 放行", async () => {
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     await createUserRepository(state.db!).setRole(userId, "admin");
     const cookie = await issue(userId, "admin");
 

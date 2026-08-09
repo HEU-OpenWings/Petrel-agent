@@ -28,179 +28,192 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
-import * as echarts from 'echarts'
-import { useThemeStore } from '@/stores/theme'
+import * as echarts from "echarts";
+import { nextTick, onMounted, ref, watch } from "vue";
+import { useThemeStore } from "@/stores/theme";
 
 // CSS 变量解析工具函数
 function getCSSVariable(variableName, element = document.documentElement) {
-  return getComputedStyle(element).getPropertyValue(variableName).trim()
+  return getComputedStyle(element).getPropertyValue(variableName).trim();
 }
 
 // theme store
-const themeStore = useThemeStore()
+const themeStore = useThemeStore();
 
 // Props
 const props = defineProps({
   userStats: {
     type: Object,
-    default: () => ({})
+    default: () => ({}),
   },
   loading: {
     type: Boolean,
-    default: false
-  }
-})
+    default: false,
+  },
+});
 
 // Chart refs
-const activityChartRef = ref(null)
-let activityChart = null
+const activityChartRef = ref(null);
+let activityChart = null;
 
 // 初始化活跃度趋势图
 const initActivityChart = () => {
-  if (!activityChartRef.value || !props.userStats?.daily_active_users) return
+  if (!activityChartRef.value || !props.userStats?.daily_active_users) return;
 
   // 如果已存在图表实例，先销毁
   if (activityChart) {
-    activityChart.dispose()
-    activityChart = null
+    activityChart.dispose();
+    activityChart = null;
   }
 
-  activityChart = echarts.init(activityChartRef.value)
+  activityChart = echarts.init(activityChartRef.value);
 
   const option = {
     tooltip: {
-      trigger: 'axis',
-      backgroundColor: getCSSVariable('--gray-0'),
-      borderColor: getCSSVariable('--gray-200'),
+      trigger: "axis",
+      backgroundColor: getCSSVariable("--gray-0"),
+      borderColor: getCSSVariable("--gray-200"),
       borderWidth: 1,
       textStyle: {
-        color: getCSSVariable('--gray-600')
-      }
+        color: getCSSVariable("--gray-600"),
+      },
     },
     grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '3%',
-      top: '10%',
-      containLabel: true
+      left: "3%",
+      right: "4%",
+      bottom: "3%",
+      top: "10%",
+      containLabel: true,
     },
     xAxis: {
-      type: 'category',
-      data: props.userStats.daily_active_users.map(item => item.date),
+      type: "category",
+      data: props.userStats.daily_active_users.map((item) => item.date),
       axisLine: {
         lineStyle: {
-          color: getCSSVariable('--gray-200')
-        }
+          color: getCSSVariable("--gray-200"),
+        },
       },
       axisLabel: {
-        color: getCSSVariable('--gray-500')
-      }
+        color: getCSSVariable("--gray-500"),
+      },
     },
     yAxis: {
-      type: 'value',
+      type: "value",
       axisLine: {
         lineStyle: {
-          color: getCSSVariable('--gray-200')
-        }
+          color: getCSSVariable("--gray-200"),
+        },
       },
       axisLabel: {
-        color: getCSSVariable('--gray-500')
+        color: getCSSVariable("--gray-500"),
       },
       splitLine: {
         lineStyle: {
-          color: getCSSVariable('--gray-100')
-        }
-      }
+          color: getCSSVariable("--gray-100"),
+        },
+      },
     },
-    series: [{
-      name: '活跃用户数',
-      type: 'line',
-      data: props.userStats.daily_active_users.map(item => item.active_users),
-      smooth: true,
-      lineStyle: {
-        color: getCSSVariable('--main-color'),
-        width: 3
-      },
-      areaStyle: {
-        color: {
-          type: 'linear',
-          x: 0,
-          y: 0,
-          x2: 0,
-          y2: 1,
-          colorStops: [{
-            offset: 0, color: getCSSVariable('--main-500')
-          }, {
-            offset: 1, color: getCSSVariable('--main-0')
-          }]
-        }
-      },
-      itemStyle: {
-        color: getCSSVariable('--main-color'),
-        borderWidth: 2,
-        borderColor: getCSSVariable('--gray-0')
-      },
-      emphasis: {
+    series: [
+      {
+        name: "活跃用户数",
+        type: "line",
+        data: props.userStats.daily_active_users.map((item) => item.active_users),
+        smooth: true,
+        lineStyle: {
+          color: getCSSVariable("--main-color"),
+          width: 3,
+        },
+        areaStyle: {
+          color: {
+            type: "linear",
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              {
+                offset: 0,
+                color: getCSSVariable("--main-500"),
+              },
+              {
+                offset: 1,
+                color: getCSSVariable("--main-0"),
+              },
+            ],
+          },
+        },
         itemStyle: {
-          color: getCSSVariable('--main-color'),
-          borderWidth: 3,
-          borderColor: getCSSVariable('--gray-0'),
-          shadowBlur: 10,
-          shadowColor: getCSSVariable('--shadow-1')
-        }
-      }
-    }]
-  }
+          color: getCSSVariable("--main-color"),
+          borderWidth: 2,
+          borderColor: getCSSVariable("--gray-0"),
+        },
+        emphasis: {
+          itemStyle: {
+            color: getCSSVariable("--main-color"),
+            borderWidth: 3,
+            borderColor: getCSSVariable("--gray-0"),
+            shadowBlur: 10,
+            shadowColor: getCSSVariable("--shadow-1"),
+          },
+        },
+      },
+    ],
+  };
 
-  activityChart.setOption(option)
-}
-
+  activityChart.setOption(option);
+};
 
 // 更新图表
 const updateCharts = () => {
   nextTick(() => {
-    initActivityChart()
-  })
-}
+    initActivityChart();
+  });
+};
 
 // 监听数据变化
-watch(() => props.userStats, () => {
-  updateCharts()
-}, { deep: true })
+watch(
+  () => props.userStats,
+  () => {
+    updateCharts();
+  },
+  { deep: true },
+);
 
 // 窗口大小变化时重新调整图表
 const handleResize = () => {
-  if (activityChart) activityChart.resize()
-}
+  if (activityChart) activityChart.resize();
+};
 
 onMounted(() => {
-  updateCharts()
-  window.addEventListener('resize', handleResize)
-})
+  updateCharts();
+  window.addEventListener("resize", handleResize);
+});
 
 // 监听主题变化，重新渲染图表
-watch(() => themeStore.isDark, () => {
-  if (props.userStats?.daily_active_users && activityChart) {
-    nextTick(() => {
-      initActivityChart()
-    })
-  }
-})
+watch(
+  () => themeStore.isDark,
+  () => {
+    if (props.userStats?.daily_active_users && activityChart) {
+      nextTick(() => {
+        initActivityChart();
+      });
+    }
+  },
+);
 
 // 组件卸载时清理
 const cleanup = () => {
-  window.removeEventListener('resize', handleResize)
+  window.removeEventListener("resize", handleResize);
   if (activityChart) {
-    activityChart.dispose()
-    activityChart = null
+    activityChart.dispose();
+    activityChart = null;
   }
-}
+};
 
 // 导出清理函数供父组件调用
 defineExpose({
-  cleanup
-})
+  cleanup,
+});
 </script>
 
 <style scoped lang="less">

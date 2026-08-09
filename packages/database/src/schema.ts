@@ -32,6 +32,9 @@ export const users = pgTable(
     emailVerifyTokenExpiresAt: timestamp("email_verify_token_expires_at", { withTimezone: true }),
     passwordResetTokenHash: text("password_reset_token_hash"),
     passwordResetTokenExpiresAt: timestamp("password_reset_token_expires_at", { withTimezone: true }),
+    // 会话版本号：签发时写进 JWT payload，requireAuth 与库里的值比对；
+    // 改密码 / 退出所有设备时自增，让旧 token 立即失效（JWT 无状态，只能靠这个）
+    tokenVersion: integer("token_version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   // 验证/重置链接是公开无鉴权端点上的查询，部分索引避免全表顺序扫描（绝大多数行是 NULL）

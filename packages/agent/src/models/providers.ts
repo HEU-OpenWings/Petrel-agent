@@ -167,3 +167,110 @@ const BUILTIN_PROVIDERS = [
 
 /** 注册顺序即 listModels() 的输出顺序（自建云端 → pi 内置 → 本地推理） */
 export const PROVIDERS = [deepseek, siliconflow, ...BUILTIN_PROVIDERS, ollama, vllm];
+
+/**
+ * 面向展示的 provider 凭据元数据：每个 provider「认哪些环境变量」+「用户该怎么填」。
+ *
+ * 为什么需要这份 side table：envApiKeyAuth(...) 把 env var 名以**闭包**形式塞进了
+ * pi-ai 的 resolve() 内部（auth/helpers.js），Provider / ApiKeyAuth 的公开类型都不暴露
+ * envVars 字段——也就是说**无法从运行时 Provider 对象反射出「它认哪个 env 变量」**。
+ * checkAuth().source 只在「已配置」时给到当前命中的那一个变量名，未配置时是 undefined，
+ * 既列不全、也覆盖不了「未配置 provider 该填哪个变量」这个 HEU-53 的核心需求。
+ *
+ * 所以这份清单是当前代码事实的同源副本：手写 provider（deepseek/siliconflow/ollama/vllm）
+ * 与上面 envApiKeyAuth([...]) 的实参对齐；内置 provider 与 pi-ai 0.83 的
+ * dist/providers/<name>.js 核对过。新增 provider 或改 env var 时**必须同步改这里**，
+ * provider-status.test.ts 的 hint parity 用例会守着「side table 的 key 集合 == 运行时
+ * getProviders() 的 id 集合」与「每个声明的 env var 真能让 checkAuth 判为已配置」。
+ */
+export interface ProviderCredentialHint {
+  /** 该 provider 接受的环境变量名。本地推理服务也可能非空（见 ollama/vllm）。 */
+  readonly envVars: readonly string[];
+  /** 面向用户的填写指引，纯文本，不含运行时 baseUrl / key / 异常细节。 */
+  readonly note: string;
+}
+
+export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHint> = new Map([
+  [
+    "deepseek",
+    {
+      envVars: ["DEEPSEEK_API_KEY"],
+      note: "DeepSeek 官方 API key，在 https://platform.deepseek.com 获取",
+    },
+  ],
+  [
+    "siliconflow",
+    {
+      envVars: ["SILICONFLOW_API_KEY"],
+      note: "硅基流动 API key，在 https://siliconflow.cn 获取",
+    },
+  ],
+  [
+    "openai",
+    {
+      envVars: ["OPENAI_API_KEY"],
+      note: "OpenAI API key，在 https://platform.openai.com/api-keys 获取",
+    },
+  ],
+  // anthropic 走 pi-ai 自定义的 anthropicApiKeyAuth，依次尝试三个变量，填任意一个均可
+  [
+    "anthropic",
+    {
+      envVars: ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+      note: "Anthropic key（依次尝试 ANTHROPIC_AUTH_TOKEN、ANTHROPIC_OAUTH_TOKEN、ANTHROPIC_API_KEY，填任意一个均可）",
+    },
+  ],
+  [
+    "google",
+    {
+      envVars: ["GEMINI_API_KEY"],
+      note: "Google AI / Gemini API key，在 https://aistudio.google.com/apikey 获取",
+    },
+  ],
+  [
+    "moonshotai",
+    {
+      envVars: ["MOONSHOT_API_KEY"],
+      note: "Moonshot / Kimi API key，在 https://platform.moonshot.cn 获取",
+    },
+  ],
+  [
+    "minimax",
+    {
+      envVars: ["MINIMAX_API_KEY"],
+      note: "MiniMax API key，在 https://platform.minimaxi.com 获取",
+    },
+  ],
+  [
+    "zai",
+    {
+      envVars: ["ZAI_API_KEY"],
+      note: "智谱 Z.AI API key，在 https://z.ai/manage-apikey 获取",
+    },
+  ],
+  [
+    "qwen-token-plan",
+    {
+      envVars: ["QWEN_TOKEN_PLAN_API_KEY"],
+      note: "阿里 Qwen Token Plan API key，在 https://bailian.console.aliyun.com 获取",
+    },
+  ],
+  // ollama/vllm：本地推理服务。注意当前注册走 envApiKeyAuth(["OLLAMA_API_KEY"])，
+  // 空 key 时 checkAuth() 判「未配置」——所以「通常无需 key」与「填任意非空占位值即可
+  // 让面板识别为已配置」要如实说明，不能简单写「留空」。真正的 keyless auth 行为
+  // （空值也判已配置）是另一回事，需要改 auth 解析，超出 HEU-53 范围。
+  [
+    "ollama",
+    {
+      envVars: ["OLLAMA_API_KEY"],
+      note: "本地推理服务。请确认已启动 Ollama（默认 http://localhost:11434）并 ollama pull 模型。当前运行时需设置非空的 OLLAMA_API_KEY 才会识别为已配置（可填任意占位值）",
+    },
+  ],
+  [
+    "vllm",
+    {
+      envVars: ["VLLM_API_KEY"],
+      note: "本地推理服务。通过 VLLM_BASE_URL 指定服务地址（默认 http://localhost:8000/v1）。当前运行时需设置非空的 VLLM_API_KEY 才会识别为已配置（可填任意占位值）",
+    },
+  ],
+]);
