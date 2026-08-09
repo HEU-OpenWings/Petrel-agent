@@ -76,258 +76,271 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick, computed } from 'vue'
-import * as echarts from 'echarts'
-import { getColorByIndex, getColorPalette } from '@/utils/chartColors'
-import { useThemeStore } from '@/stores/theme'
+import * as echarts from "echarts";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useThemeStore } from "@/stores/theme";
+import { getColorByIndex, getColorPalette } from "@/utils/chartColors";
 
 // CSS 变量解析工具函数
 function getCSSVariable(variableName, element = document.documentElement) {
-  return getComputedStyle(element).getPropertyValue(variableName).trim()
+  return getComputedStyle(element).getPropertyValue(variableName).trim();
 }
 
 // theme store
-const themeStore = useThemeStore()
+const themeStore = useThemeStore();
 
 // Props
 const props = defineProps({
   toolStats: {
     type: Object,
-    default: () => ({})
+    default: () => ({}),
   },
   loading: {
     type: Boolean,
-    default: false
-  }
-})
+    default: false,
+  },
+});
 
 // Chart refs
-const toolsChartRef = ref(null)
-const errorChartRef = ref(null)
-let toolsChart = null
-let errorChart = null
+const toolsChartRef = ref(null);
+const errorChartRef = ref(null);
+let toolsChart = null;
+let errorChart = null;
 
 // 错误分析相关
 const errorColumns = [
   {
-    title: '工具名称',
-    dataIndex: 'tool_name',
-    key: 'tool_name',
-    width: '50%'
+    title: "工具名称",
+    dataIndex: "tool_name",
+    key: "tool_name",
+    width: "50%",
   },
   {
-    title: '错误次数',
-    dataIndex: 'error_count',
-    key: 'error_count',
-    width: '50%',
-    sorter: (a, b) => a.error_count - b.error_count
-  }
-]
+    title: "错误次数",
+    dataIndex: "error_count",
+    key: "error_count",
+    width: "50%",
+    sorter: (a, b) => a.error_count - b.error_count,
+  },
+];
 
 const hasErrorData = computed(() => {
-  return props.toolStats?.tool_error_distribution &&
-         Object.keys(props.toolStats.tool_error_distribution).length > 0
-})
+  return (
+    props.toolStats?.tool_error_distribution &&
+    Object.keys(props.toolStats.tool_error_distribution).length > 0
+  );
+});
 
 const errorData = computed(() => {
-  if (!hasErrorData.value) return []
+  if (!hasErrorData.value) return [];
 
   return Object.entries(props.toolStats.tool_error_distribution)
     .map(([tool_name, error_count]) => ({ tool_name, error_count }))
-    .sort((a, b) => b.error_count - a.error_count)
-})
+    .sort((a, b) => b.error_count - a.error_count);
+});
 
 // 初始化最常用工具图表
 const initToolsChart = () => {
-  if (!toolsChartRef.value || !props.toolStats?.most_used_tools?.length) return
+  if (!toolsChartRef.value || !props.toolStats?.most_used_tools?.length) return;
 
   // 如果已存在图表实例，先销毁
   if (toolsChart) {
-    toolsChart.dispose()
-    toolsChart = null
+    toolsChart.dispose();
+    toolsChart = null;
   }
 
-  toolsChart = echarts.init(toolsChartRef.value)
+  toolsChart = echarts.init(toolsChartRef.value);
 
-  const data = props.toolStats.most_used_tools.slice(0, 10) // 只显示前10个
+  const data = props.toolStats.most_used_tools.slice(0, 10); // 只显示前10个
 
   const option = {
     tooltip: {
-      trigger: 'axis',
+      trigger: "axis",
       axisPointer: {
-        type: 'shadow'
+        type: "shadow",
       },
-      backgroundColor: getCSSVariable('--gray-0'),
-      borderColor: getCSSVariable('--gray-200'),
+      backgroundColor: getCSSVariable("--gray-0"),
+      borderColor: getCSSVariable("--gray-200"),
       borderWidth: 1,
       textStyle: {
-        color: getCSSVariable('--gray-600')
-      }
+        color: getCSSVariable("--gray-600"),
+      },
     },
     grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '3%',
-      top: '5%',
-      containLabel: true
+      left: "3%",
+      right: "4%",
+      bottom: "3%",
+      top: "5%",
+      containLabel: true,
     },
     xAxis: {
-      type: 'value',
+      type: "value",
       axisLine: {
         lineStyle: {
-          color: getCSSVariable('--gray-200')
-        }
+          color: getCSSVariable("--gray-200"),
+        },
       },
       axisLabel: {
-        color: getCSSVariable('--gray-500')
+        color: getCSSVariable("--gray-500"),
       },
       splitLine: {
         lineStyle: {
-          color: getCSSVariable('--gray-150')
-        }
-      }
+          color: getCSSVariable("--gray-150"),
+        },
+      },
     },
     yAxis: {
-      type: 'category',
-      data: data.map(item => item.tool_name),
+      type: "category",
+      data: data.map((item) => item.tool_name),
       axisLine: {
         lineStyle: {
-          color: getCSSVariable('--gray-200')
-        }
+          color: getCSSVariable("--gray-200"),
+        },
       },
       axisLabel: {
-        color: getCSSVariable('--gray-500'),
-        interval: 0
-      }
-    },
-    series: [{
-      name: '调用次数',
-      type: 'bar',
-      data: data.map(item => item.count),
-      itemStyle: {
-        color: getColorByIndex(0),
-        borderRadius: [0, 4, 4, 0]
+        color: getCSSVariable("--gray-500"),
+        interval: 0,
       },
-      emphasis: {
+    },
+    series: [
+      {
+        name: "调用次数",
+        type: "bar",
+        data: data.map((item) => item.count),
         itemStyle: {
           color: getColorByIndex(0),
-          shadowBlur: 10,
-          shadowColor: getCSSVariable('--color-info-50')
-        }
-      }
-    }]
-  }
+          borderRadius: [0, 4, 4, 0],
+        },
+        emphasis: {
+          itemStyle: {
+            color: getColorByIndex(0),
+            shadowBlur: 10,
+            shadowColor: getCSSVariable("--color-info-50"),
+          },
+        },
+      },
+    ],
+  };
 
-  toolsChart.setOption(option)
-}
+  toolsChart.setOption(option);
+};
 
 // 初始化错误分布图
 const initErrorChart = () => {
-  if (!errorChartRef.value || !hasErrorData.value) return
+  if (!errorChartRef.value || !hasErrorData.value) return;
 
   // 如果已存在图表实例，先销毁
   if (errorChart) {
-    errorChart.dispose()
-    errorChart = null
+    errorChart.dispose();
+    errorChart = null;
   }
 
-  errorChart = echarts.init(errorChartRef.value)
+  errorChart = echarts.init(errorChartRef.value);
 
-  const data = errorData.value.slice(0, 5) // 只显示前5个
+  const data = errorData.value.slice(0, 5); // 只显示前5个
 
   const option = {
     tooltip: {
-      trigger: 'item',
-      backgroundColor: getCSSVariable('--gray-0'),
-      borderColor: getCSSVariable('--gray-200'),
+      trigger: "item",
+      backgroundColor: getCSSVariable("--gray-0"),
+      borderColor: getCSSVariable("--gray-200"),
       borderWidth: 1,
       textStyle: {
-        color: getCSSVariable('--gray-600')
+        color: getCSSVariable("--gray-600"),
       },
-      formatter: '{a} <br/>{b}: {c} ({d}%)'
+      formatter: "{a} <br/>{b}: {c} ({d}%)",
     },
-    series: [{
-      name: '错误分布',
-      type: 'pie',
-      radius: ['30%', '70%'],
-      center: ['50%', '60%'],
-      data: data.map(item => ({
-        name: item.tool_name,
-        value: item.error_count
-      })),
-      itemStyle: {
-        borderRadius: 6,
-        borderColor: getCSSVariable('--gray-0'),
-        borderWidth: 2
-      },
-      label: {
-        show: true,
-        formatter: '{b}: {c}'
-      },
-      emphasis: {
+    series: [
+      {
+        name: "错误分布",
+        type: "pie",
+        radius: ["30%", "70%"],
+        center: ["50%", "60%"],
+        data: data.map((item) => ({
+          name: item.tool_name,
+          value: item.error_count,
+        })),
         itemStyle: {
-          shadowBlur: 10,
-          shadowOffsetX: 0,
-          shadowColor: getCSSVariable('--shadow-300')
-        }
+          borderRadius: 6,
+          borderColor: getCSSVariable("--gray-0"),
+          borderWidth: 2,
+        },
+        label: {
+          show: true,
+          formatter: "{b}: {c}",
+        },
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: getCSSVariable("--shadow-300"),
+          },
+        },
+        color: getColorPalette(),
       },
-      color: getColorPalette()
-    }]
-  }
+    ],
+  };
 
-  errorChart.setOption(option)
-}
+  errorChart.setOption(option);
+};
 
 // 更新图表
 const updateCharts = () => {
   nextTick(() => {
-    initToolsChart()
+    initToolsChart();
     if (hasErrorData.value) {
-      initErrorChart()
+      initErrorChart();
     }
-  })
-}
+  });
+};
 
 // 监听数据变化
-watch(() => props.toolStats, () => {
-  updateCharts()
-}, { deep: true })
+watch(
+  () => props.toolStats,
+  () => {
+    updateCharts();
+  },
+  { deep: true },
+);
 
 // 窗口大小变化时重新调整图表
 const handleResize = () => {
-  if (toolsChart) toolsChart.resize()
-  if (errorChart) errorChart.resize()
-}
+  if (toolsChart) toolsChart.resize();
+  if (errorChart) errorChart.resize();
+};
 
 onMounted(() => {
-  updateCharts()
-  window.addEventListener('resize', handleResize)
-})
+  updateCharts();
+  window.addEventListener("resize", handleResize);
+});
 
 // 监听主题变化，重新渲染图表
-watch(() => themeStore.isDark, () => {
-  if (props.toolStats && (toolsChart || errorChart)) {
-    nextTick(() => {
-      updateCharts()
-    })
-  }
-})
+watch(
+  () => themeStore.isDark,
+  () => {
+    if (props.toolStats && (toolsChart || errorChart)) {
+      nextTick(() => {
+        updateCharts();
+      });
+    }
+  },
+);
 
 // 组件卸载时清理
 const cleanup = () => {
-  window.removeEventListener('resize', handleResize)
+  window.removeEventListener("resize", handleResize);
   if (toolsChart) {
-    toolsChart.dispose()
-    toolsChart = null
+    toolsChart.dispose();
+    toolsChart = null;
   }
   if (errorChart) {
-    errorChart.dispose()
-    errorChart = null
+    errorChart.dispose();
+    errorChart = null;
   }
-}
+};
 
 // 导出清理函数供父组件调用
 defineExpose({
-  cleanup
-})
+  cleanup,
+});
 </script>

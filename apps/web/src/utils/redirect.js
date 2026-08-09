@@ -20,7 +20,8 @@
  *   守卫无条件把校验结果交给 next()，这里是唯一收敛点，所以在这里拒掉。
  */
 // C0 控制字符（含 \0 \t \n \r）与 DEL
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]/
+// biome-ignore lint/suspicious/noControlCharactersInRegex: 本正则的目的就是匹配控制字符
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 /**
  * @param {unknown} value URL 里的 redirect 参数，可能是任意用户输入
@@ -28,19 +29,19 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/
  *   绝不能来自用户输入——本函数不校验它，传进来什么就返回什么。
  * @returns {string} 可安全交给 router.push()/next() 的站内路径
  */
-export function safeRedirect(value, fallback = '/agent') {
-  if (typeof value !== 'string') {
-    return fallback
+export function safeRedirect(value, fallback = "/agent") {
+  if (typeof value !== "string") {
+    return fallback;
   }
   if (CONTROL_CHARS.test(value)) {
-    return fallback
+    return fallback;
   }
-  if (!value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) {
-    return fallback
+  if (!value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
+    return fallback;
   }
   // 只比 path 段：/login?x=1、/login#a 同样会打转，而 /loginxxx 是正常路径
-  if (value.split(/[?#]/)[0] === '/login') {
-    return fallback
+  if (value.split(/[?#]/)[0] === "/login") {
+    return fallback;
   }
-  return value
+  return value;
 }

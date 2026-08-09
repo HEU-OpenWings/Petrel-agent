@@ -100,15 +100,15 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onUnmounted, reactive, h } from 'vue';
-import { useDatabaseStore } from '@/stores/database';
-import { ReloadOutlined, SettingOutlined, SearchOutlined, LoadingOutlined } from '@ant-design/icons-vue';
-import GraphCanvas from '@/components/GraphCanvas.vue';
-import GraphDetailPanel from '@/components/GraphDetailPanel.vue';
-import { getKbTypeLabel } from '@/utils/kb_utils';
-import { unifiedApi } from '@/apis/graph_api';
-import { message } from 'ant-design-vue';
-import { useGraph } from '@/composables/useGraph';
+import { LoadingOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { computed, h, nextTick, onUnmounted, reactive, ref, watch } from "vue";
+import { unifiedApi } from "@/apis/graph_api";
+import GraphCanvas from "@/components/GraphCanvas.vue";
+import GraphDetailPanel from "@/components/GraphDetailPanel.vue";
+import { useGraph } from "@/composables/useGraph";
+import { useDatabaseStore } from "@/stores/database";
+import { getKbTypeLabel } from "@/utils/kb_utils";
 
 const props = defineProps({
   active: {
@@ -121,20 +121,20 @@ const store = useDatabaseStore();
 
 const databaseId = computed(() => store.databaseId);
 const kbType = computed(() => store.database.kb_type);
-const kbTypeLabel = computed(() => getKbTypeLabel(kbType.value || 'lightrag'));
+const kbTypeLabel = computed(() => getKbTypeLabel(kbType.value || "lightrag"));
 
 const graphRef = ref(null);
 const showSettings = ref(false);
 const graphLimit = ref(50);
 const graphDepth = ref(2);
-const searchInput = ref('');
+const searchInput = ref("");
 
 const graph = reactive(useGraph(graphRef));
 
 // 计算属性：是否支持知识图谱
 const isGraphSupported = computed(() => {
   const type = kbType.value?.toLowerCase();
-  return type === 'lightrag';
+  return type === "lightrag";
 });
 
 let pendingLoadTimer = null;
@@ -146,17 +146,17 @@ const loadGraph = async () => {
   try {
     const res = await unifiedApi.getSubgraph({
       db_id: databaseId.value,
-      node_label: searchInput.value || '*',
+      node_label: searchInput.value || "*",
       max_nodes: graphLimit.value,
-      max_depth: graphDepth.value
+      max_depth: graphDepth.value,
     });
 
     if (res.success && res.data) {
-        graph.updateGraphData(res.data.nodes, res.data.edges);
+      graph.updateGraphData(res.data.nodes, res.data.edges);
     }
   } catch (e) {
-    console.error('Failed to load graph:', e);
-    message.error('加载图谱失败');
+    console.error("Failed to load graph:", e);
+    message.error("加载图谱失败");
   } finally {
     graph.fetching = false;
   }
@@ -168,8 +168,8 @@ const applySettings = () => {
 };
 
 const onSearch = () => {
-    loadGraph();
-}
+  loadGraph();
+};
 
 const scheduleGraphLoad = (delay = 200) => {
   // 确保组件激活且数据库支持图谱功能
@@ -188,7 +188,6 @@ const scheduleGraphLoad = (delay = 200) => {
   }, delay);
 };
 
-
 watch(
   () => props.active,
   (active) => {
@@ -196,7 +195,7 @@ watch(
       scheduleGraphLoad();
     }
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 watch(databaseId, () => {
@@ -220,7 +219,6 @@ onUnmounted(() => {
     pendingLoadTimer = null;
   }
 });
-
 </script>
 
 <style scoped lang="less">

@@ -30,15 +30,14 @@
 </template>
 
 <script setup>
-
 defineProps({
   tempChunkParams: {
     type: Object,
-    required: true
+    required: true,
   },
   showQaSplit: {
     type: Boolean,
-    default: true
+    default: true,
   },
 });
 </script>

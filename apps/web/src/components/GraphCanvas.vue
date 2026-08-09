@@ -29,21 +29,21 @@
 </template>
 
 <script setup>
-import { Graph } from '@antv/g6'
-import { onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
-import { useThemeStore } from '@/stores/theme'
+import { Graph } from "@antv/g6";
+import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { useThemeStore } from "@/stores/theme";
 
 const props = defineProps({
   graphData: {
     type: Object,
     required: true,
-    default: () => ({ nodes: [], edges: [] })
+    default: () => ({ nodes: [], edges: [] }),
   },
   graphInfo: {
     type: Object,
-    default: () => ({})
+    default: () => ({}),
   },
-  labelField: { type: String, default: 'name' },
+  labelField: { type: String, default: "name" },
   autoFit: { type: Boolean, default: true },
   autoResize: { type: Boolean, default: true },
   layoutOptions: { type: Object, default: () => ({}) },
@@ -51,22 +51,22 @@ const props = defineProps({
   edgeStyleOptions: { type: Object, default: () => ({}) },
   enableFocusNeighbor: { type: Boolean, default: true },
   sizeByDegree: { type: Boolean, default: true },
-  highlightKeywords: { type: Array, default: () => [] }
-})
+  highlightKeywords: { type: Array, default: () => [] },
+});
 
-const emit = defineEmits(['ready', 'data-rendered', 'node-click', 'edge-click', 'canvas-click'])
+const emit = defineEmits(["ready", "data-rendered", "node-click", "edge-click", "canvas-click"]);
 
-const container = ref(null)
-const rootEl = ref(null)
-const themeStore = useThemeStore()
-let graphInstance = null
-let resizeObserver = null
-let renderTimeout = null
-let retryCount = 0
-const MAX_RETRIES = 5
+const container = ref(null);
+const rootEl = ref(null);
+const themeStore = useThemeStore();
+let graphInstance = null;
+let resizeObserver = null;
+let renderTimeout = null;
+let retryCount = 0;
+const MAX_RETRIES = 5;
 
 const defaultLayout = {
-  type: 'd3-force',
+  type: "d3-force",
   preventOverlap: true,
   alphaDecay: 0.1,
   alphaMin: 0.01,
@@ -78,25 +78,25 @@ const defaultLayout = {
     link: { distance: 100, strength: 0.8 },
   },
   collide: { radius: 40, strength: 0.8, iterations: 3 },
-}
+};
 
 // CSS 变量解析工具函数
 function getCSSVariable(variableName, element = document.documentElement) {
-  return getComputedStyle(element).getPropertyValue(variableName).trim()
+  return getComputedStyle(element).getPropertyValue(variableName).trim();
 }
 
 function formatData() {
-  const data = props.graphData || { nodes: [], edges: [] }
-  const degrees = new Map()
+  const data = props.graphData || { nodes: [], edges: [] };
+  const degrees = new Map();
 
   for (const n of data.nodes) {
-    degrees.set(String(n.id), 0)
+    degrees.set(String(n.id), 0);
   }
   for (const e of data.edges) {
-    const s = String(e.source_id)
-    const t = String(e.target_id)
-    degrees.set(s, (degrees.get(s) || 0) + 1)
-    degrees.set(t, (degrees.get(t) || 0) + 1)
+    const s = String(e.source_id);
+    const t = String(e.target_id);
+    degrees.set(s, (degrees.get(s) || 0) + 1);
+    degrees.set(t, (degrees.get(t) || 0) + 1);
   }
 
   const nodes = (data.nodes || []).map((n) => ({
@@ -104,44 +104,46 @@ function formatData() {
     data: {
       label: n[props.labelField] ?? n.name ?? String(n.id),
       degree: degrees.get(String(n.id)) || 0,
-      original: n // 保存原始数据
+      original: n, // 保存原始数据
     },
-  }))
+  }));
 
   const edges = (data.edges || []).map((e, idx) => ({
     id: e.id ? String(e.id) : `edge-${idx}`,
     source: String(e.source_id),
     target: String(e.target_id),
     data: {
-      label: e.type ?? '',
-      original: e // 保存原始数据
+      label: e.type ?? "",
+      original: e, // 保存原始数据
     },
-  }))
+  }));
 
-  return { nodes, edges }
+  return { nodes, edges };
 }
 
 function initGraph() {
-  if (!container.value) return
+  if (!container.value) return;
 
-  const width = container.value.offsetWidth
-  const height = container.value.offsetHeight
+  const width = container.value.offsetWidth;
+  const height = container.value.offsetHeight;
 
   if (width === 0 && height === 0) {
     if (retryCount < MAX_RETRIES) {
-      retryCount++
-      clearTimeout(renderTimeout)
-      renderTimeout = setTimeout(initGraph, 200)
+      retryCount++;
+      clearTimeout(renderTimeout);
+      renderTimeout = setTimeout(initGraph, 200);
     }
-    return
+    return;
   }
 
-  retryCount = 0
-  container.value.innerHTML = ''
+  retryCount = 0;
+  container.value.innerHTML = "";
 
   if (graphInstance) {
-    try { graphInstance.destroy() } catch (e) {}
-    graphInstance = null
+    try {
+      graphInstance.destroy();
+    } catch (e) {}
+    graphInstance = null;
   }
 
   graphInstance = new Graph({
@@ -152,40 +154,48 @@ function initGraph() {
     autoResize: props.autoResize,
     layout: { ...defaultLayout, ...props.layoutOptions },
     node: {
-      type: 'circle',
+      type: "circle",
       style: {
         labelText: (d) => d.data.label,
-        labelFill: getCSSVariable('--gray-700'),
+        labelFill: getCSSVariable("--gray-700"),
         labelWordWrap: true, // enable label ellipsis
-        labelMaxWidth: '300%',
-          size: (d) => {
-          if (!props.sizeByDegree) return 24
-          const deg = d.data.degree || 0
-          return Math.min(15 + deg * 5, 50)
+        labelMaxWidth: "300%",
+        size: (d) => {
+          if (!props.sizeByDegree) return 24;
+          const deg = d.data.degree || 0;
+          return Math.min(15 + deg * 5, 50);
         },
         opacity: 0.9,
-        stroke: getCSSVariable('--color-bg-container'),
+        stroke: getCSSVariable("--color-bg-container"),
         lineWidth: 1.5,
-        shadowColor: getCSSVariable('--gray-400'),
+        shadowColor: getCSSVariable("--gray-400"),
         shadowBlur: 4,
         ...(props.nodeStyleOptions.style || {}),
       },
       palette: props.nodeStyleOptions.palette || {
-        field: 'label',
+        field: "label",
         color: [
-          '#60a5fa', '#34d399', '#f59e0b', '#f472b6', '#22d3ee',
-          '#a78bfa', '#f97316', '#4ade80', '#f43f5e', '#2dd4bf',
+          "#60a5fa",
+          "#34d399",
+          "#f59e0b",
+          "#f472b6",
+          "#22d3ee",
+          "#a78bfa",
+          "#f97316",
+          "#4ade80",
+          "#f43f5e",
+          "#2dd4bf",
         ],
       },
     },
     edge: {
-      type: 'quadratic',
+      type: "quadratic",
       style: {
         labelText: (d) => d.data.label,
-        labelFill: getCSSVariable('--gray-800'),
+        labelFill: getCSSVariable("--gray-800"),
         labelBackground: true,
-        labelBackgroundFill: getCSSVariable('--gray-100'),
-        stroke: getCSSVariable('--gray-400'),
+        labelBackgroundFill: getCSSVariable("--gray-100"),
+        stroke: getCSSVariable("--gray-400"),
         opacity: 0.8,
         lineWidth: 1.2,
         endArrow: true,
@@ -193,222 +203,270 @@ function initGraph() {
       },
     },
     behaviors: [
-      'drag-element',
-      'zoom-canvas',
-      'drag-canvas',
-      'hover-activate',
+      "drag-element",
+      "zoom-canvas",
+      "drag-canvas",
+      "hover-activate",
       {
-        type: 'click-select',
+        type: "click-select",
         degree: 1,
-        state: 'selected', // 选中的状态
-        neighborState: 'active', // 相邻节点附着状态
-        unselectedState: 'inactive', // 未选中节点状态
+        state: "selected", // 选中的状态
+        neighborState: "active", // 相邻节点附着状态
+        unselectedState: "inactive", // 未选中节点状态
         multiple: true,
-        trigger: ['shift'],
+        trigger: ["shift"],
         // 禁用默认的选中效果，避免与自定义事件冲突
         disableDefault: false,
-      }
+      },
     ],
-  })
+  });
 
   // 绑定事件
-  graphInstance.on('node:click', (evt) => {
-    const { target } = evt
+  graphInstance.on("node:click", (evt) => {
+    const { target } = evt;
     // 获取节点ID
-    const nodeId = target.id
-    const nodeData = graphInstance.getNodeData(nodeId)
-    emit('node-click', nodeData)
-  })
+    const nodeId = target.id;
+    const nodeData = graphInstance.getNodeData(nodeId);
+    emit("node-click", nodeData);
+  });
 
-  graphInstance.on('edge:click', (evt) => {
-    const { target } = evt
-    const edgeId = target.id
-    const edgeData = graphInstance.getEdgeData(edgeId)
-    emit('edge-click', edgeData)
-  })
+  graphInstance.on("edge:click", (evt) => {
+    const { target } = evt;
+    const edgeId = target.id;
+    const edgeData = graphInstance.getEdgeData(edgeId);
+    emit("edge-click", edgeData);
+  });
 
-  graphInstance.on('canvas:click', (evt) => {
+  graphInstance.on("canvas:click", (evt) => {
     // 只有点击画布空白处才触发
     if (!evt.target) {
-        emit('canvas-click')
+      emit("canvas-click");
     }
-  })
+  });
 
-  emit('ready', graphInstance)
+  emit("ready", graphInstance);
 }
 
 function setGraphData() {
-  if (!graphInstance) initGraph()
-  if (!graphInstance) return
-  const data = formatData()
+  if (!graphInstance) initGraph();
+  if (!graphInstance) return;
+  const data = formatData();
 
-  console.log('开始设置图谱数据:', {
+  console.log("开始设置图谱数据:", {
     nodes: data.nodes.length,
-    edges: data.edges.length
-  })
+    edges: data.edges.length,
+  });
 
-  graphInstance.setData(data)
-  graphInstance.render()
+  graphInstance.setData(data);
+  graphInstance.render();
 
   // 手动触发布局重新计算，确保节点分布
   setTimeout(() => {
     try {
-      if (graphInstance && graphInstance.layout) {
-        graphInstance.layout()
-        console.log('触发布局重新计算')
+      if (graphInstance?.layout) {
+        graphInstance.layout();
+        console.log("触发布局重新计算");
       }
     } catch (error) {
-      console.warn('布局重新计算失败:', error)
+      console.warn("布局重新计算失败:", error);
     }
 
     // 等待力导向布局稳定后再应用高亮
     setTimeout(() => {
-      applyHighlightKeywords()
-      emit('data-rendered')
-      console.log('图谱渲染完成，布局已稳定')
-    }, 1500)
-  }, 10)  // 等待 10ms 确保布局完成
+      applyHighlightKeywords();
+      emit("data-rendered");
+      console.log("图谱渲染完成，布局已稳定");
+    }, 1500);
+  }, 10); // 等待 10ms 确保布局完成
 }
 
 // 关键词高亮功能
 function applyHighlightKeywords() {
-  if (!graphInstance || !props.highlightKeywords || props.highlightKeywords.length === 0) return
+  if (!graphInstance || !props.highlightKeywords || props.highlightKeywords.length === 0) return;
 
-  const { nodes } = graphInstance.getData()
-  const updates = {}
+  const { nodes } = graphInstance.getData();
+  const updates = {};
 
-  nodes.forEach(node => {
-    const nodeLabel = node.data.label || node.data[props.labelField] || String(node.id)
-    const shouldHighlight = props.highlightKeywords.some(keyword =>
-      keyword.trim() !== '' && nodeLabel.toLowerCase().includes(keyword.toLowerCase())
-    )
+  nodes.forEach((node) => {
+    const nodeLabel = node.data.label || node.data[props.labelField] || String(node.id);
+    const shouldHighlight = props.highlightKeywords.some(
+      (keyword) => keyword.trim() !== "" && nodeLabel.toLowerCase().includes(keyword.toLowerCase()),
+    );
 
     if (shouldHighlight) {
-      updates[node.id] = ['highlighted']
+      updates[node.id] = ["highlighted"];
     }
-  })
+  });
 
   if (Object.keys(updates).length > 0) {
-    graphInstance.setElementState(updates)
-    graphInstance.draw()
+    graphInstance.setElementState(updates);
+    graphInstance.draw();
   }
 }
 
 // 清除高亮
 function clearHighlights() {
-  if (!graphInstance) return
+  if (!graphInstance) return;
 
-  const { nodes } = graphInstance.getData()
-  const updates = {}
+  const { nodes } = graphInstance.getData();
+  const updates = {};
 
-  nodes.forEach(node => {
-    updates[node.id] = []
-  })
+  nodes.forEach((node) => {
+    updates[node.id] = [];
+  });
 
   if (Object.keys(updates).length > 0) {
-    graphInstance.setElementState(updates)
-    graphInstance.draw()
+    graphInstance.setElementState(updates);
+    graphInstance.draw();
   }
 }
 
 function renderGraph() {
-  if (!graphInstance) initGraph()
-  setGraphData()
+  if (!graphInstance) initGraph();
+  setGraphData();
 }
 
 function refreshGraph() {
   if (graphInstance) {
-    try { graphInstance.destroy() } catch (e) {}
-    graphInstance = null
+    try {
+      graphInstance.destroy();
+    } catch (e) {}
+    graphInstance = null;
   }
-  if (container.value) container.value.innerHTML = ''
-  retryCount = 0
-  clearTimeout(renderTimeout)
-  renderTimeout = setTimeout(() => { renderGraph() }, 300)
+  if (container.value) container.value.innerHTML = "";
+  retryCount = 0;
+  clearTimeout(renderTimeout);
+  renderTimeout = setTimeout(() => {
+    renderGraph();
+  }, 300);
 }
 
-function fitView() { if (graphInstance) try { graphInstance.fitView() } catch (_) {} }
-function fitCenter() { if (graphInstance) try { graphInstance.fitCenter() } catch (_) {} }
-function getInstance() { return graphInstance }
+function fitView() {
+  if (graphInstance)
+    try {
+      graphInstance.fitView();
+    } catch (_) {}
+}
+function fitCenter() {
+  if (graphInstance)
+    try {
+      graphInstance.fitCenter();
+    } catch (_) {}
+}
+function getInstance() {
+  return graphInstance;
+}
 
 async function focusNode(id) {
-  if (!graphInstance || !props.enableFocusNeighbor) return
-  const { nodes, edges } = graphInstance.getData()
-  const nodeIds = nodes.map(n => n.id)
-  const edgeIds = edges.map(e => e.id)
-  const updates = {}
-  nodeIds.forEach(nid => updates[nid] = ['hidden'])
-  edgeIds.forEach(eid => updates[eid] = ['hidden'])
-  const neighborSet = new Set()
-  const related = []
+  if (!graphInstance || !props.enableFocusNeighbor) return;
+  const { nodes, edges } = graphInstance.getData();
+  const nodeIds = nodes.map((n) => n.id);
+  const edgeIds = edges.map((e) => e.id);
+  const updates = {};
+  nodeIds.forEach((nid) => {
+    updates[nid] = ["hidden"];
+  });
+  edgeIds.forEach((eid) => {
+    updates[eid] = ["hidden"];
+  });
+  const neighborSet = new Set();
+  const related = [];
   edges.forEach((e) => {
-    if (e.source === id) { neighborSet.add(e.target); related.push(e.id) }
-    else if (e.target === id) { neighborSet.add(e.source); related.push(e.id) }
-  })
-  updates[id] = ['focus']
-  Array.from(neighborSet).forEach(nid => updates[nid] = ['focus'])
-  related.forEach(eid => updates[eid] = ['focus'])
-  await graphInstance.setElementState(updates)
-  await graphInstance.draw()
+    if (e.source === id) {
+      neighborSet.add(e.target);
+      related.push(e.id);
+    } else if (e.target === id) {
+      neighborSet.add(e.source);
+      related.push(e.id);
+    }
+  });
+  updates[id] = ["focus"];
+  Array.from(neighborSet).forEach((nid) => {
+    updates[nid] = ["focus"];
+  });
+  related.forEach((eid) => {
+    updates[eid] = ["focus"];
+  });
+  await graphInstance.setElementState(updates);
+  await graphInstance.draw();
 }
 
 async function clearFocus() {
-  if (!graphInstance) return
-  const { nodes, edges } = graphInstance.getData()
-  const nodeIds = nodes.map(n => n.id)
-  const edgeIds = edges.map(e => e.id)
-  const updates = {}
-  nodeIds.forEach(nid => updates[nid] = [])
-  edgeIds.forEach(eid => updates[eid] = [])
-  await graphInstance.setElementState(updates)
-  await graphInstance.draw()
+  if (!graphInstance) return;
+  const { nodes, edges } = graphInstance.getData();
+  const nodeIds = nodes.map((n) => n.id);
+  const edgeIds = edges.map((e) => e.id);
+  const updates = {};
+  nodeIds.forEach((nid) => {
+    updates[nid] = [];
+  });
+  edgeIds.forEach((eid) => {
+    updates[eid] = [];
+  });
+  await graphInstance.setElementState(updates);
+  await graphInstance.draw();
 }
 
-watch(() => props.graphData, () => {
-  clearTimeout(renderTimeout)
-  renderTimeout = setTimeout(() => setGraphData(), 50)
-}, { deep: true })
+watch(
+  () => props.graphData,
+  () => {
+    clearTimeout(renderTimeout);
+    renderTimeout = setTimeout(() => setGraphData(), 50);
+  },
+  { deep: true },
+);
 
 // 监听关键词变化
-watch(() => props.highlightKeywords, () => {
-  if (graphInstance) {
-    clearHighlights()
-    setTimeout(() => applyHighlightKeywords(), 50)
-  }
-}, { deep: true })
+watch(
+  () => props.highlightKeywords,
+  () => {
+    if (graphInstance) {
+      clearHighlights();
+      setTimeout(() => applyHighlightKeywords(), 50);
+    }
+  },
+  { deep: true },
+);
 
 // 监听主题切换，重新加载图形
-watch(() => themeStore.isDark, () => {
-  if (graphInstance) {
-    refreshGraph()
-  }
-})
+watch(
+  () => themeStore.isDark,
+  () => {
+    if (graphInstance) {
+      refreshGraph();
+    }
+  },
+);
 
 onMounted(() => {
   // ResizeObserver 监听容器尺寸，自动重渲染
   if (window.ResizeObserver) {
     resizeObserver = new ResizeObserver(() => {
-      if (!container.value || !graphInstance) return
-      const width = container.value.offsetWidth
-      const height = container.value.offsetHeight
-      graphInstance.changeSize(width, height)
-    })
-    if (container.value) resizeObserver.observe(container.value)
+      if (!container.value || !graphInstance) return;
+      const width = container.value.offsetWidth;
+      const height = container.value.offsetHeight;
+      graphInstance.changeSize(width, height);
+    });
+    if (container.value) resizeObserver.observe(container.value);
   }
 
-  clearTimeout(renderTimeout)
-  renderTimeout = setTimeout(() => { renderGraph() }, 300)
+  clearTimeout(renderTimeout);
+  renderTimeout = setTimeout(() => {
+    renderGraph();
+  }, 300);
 
-  window.addEventListener('resize', refreshGraph)
-})
+  window.addEventListener("resize", refreshGraph);
+});
 
 onUnmounted(() => {
-  window.removeEventListener('resize', refreshGraph)
-  if (resizeObserver && container.value) resizeObserver.unobserve(container.value)
-  clearTimeout(renderTimeout)
-  try { graphInstance?.destroy() } catch (e) {}
-  graphInstance = null
-})
+  window.removeEventListener("resize", refreshGraph);
+  if (resizeObserver && container.value) resizeObserver.unobserve(container.value);
+  clearTimeout(renderTimeout);
+  try {
+    graphInstance?.destroy();
+  } catch (e) {}
+  graphInstance = null;
+});
 
 // 暴露方法
 defineExpose({
@@ -420,8 +478,8 @@ defineExpose({
   clearFocus,
   setData: setGraphData,
   applyHighlightKeywords,
-  clearHighlights
-})
+  clearHighlights,
+});
 </script>
 
 <style lang="less">

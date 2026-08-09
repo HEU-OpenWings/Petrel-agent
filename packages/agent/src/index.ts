@@ -38,7 +38,18 @@ export {
   resolveTools,
   type ToolContext,
 } from "./harness.ts";
-export { listConfiguredModels, listModels, type ModelSummary } from "./models/index.ts";
+// HEU-53 provider 配置状态查询（只读，给 Settings「模型服务」面板）
+export {
+  listConfiguredModels,
+  listModels,
+  listProviderModels,
+  listProviderStatuses,
+  type ModelSummary,
+  type ProviderListResponse,
+  type ProviderModelStatus,
+  type ProviderModelsResponse,
+  type ProviderStatus,
+} from "./models/index.ts";
 export { PgSessionStorage } from "./session/pg-storage.ts";
 export { initMcpTools, listToolNames, selectTools, shutdownMcpTools } from "./tools/registry.ts";
 export { currentTime };

@@ -47,51 +47,51 @@
 </template>
 
 <script setup>
-import { message } from 'ant-design-vue'
-import { onMounted, ref } from 'vue'
-import { listUsersApi, setUserDisabledApi } from '@/apis/admin_api'
-import { useUserStore } from '@/stores/user'
-import { formatDateTime } from '@/utils/time'
+import { message } from "ant-design-vue";
+import { onMounted, ref } from "vue";
+import { listUsersApi, setUserDisabledApi } from "@/apis/admin_api";
+import { useUserStore } from "@/stores/user";
+import { formatDateTime } from "@/utils/time";
 
-const userStore = useUserStore()
+const userStore = useUserStore();
 
-const users = ref([])
-const loading = ref(false)
-const pendingId = ref(null)
+const users = ref([]);
+const loading = ref(false);
+const pendingId = ref(null);
 
 const columns = [
-  { title: '邮箱', dataIndex: 'email', key: 'email' },
-  { title: '角色', dataIndex: 'role', key: 'role', width: 100 },
-  { title: '状态', dataIndex: 'disabled', key: 'disabled', width: 100 },
-  { title: '注册时间', dataIndex: 'createdAt', key: 'createdAt', width: 200 },
-  { title: '操作', key: 'action', width: 100 }
-]
+  { title: "邮箱", dataIndex: "email", key: "email" },
+  { title: "角色", dataIndex: "role", key: "role", width: 100 },
+  { title: "状态", dataIndex: "disabled", key: "disabled", width: 100 },
+  { title: "注册时间", dataIndex: "createdAt", key: "createdAt", width: 200 },
+  { title: "操作", key: "action", width: 100 },
+];
 
 async function load() {
-  loading.value = true
+  loading.value = true;
   try {
-    const data = await listUsersApi()
-    users.value = data.users
+    const data = await listUsersApi();
+    users.value = data.users;
   } catch (error) {
-    message.error(error.message)
+    message.error(error.message);
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 
 async function toggleDisabled(record) {
-  pendingId.value = record.id
+  pendingId.value = record.id;
   try {
-    await setUserDisabledApi(record.id, !record.disabled)
-    await load()
+    await setUserDisabledApi(record.id, !record.disabled);
+    await load();
   } catch (error) {
-    message.error(error.message)
+    message.error(error.message);
   } finally {
-    pendingId.value = null
+    pendingId.value = null;
   }
 }
 
-onMounted(load)
+onMounted(load);
 </script>
 
 <style scoped>

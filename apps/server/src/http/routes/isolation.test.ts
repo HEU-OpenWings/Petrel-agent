@@ -79,6 +79,7 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
   const login = await app.request("/api/auth/login", {
     method: "POST",
@@ -91,6 +92,7 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
 /** 注册后直接改库提权，再重新登录拿到 admin 身份的 cookie（同 admin.test.ts） */
 async function registerAdmin(email: string): Promise<string> {
   const { id } = await register(email);
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setRole(id, "admin");
 
   const response = await app.request("/api/auth/login", {
@@ -149,6 +151,21 @@ describe("路由保护范围", () => {
 
   it("账号偏好没有 cookie 返回 401", async () => {
     const response = await app.request("/api/account/preferences");
+
+    expect(response.status).toBe(401);
+  });
+
+  // HEU-53：provider 配置状态接口也必须挂在 requireAuth 之下。同时锁住
+  // 「未登录访问未知 provider 的 models 端点也是 401（401 优先于 404）」——
+  // 否则匿名用户能通过遍历 providerId 探测部署状态。
+  it("provider 状态接口没有 cookie 返回 401", async () => {
+    const response = await app.request("/api/providers");
+
+    expect(response.status).toBe(401);
+  });
+
+  it("provider 模型目录没有 cookie 返回 401（而非 404）", async () => {
+    const response = await app.request("/api/providers/not-real/models");
 
     expect(response.status).toBe(401);
   });

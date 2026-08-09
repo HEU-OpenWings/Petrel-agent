@@ -22,20 +22,20 @@
 
 <script setup>
 import {
-  UnorderedListOutlined,
   CheckCircleOutlined,
-  SyncOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
-  QuestionCircleOutlined
-} from '@ant-design/icons-vue'
+  QuestionCircleOutlined,
+  SyncOutlined,
+  UnorderedListOutlined,
+} from "@ant-design/icons-vue";
 
 defineProps({
   data: {
     type: Array,
-    required: true
-  }
-})
+    required: true,
+  },
+});
 </script>
 
 <style lang="less" scoped>

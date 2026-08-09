@@ -113,8 +113,8 @@ app.route("/api/admin", admin);
 - 斜杠命令：机制在 `composables/useCommandPalette.js`，命令在
   `views/ChatView.vue` 注册（`/new` `/compact` `/context` `/workspace` `/sidebar`）。
 
-`apps/web` 目前**没有 typecheck，`pnpm run lint` 也不可用**（v0.4 遗留：eslint 9
-只认 `eslint.config.js`，仓库里是旧格式 `.eslintrc.cjs`）。Biome 配置里排除了它。
+`apps/web` 已从 v0.4 的 ESLint 迁移到 Biome，`pnpm run lint` 统一覆盖全仓（含前端）。
+前端目前仍为 JS 无 typecheck，但不影响 lint 运行。
 
 ### packages/agent
 

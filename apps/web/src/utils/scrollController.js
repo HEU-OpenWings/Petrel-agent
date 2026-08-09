@@ -1,16 +1,16 @@
-import { nextTick } from 'vue';
+import { nextTick } from "vue";
 
 /**
  * 滚动控制工具类
  */
 export class ScrollController {
-  constructor(containerSelector = '.chat', options = {}) {
+  constructor(containerSelector = ".chat", options = {}) {
     this.containerSelector = containerSelector;
     this.options = {
       threshold: 100,
       scrollDelay: 100,
       retryDelays: [50, 150],
-      ...options
+      ...options,
     };
 
     this.scrollTimer = null;
@@ -86,7 +86,7 @@ export class ScrollController {
 
     const scrollOptions = {
       top: container.scrollHeight,
-      behavior: 'smooth'
+      behavior: "smooth",
     };
 
     // 立即滚动
@@ -97,10 +97,10 @@ export class ScrollController {
       setTimeout(() => {
         if (force || this.shouldAutoScroll) {
           this.isProgrammaticScroll = true;
-          const behavior = index === this.options.retryDelays.length - 1 ? 'auto' : 'smooth';
+          const behavior = index === this.options.retryDelays.length - 1 ? "auto" : "smooth";
           container.scrollTo({
             top: container.scrollHeight,
-            behavior
+            behavior,
           });
         }
       }, delay);
@@ -116,7 +116,7 @@ export class ScrollController {
 
     const scrollOptions = {
       top: container.scrollHeight,
-      behavior: 'auto'
+      behavior: "auto",
     };
 
     container.scrollTo(scrollOptions);
@@ -143,7 +143,7 @@ export class ScrollController {
     return {
       isUserScrolling: this.isUserScrolling,
       shouldAutoScroll: this.shouldAutoScroll,
-      isAtBottom: this.isAtBottom()
+      isAtBottom: this.isAtBottom(),
     };
   }
 

@@ -4,25 +4,25 @@
  * POST /api/chat 返回 SSE，事件体是 pi 的 AgentEvent 原样透传。
  * 因为需要 POST + 自定义请求头，这里用 fetch 读流，而不是 EventSource。
  */
-import { handleUnauthorized } from '@/apis/http'
+import { handleUnauthorized } from "@/apis/http";
 
 /** 把 SSE 帧文本解析为 { event, data }，data 解析失败时为 null。 */
 function parseFrame(frame) {
-  let event = 'message'
-  const dataLines = []
-  for (const line of frame.split('\n')) {
-    if (line.startsWith('event:')) {
-      event = line.slice(6).trim()
-    } else if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).trim())
+  let event = "message";
+  const dataLines = [];
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trim());
     }
   }
-  if (dataLines.length === 0) return null
-  const raw = dataLines.join('\n')
+  if (dataLines.length === 0) return null;
+  const raw = dataLines.join("\n");
   try {
-    return { event, data: JSON.parse(raw) }
+    return { event, data: JSON.parse(raw) };
   } catch {
-    return { event, data: null, raw }
+    return { event, data: null, raw };
   }
 }
 
@@ -36,47 +36,47 @@ function parseFrame(frame) {
  * @param {(frame: { event: string, data: any }) => void} onFrame
  */
 export async function streamChat({ message, sessionId, systemPrompt, model, signal }, onFrame) {
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, sessionId, systemPrompt, model }),
-    signal
-  })
+    signal,
+  });
 
   if (!response.ok) {
     // 401 走 http.js 的同一份处理，否则登录失效时对话界面只会显示一条错误文案，
     // 不会跳登录页。放在解析错误体之前：那份文案这一支根本用不上
     if (response.status === 401) {
-      throw handleUnauthorized()
+      throw handleUnauthorized();
     }
 
-    let detail = ''
+    let detail = "";
     try {
-      const body = await response.json()
-      detail = body?.error?.message ?? ''
+      const body = await response.json();
+      detail = body?.error?.message ?? "";
     } catch {
-      detail = await response.text().catch(() => '')
+      detail = await response.text().catch(() => "");
     }
 
-    throw new Error(detail || `请求失败（HTTP ${response.status}）`)
+    throw new Error(detail || `请求失败（HTTP ${response.status}）`);
   }
 
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
 
   while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
 
-    let boundary = buffer.indexOf('\n\n')
+    let boundary = buffer.indexOf("\n\n");
     while (boundary !== -1) {
-      const frame = buffer.slice(0, boundary)
-      buffer = buffer.slice(boundary + 2)
-      const parsed = parseFrame(frame)
-      if (parsed) onFrame(parsed)
-      boundary = buffer.indexOf('\n\n')
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const parsed = parseFrame(frame);
+      if (parsed) onFrame(parsed);
+      boundary = buffer.indexOf("\n\n");
     }
   }
 }
@@ -88,27 +88,27 @@ export async function streamChat({ message, sessionId, systemPrompt, model, sign
  * （这是有意的：关页面不再丢回答），所以停止必须走一个显式接口。
  */
 export async function abortChat(sessionId) {
-  const response = await fetch('/api/chat/abort', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId })
-  })
+  const response = await fetch("/api/chat/abort", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId }),
+  });
 
   if (!response.ok) {
     if (response.status === 401) {
-      throw handleUnauthorized()
+      throw handleUnauthorized();
     }
-    throw new Error(`停止失败（HTTP ${response.status}）`)
+    throw new Error(`停止失败（HTTP ${response.status}）`);
   }
 }
 
 /** 读出后端的错误文案；没有就用兜底文案。403 / 409 都带着用户该看的说明 */
 async function readError(response, fallback) {
   if (response.status === 401) {
-    throw handleUnauthorized()
+    throw handleUnauthorized();
   }
-  const body = await response.json().catch(() => null)
-  return new Error(body?.error?.message || `${fallback}（HTTP ${response.status}）`)
+  const body = await response.json().catch(() => null);
+  return new Error(body?.error?.message || `${fallback}（HTTP ${response.status}）`);
 }
 
 /**
@@ -118,19 +118,19 @@ async function readError(response, fallback) {
  * 形状与 SSE compaction 帧里的 outcome 完全一致。
  */
 export async function compactChat(sessionId) {
-  const response = await fetch('/api/chat/compact', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId })
-  })
-  if (!response.ok) throw await readError(response, '压缩失败')
-  const body = await response.json()
-  return body.outcome
+  const response = await fetch("/api/chat/compact", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId }),
+  });
+  if (!response.ok) throw await readError(response, "压缩失败");
+  const body = await response.json();
+  return body.outcome;
 }
 
 /** 当前上下文占用（`/context` 命令）→ { tokens, threshold, contextWindow } */
 export async function fetchContextUsage(sessionId) {
-  const response = await fetch(`/api/chat/context?sessionId=${encodeURIComponent(sessionId)}`)
-  if (!response.ok) throw await readError(response, '读取上下文占用失败')
-  return response.json()
+  const response = await fetch(`/api/chat/context?sessionId=${encodeURIComponent(sessionId)}`);
+  if (!response.ok) throw await readError(response, "读取上下文占用失败");
+  return response.json();
 }

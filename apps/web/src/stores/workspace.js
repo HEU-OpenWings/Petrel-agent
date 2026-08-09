@@ -1,5 +1,5 @@
-import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { defineStore } from "pinia";
+import { computed, ref } from "vue";
 
 /**
  * 右栏展示什么。
@@ -10,25 +10,25 @@ import { computed, ref } from 'vue'
  *
  * @typedef {{ id: string, name: string, state: string, args: unknown, result: unknown, ms?: number }} ToolCallSnapshot
  */
-export const useWorkspaceStore = defineStore('workspace', () => {
-  const activeToolCall = ref(null)
+export const useWorkspaceStore = defineStore("workspace", () => {
+  const activeToolCall = ref(null);
 
-  const activeToolCallId = computed(() => activeToolCall.value?.id ?? null)
+  const activeToolCallId = computed(() => activeToolCall.value?.id ?? null);
 
   /** @param {ToolCallSnapshot} snapshot */
   function openToolCall(snapshot) {
-    activeToolCall.value = snapshot
+    activeToolCall.value = snapshot;
   }
 
   /** 工具还在执行时后续状态会变，只同步当前选中的那一个 */
   function syncToolCall(snapshot) {
-    if (!activeToolCall.value || activeToolCall.value.id !== snapshot.id) return
-    activeToolCall.value = snapshot
+    if (!activeToolCall.value || activeToolCall.value.id !== snapshot.id) return;
+    activeToolCall.value = snapshot;
   }
 
   function clear() {
-    activeToolCall.value = null
+    activeToolCall.value = null;
   }
 
-  return { activeToolCall, activeToolCallId, openToolCall, syncToolCall, clear }
-})
+  return { activeToolCall, activeToolCallId, openToolCall, syncToolCall, clear };
+});
