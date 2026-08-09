@@ -35,30 +35,30 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
-import { ArrowUpRight, CircleAlert, CircleCheckBig, Loader } from 'lucide-vue-next'
-import { ToolResultRenderer } from '@/components/ToolCallingResult'
-import { useLayoutStore } from '@/stores/layout'
-import { useWorkspaceStore } from '@/stores/workspace'
-import { extractToolResultText, formatToolArgs } from '@/utils/toolCall'
+import { ArrowUpRight, CircleAlert, CircleCheckBig, Loader } from "lucide-vue-next";
+import { computed, ref, watch } from "vue";
+import { ToolResultRenderer } from "@/components/ToolCallingResult";
+import { useLayoutStore } from "@/stores/layout";
+import { useWorkspaceStore } from "@/stores/workspace";
+import { extractToolResultText, formatToolArgs } from "@/utils/toolCall";
 
 const props = defineProps({
   /** pi 的 toolCall content block：{ id, name, arguments } */
   toolCall: { type: Object, required: true },
   /** useAgentStream 里由 tool_execution_* 事件归约出的执行状态 */
-  detail: { type: Object, default: () => ({}) }
-})
+  detail: { type: Object, default: () => ({}) },
+});
 
-const expanded = ref(false)
-const layout = useLayoutStore()
-const workspace = useWorkspaceStore()
+const expanded = ref(false);
+const layout = useLayoutStore();
+const workspace = useWorkspaceStore();
 
-const state = computed(() => props.detail.state ?? 'pending')
+const state = computed(() => props.detail.state ?? "pending");
 // detail.args 来自 tool_execution_start 事件，工具还没开始执行时退回 content block 里的参数
-const args = computed(() => props.detail.args ?? props.toolCall.arguments)
-const formattedArgs = computed(() => formatToolArgs(args.value))
+const args = computed(() => props.detail.args ?? props.toolCall.arguments);
+const formattedArgs = computed(() => formatToolArgs(args.value));
 // ToolResultRenderer 会自己尝试 JSON.parse，按结果形状挑对应的展示卡片
-const resultText = computed(() => extractToolResultText(props.detail.result))
+const resultText = computed(() => extractToolResultText(props.detail.result));
 
 /** 右栏与本组件是兄弟关系，注入不到，只能把完整快照写进 store */
 function snapshot() {
@@ -68,14 +68,14 @@ function snapshot() {
     state: state.value,
     args: args.value,
     result: props.detail.result,
-    ms: props.detail.ms
-  }
+    ms: props.detail.ms,
+  };
 }
 
 // 右栏折叠时也要能送过去，否则用户点了没有任何反馈
 function sendToWorkspace() {
-  workspace.openToolCall(snapshot())
-  layout.expandRight()
+  workspace.openToolCall(snapshot());
+  layout.expandRight();
 }
 
 // 工具执行中就被送到右栏时，后续的状态与结果要跟着更新，
@@ -84,11 +84,11 @@ watch(
   () => props.detail,
   () => {
     if (workspace.activeToolCallId === props.toolCall.id) {
-      workspace.syncToolCall(snapshot())
+      workspace.syncToolCall(snapshot());
     }
   },
-  { deep: true }
-)
+  { deep: true },
+);
 </script>
 
 <style lang="less" scoped>

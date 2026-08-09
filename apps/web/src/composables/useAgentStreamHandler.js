@@ -1,6 +1,6 @@
-import { message } from 'ant-design-vue';
-import { handleChatError } from '@/utils/errorHandler';
-import { unref } from 'vue';
+import { message } from "ant-design-vue";
+import { unref } from "vue";
+import { handleChatError } from "@/utils/errorHandler";
 
 /**
  * Process a streaming response from the server
@@ -8,14 +8,14 @@ import { unref } from 'vue';
  * @param {Function} onChunk - Callback function for each parsed JSON chunk. Return true to stop processing.
  */
 const processStreamResponse = async (response, onChunk) => {
-  if (!response || !response.body) {
-    console.warn('Invalid response or missing body for stream processing');
+  if (!response?.body) {
+    console.warn("Invalid response or missing body for stream processing");
     return;
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = "";
   let stopProcessing = false;
 
   try {
@@ -24,20 +24,20 @@ const processStreamResponse = async (response, onChunk) => {
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
 
       for (const line of lines) {
         const trimmedLine = line.trim();
         if (trimmedLine) {
           try {
             const chunk = JSON.parse(trimmedLine);
-            if (onChunk && onChunk(chunk)) {
+            if (onChunk?.(chunk)) {
               stopProcessing = true;
               break;
             }
           } catch (e) {
-            console.warn('Failed to parse stream chunk JSON:', e, 'Line:', trimmedLine);
+            console.warn("Failed to parse stream chunk JSON:", e, "Line:", trimmedLine);
           }
         }
       }
@@ -50,13 +50,13 @@ const processStreamResponse = async (response, onChunk) => {
           onChunk(chunk);
         }
       } catch (e) {
-        console.warn('Failed to parse final stream chunk JSON:', e);
+        console.warn("Failed to parse final stream chunk JSON:", e);
       }
     }
   } finally {
     try {
       reader.releaseLock();
-    } catch (e) {
+    } catch (_e) {
       // Ignore errors on releasing lock
     }
   }
@@ -67,9 +67,8 @@ export function useAgentStreamHandler({
   processApprovalInStream,
   currentAgentId,
   supportsTodo,
-  supportsFiles
+  supportsFiles,
 }) {
-
   /**
    * Process a single stream chunk based on its status
    * @param {Object} chunk - The parsed JSON chunk
@@ -83,11 +82,11 @@ export function useAgentStreamHandler({
     if (!threadState) return false;
 
     switch (status) {
-      case 'init':
+      case "init":
         threadState.onGoingConv.msgChunks[request_id] = [msg];
         return false;
 
-      case 'loading':
+      case "loading":
         if (msg.id) {
           if (!threadState.onGoingConv.msgChunks[msg.id]) {
             threadState.onGoingConv.msgChunks[msg.id] = [];
@@ -96,8 +95,8 @@ export function useAgentStreamHandler({
         }
         return false;
 
-      case 'error':
-        handleChatError({ message: chunkMessage }, 'stream');
+      case "error":
+        handleChatError({ message: chunkMessage }, "stream");
         // Stop the loading indicator
         if (threadState) {
           threadState.isStreaming = false;
@@ -110,36 +109,39 @@ export function useAgentStreamHandler({
         }
         return true;
 
-      case 'human_approval_required':
+      case "human_approval_required":
         // 使用审批 composable 处理审批请求
         return processApprovalInStream(chunk, threadId, unref(currentAgentId));
 
-      case 'agent_state':
+      case "agent_state":
         if ((unref(supportsTodo) || unref(supportsFiles)) && chunk.agent_state) {
-          console.log('[AgentState]', {
+          console.log("[AgentState]", {
             threadId,
             todos: chunk.agent_state?.todos || [],
-            files: chunk.agent_state?.files || []
+            files: chunk.agent_state?.files || [],
           });
           threadState.agentState = chunk.agent_state;
         }
         return false;
 
-      case 'finished':
+      case "finished":
         // 先标记流式结束，但保持消息显示直到历史记录加载完成
         if (threadState) {
           threadState.isStreaming = false;
           if ((unref(supportsTodo) || unref(supportsFiles)) && threadState.agentState) {
-            console.log(`[AgentState|Final] ${new Date().toLocaleTimeString()}.${new Date().getMilliseconds()}`, {
-              threadId,
-              todos: threadState.agentState?.todos || [],
-              files: threadState.agentState?.files || []
-            });
+            console.log(
+              `[AgentState|Final] ${new Date().toLocaleTimeString()}.${new Date().getMilliseconds()}`,
+              {
+                threadId,
+                todos: threadState.agentState?.todos || [],
+                files: threadState.agentState?.files || [],
+              },
+            );
           }
         }
         return true;
 
-      case 'interrupted':
+      case "interrupted":
         // 中断状态，刷新消息历史
         console.warn("[Interrupted] case");
         if (threadState) {
@@ -170,6 +172,6 @@ export function useAgentStreamHandler({
 
   return {
     handleStreamChunk,
-    handleAgentResponse
+    handleAgentResponse,
   };
 }

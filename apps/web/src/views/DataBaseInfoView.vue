@@ -89,20 +89,20 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch, onUnmounted, computed } from 'vue';
-import { useRoute } from 'vue-router';
-import { useDatabaseStore } from '@/stores/database';
-import { useTaskerStore } from '@/stores/tasker';
-import { Info } from 'lucide-vue-next';
-import KnowledgeBaseCard from '@/components/KnowledgeBaseCard.vue';
-import FileTable from '@/components/FileTable.vue';
-import FileDetailModal from '@/components/FileDetailModal.vue';
-import FileUploadModal from '@/components/FileUploadModal.vue';
-import KnowledgeGraphSection from '@/components/KnowledgeGraphSection.vue';
-import QuerySection from '@/components/QuerySection.vue';
-import MindMapSection from '@/components/MindMapSection.vue';
-import RAGEvaluationTab from '@/components/RAGEvaluationTab.vue';
-import EvaluationBenchmarks from '@/components/EvaluationBenchmarks.vue';
+import { Info } from "lucide-vue-next";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { useRoute } from "vue-router";
+import EvaluationBenchmarks from "@/components/EvaluationBenchmarks.vue";
+import FileDetailModal from "@/components/FileDetailModal.vue";
+import FileTable from "@/components/FileTable.vue";
+import FileUploadModal from "@/components/FileUploadModal.vue";
+import KnowledgeBaseCard from "@/components/KnowledgeBaseCard.vue";
+import KnowledgeGraphSection from "@/components/KnowledgeGraphSection.vue";
+import MindMapSection from "@/components/MindMapSection.vue";
+import QuerySection from "@/components/QuerySection.vue";
+import RAGEvaluationTab from "@/components/RAGEvaluationTab.vue";
+import { useDatabaseStore } from "@/stores/database";
+import { useTaskerStore } from "@/stores/tasker";
 
 const route = useRoute();
 const store = useDatabaseStore();
@@ -114,17 +114,17 @@ const state = computed(() => store.state);
 // 计算属性：是否支持知识图谱
 const isGraphSupported = computed(() => {
   const kbType = database.value.kb_type?.toLowerCase();
-  return kbType === 'lightrag';
+  return kbType === "lightrag";
 });
 
 // 计算属性：是否支持评估功能
 const isEvaluationSupported = computed(() => {
   const kbType = database.value.kb_type?.toLowerCase();
-  return kbType === 'milvus';
+  return kbType === "milvus";
 });
 
 // Tab 切换逻辑 - 智能默认
-const activeTab = ref('query');
+const activeTab = ref("query");
 
 // 思维导图引用
 const mindmapSectionRef = ref(null);
@@ -132,22 +132,20 @@ const mindmapSectionRef = ref(null);
 // 查询区域引用
 const querySectionRef = ref(null);
 
-
 const resetGraphStats = () => {
   store.graphStats = {
     total_nodes: 0,
     total_edges: 0,
     displayed_nodes: 0,
     displayed_edges: 0,
-    is_truncated: false
+    is_truncated: false,
   };
 };
-
 
 // LightRAG 默认展示知识图谱
 watch(
   () => [databaseId.value, isGraphSupported.value, isEvaluationSupported.value],
-  ([newDbId, supported, evaluationSupported], oldValue = []) => {
+  ([newDbId, supported, _evaluationSupported], oldValue = []) => {
     const [oldDbId, previouslySupported, previouslyEvaluationSupported] = oldValue;
 
     if (!newDbId) {
@@ -160,21 +158,27 @@ watch(
       resetGraphStats();
     }
 
-    if (supported && (newDbId !== oldDbId || previouslySupported === false || previouslySupported === undefined)) {
-      activeTab.value = 'graph';
+    if (
+      supported &&
+      (newDbId !== oldDbId || previouslySupported === false || previouslySupported === undefined)
+    ) {
+      activeTab.value = "graph";
       return;
     }
 
-    if (!supported && activeTab.value === 'graph') {
-      activeTab.value = 'query';
+    if (!supported && activeTab.value === "graph") {
+      activeTab.value = "query";
     }
 
     // 如果知识库类型不支持评估功能且当前在评估相关 tab，切换到查询 tab
-    if (!isEvaluationSupported.value && (activeTab.value === 'evaluation' || activeTab.value === 'benchmarks')) {
-      activeTab.value = 'query';
+    if (
+      !isEvaluationSupported.value &&
+      (activeTab.value === "evaluation" || activeTab.value === "benchmarks")
+    ) {
+      activeTab.value = "query";
     }
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 // 切换右侧面板显示/隐藏
@@ -210,7 +214,9 @@ const resetFileSelectionState = () => {
   store.state.fileDetailModalVisible = false;
 };
 
-watch(() => route.params.database_id, async (newId, oldId) => {
+watch(
+  () => route.params.database_id,
+  async (newId, _oldId) => {
     // 切换知识库时，标记为初次加载
     isInitialLoad.value = true;
 
@@ -221,7 +227,7 @@ watch(() => route.params.database_id, async (newId, oldId) => {
     await store.getDatabaseInfo(newId, false); // Explicitly load query params on initial load
     store.startAutoRefresh();
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 // 监听文件列表变化，自动更新思维导图和生成示例问题
@@ -229,7 +235,7 @@ const previousFileCount = ref(0);
 
 watch(
   () => database.value?.files,
-  (newFiles, oldFiles) => {
+  (newFiles, _oldFiles) => {
     if (!newFiles) return;
 
     const newFileCount = Object.keys(newFiles).length;
@@ -244,31 +250,31 @@ watch(
 
     // 如果文件数量发生变化（增加或减少），只重新生成问题，不自动生成思维导图
     if (newFileCount !== oldFileCount) {
-      const changeType = newFileCount > oldFileCount ? '增加' : '减少';
+      const changeType = newFileCount > oldFileCount ? "增加" : "减少";
       console.log(`文件数量从 ${oldFileCount} ${changeType}到 ${newFileCount}，准备重新生成问题`);
 
       // 只要有文件，就重新生成问题（无论之前是否有问题）
       if (newFileCount > 0) {
         setTimeout(async () => {
-          console.log('文件数量变化，检查是否需要生成问题，querySectionRef:', querySectionRef.value);
+          console.log("文件数量变化，检查是否需要生成问题，querySectionRef:", querySectionRef.value);
           if (querySectionRef.value) {
             // 检查是否开启了自动生成问题
             if (database.value.additional_params?.auto_generate_questions) {
-              console.log('开始重新生成问题...');
+              console.log("开始重新生成问题...");
               await querySectionRef.value.generateSampleQuestions(true);
             } else {
-              console.log('自动生成问题已关闭，跳过生成');
+              console.log("自动生成问题已关闭，跳过生成");
             }
           } else {
-            console.warn('querySectionRef 未准备好，稍后重试');
+            console.warn("querySectionRef 未准备好，稍后重试");
             // 如果组件还没准备好，再等一会儿
             setTimeout(async () => {
               if (querySectionRef.value) {
                 if (database.value.additional_params?.auto_generate_questions) {
-                  console.log('延迟后开始生成问题...');
+                  console.log("延迟后开始生成问题...");
                   await querySectionRef.value.generateSampleQuestions(true);
                 } else {
-                  console.log('自动生成问题已关闭，跳过生成');
+                  console.log("自动生成问题已关闭，跳过生成");
                 }
               }
             }, 2000);
@@ -276,7 +282,7 @@ watch(
         }, 3000); // 等待3秒让后端处理完成
       } else {
         // 如果文件数量变为0，清空问题列表
-        console.log('文件数量为0，清空问题列表');
+        console.log("文件数量为0，清空问题列表");
         setTimeout(() => {
           if (querySectionRef.value) {
             // 清空问题列表
@@ -288,7 +294,7 @@ watch(
 
     previousFileCount.value = newFileCount;
   },
-  { deep: true }
+  { deep: true },
 );
 
 // 组件挂载时启动示例轮播
@@ -300,7 +306,7 @@ onMounted(() => {
 
   // 添加拖拽事件监听（仅水平方向）
   if (resizeHandle.value) {
-    resizeHandle.value.addEventListener('mousedown', handleMouseDown);
+    resizeHandle.value.addEventListener("mousedown", handleMouseDown);
   }
 });
 
@@ -308,25 +314,25 @@ onMounted(() => {
 onUnmounted(() => {
   store.stopAutoRefresh();
   if (resizeHandle.value) {
-    resizeHandle.value.removeEventListener('mousedown', handleMouseDown);
+    resizeHandle.value.removeEventListener("mousedown", handleMouseDown);
   }
-  document.removeEventListener('mousemove', handleMouseMove);
-  document.removeEventListener('mouseup', handleMouseUp);
+  document.removeEventListener("mousemove", handleMouseMove);
+  document.removeEventListener("mouseup", handleMouseUp);
 });
 
 // 拖拽调整大小功能
 const handleMouseDown = () => {
   isDragging.value = true;
-  document.addEventListener('mousemove', handleMouseMove);
-  document.addEventListener('mouseup', handleMouseUp);
-  document.body.style.cursor = 'col-resize';
-  document.body.style.userSelect = 'none';
+  document.addEventListener("mousemove", handleMouseMove);
+  document.addEventListener("mouseup", handleMouseUp);
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
 };
 
 const handleMouseMove = (e) => {
   if (!isDragging.value) return;
 
-  const container = document.querySelector('.unified-layout');
+  const container = document.querySelector(".unified-layout");
   if (!container) return;
 
   const containerRect = container.getBoundingClientRect();
@@ -336,12 +342,11 @@ const handleMouseMove = (e) => {
 
 const handleMouseUp = () => {
   isDragging.value = false;
-  document.removeEventListener('mousemove', handleMouseMove);
-  document.removeEventListener('mouseup', handleMouseUp);
-  document.body.style.cursor = '';
-  document.body.style.userSelect = '';
+  document.removeEventListener("mousemove", handleMouseMove);
+  document.removeEventListener("mouseup", handleMouseUp);
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
 };
-
 </script>
 
 <style lang="less" scoped>

@@ -4,11 +4,13 @@ import {
   createEntryRepository,
   createQuotaLimitsRepository,
   createTokenUsageRepository,
+  createUserRepository,
 } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService } from "../../services/session.ts";
 import { app } from "../app.ts";
+import { __resetAuthRateLimits } from "./auth.ts";
 import { __resetRegistry } from "./chat.ts";
 
 /**
@@ -117,7 +119,14 @@ async function registerUser(email: string): Promise<{ cookie: string; id: string
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
-  return { cookie: (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+  await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
+  const login = await app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  return { cookie: (login.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
 }
 
 /** 注册一个新用户并返回它的 cookie，用来跨用户测越权场景 */
@@ -149,9 +158,11 @@ beforeEach(async () => {
   state.quotaEnforcement = false;
   useFaux();
   await reset();
+  __resetAuthRateLimits();
   __resetRegistry();
   const user = await registerUser("a@x.io");
   cookie = user.cookie;
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   service = createSessionService(state.db!, user.id);
   state.seenHarnessOptions = undefined;
 });
@@ -658,7 +669,7 @@ describe("模型选择", () => {
    * `model = rawModel ?? DEFAULT_MODEL_ID` 之类，这里就会拿到一个非 undefined 的
    * modelId 而变红。路由一旦自己兜默认，createHarness 里
    * 「modelId === undefined → defaultModel()」那条分支就永远走不到，
-   * 将来改 @petrel/ai 的 DEFAULT_MODEL_ID 会出现「改了却不生效」的怪问题。
+   * 将来改 packages/agent 的 DEFAULT_MODEL_ID 会出现「改了却不生效」的怪问题。
    * 别因为它「看起来是恒真的」就删掉。
    */
   it("不传 model 时路由不注入 modelId，默认值交给 createHarness 兜", async () => {
@@ -959,9 +970,11 @@ describe("POST /api/chat HEU-40 配额拦截", () => {
   /** 给当前登录用户插一条超额用量事实，模拟「本窗口已用满」 */
   async function fillQuota(tokens: number) {
     const user = await (await import("@petrel/database"))
+      // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
       .createUserRepository(state.db!)
       .findByEmail("a@x.io");
     if (!user) throw new Error("测试用户未找到");
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     const usageRepo = createTokenUsageRepository(state.db!);
     await usageRepo.insertFact({
       entryId: crypto.randomUUID(),
@@ -1026,9 +1039,11 @@ describe("POST /api/chat HEU-40 配额拦截", () => {
     // 当前测试用户 a@x.io 不是 admin（ADMIN_EMAILS 未配），无法在 e2e 里测 admin 豁免。
     // 这里给该用户设额度覆盖为 0，验证普通用户被拦；admin 豁免的单元覆盖在 quota.test.ts。
     const user = await (await import("@petrel/database"))
+      // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
       .createUserRepository(state.db!)
       .findByEmail("a@x.io");
     if (!user) throw new Error("测试用户未找到");
+    // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
     await createQuotaLimitsRepository(state.db!).upsertLimit(user.id, 0);
 
     faux.setResponses([fauxAssistantMessage([fauxText("不该出现")])]);

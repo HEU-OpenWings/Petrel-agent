@@ -1,8 +1,8 @@
 <script setup>
 defineProps({
   tokensBefore: { type: Number, default: 0 },
-  tokensAfter: { type: Number, default: 0 }
-})
+  tokensAfter: { type: Number, default: 0 },
+});
 </script>
 
 <template>

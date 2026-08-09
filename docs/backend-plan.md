@@ -299,6 +299,23 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
 - 接口：`POST /api/auth/register|login|logout` · `GET /api/auth/me` ·
   `GET /api/admin/users` · `PATCH /api/admin/users/:id`（禁用/解禁，不能禁自己）。
 
+### 认证补全：注册限流 · 邮箱验证 · 密码重置（2026-08-06 交付）
+
+设计文档见 [superpowers/specs/2026-08-06-auth-completion-design.md](superpowers/specs/2026-08-06-auth-completion-design.md)。
+
+- **注册限流**：按 IP 固定窗口（默认 5 次/15 分钟），在 scrypt 之前拦截；
+  忘记密码/重发验证按邮箱（默认 3 次/15 分钟）。仍是单实例内存，多副本共享在风控轮做 Redis。
+- **邮箱验证**：注册即发验证邮件、不再自动登录；未验证登录在校验密码之后返回 403（不构成枚举）。
+  验证链接 24h 有效、可重复点击；`POST /api/auth/resend-verification` 可重发（恒 200 防枚举）。
+- **密码重置**：`POST /api/auth/forgot-password`（恒 200）→ 邮件链接（30min、一次性）→
+  `POST /api/auth/reset-password`；重置成功顺带标记邮箱已验证（兜住验证邮件丢失的情况）。
+- **邮件通道**：nodemailer + SMTP，开发/测试默认 console 传输（邮件打到日志含链接），
+  生产强制 smtp。验证/忘记/重置的浏览器页面由后端渲染最小 HTML。
+- **token 只存哈希**：`users` 表新增 `email_verified_at` 与两对 token 哈希/过期列，
+  migration 把存量用户回填为已验证。
+- 接口：`GET /api/auth/verify-email` · `POST /api/auth/resend-verification` ·
+  `GET|POST /api/auth/forgot-password` · `GET|POST /api/auth/reset-password`。
+
 ### 用户偏好与账号（2026-08-04 交付）
 
 `user_preferences` 表一人一行（`user_id` 主键），`default_model` 与 `system_prompt`
@@ -416,9 +433,15 @@ sweep 与容量淘汰都跳过它；同会话其他连接卡在 promise 链上�
   已随 HEU-7 交付（见 §3）。剩下的是被删除能力清单确认
 - **配额与 token 计量**：当前任何登录用户都能无限调模型，成本无上限也无归属。
   这是**公开注册的前置**——在它落地之前不能开放注册，只能内部名单使用
-- **token 版本号**：改密码不会失效其他设备上的旧 token。给 `users` 加 `tokenVersion`，
-  签发时写进 payload、`requireAuth` 比对，改密码时自增。同一个机制也能实现
-  「登出所有设备」。
+- **认证补全（2026-08-06 已交付，见 §3 末尾「认证补全」）**：注册限流、邮箱验证、
+  密码重置、邮件通道（nodemailer + SMTP / dev 用 console）。剩余两项单列：
+  限流计数仍是单实例内存（多副本共享在风控轮做 Redis）、验证/重置的浏览器页面还是
+  后端渲染的最小 HTML（SPA 页面待补）。
+- ~~**token 版本号**：改密码不会失效其他设备上的旧 token~~ —— **已交付**：
+  `users.token_version` 签发时写进 JWT payload 的 `tv`，`requireAuth` 每请求比对
+  （复用既有查库，不增加查询）；改密码（`changePassword`）与重置密码
+  （`resetPassword`）都自增；`POST /api/account/logout-all` 自增实现「退出所有设备」。
+  migration `0008_tiny_the_order`。
 - **`toHttpException` 有两份**：`routes/auth.ts` 与 `routes/account.ts` 各写了一个同名
   同作用的函数。等第三处重复出现时提取到共享位置（现在提取牵动两个既有文件，
   收益不足）。

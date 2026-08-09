@@ -52,54 +52,54 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { PanelLeft, PanelRight } from 'lucide-vue-next'
-import { useRoute, useRouter } from 'vue-router'
-import { useResizePanel } from '@/composables/useResizePanel'
-import { useLayoutStore } from '@/stores/layout'
-import { useSessionStore } from '@/stores/session'
-import SessionSidebar from '@/components/shell/SessionSidebar.vue'
-import WorkspacePanel from '@/components/shell/WorkspacePanel.vue'
-import SettingsModal from '@/components/settings/SettingsModal.vue'
+import { PanelLeft, PanelRight } from "lucide-vue-next";
+import { computed, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import SettingsModal from "@/components/settings/SettingsModal.vue";
+import SessionSidebar from "@/components/shell/SessionSidebar.vue";
+import WorkspacePanel from "@/components/shell/WorkspacePanel.vue";
+import { useResizePanel } from "@/composables/useResizePanel";
+import { useLayoutStore } from "@/stores/layout";
+import { useSessionStore } from "@/stores/session";
 
-const route = useRoute()
-const router = useRouter()
-const layout = useLayoutStore()
-const sessionStore = useSessionStore()
+const route = useRoute();
+const router = useRouter();
+const layout = useLayoutStore();
+const sessionStore = useSessionStore();
 
 // 用 emit 而不是 provide/inject 传打开动作：SessionSidebar 已经有 @new-chat / @select
 // 两个 emit，加这个与既有惯例一致，而且调用关系在模板里看得见
-const showSettings = ref(false)
+const showSettings = ref(false);
 
 // 右栏只属于对话页，由路由 meta 决定，非对话页自动只剩两栏
-const hasWorkspace = computed(() => route.meta.workspace === true)
-const title = computed(() => route.meta.title ?? '')
+const hasWorkspace = computed(() => route.meta.workspace === true);
+const title = computed(() => route.meta.title ?? "");
 
 const { onPointerDown } = useResizePanel({
   getWidth: () => layout.rightWidth,
-  setWidth: (width) => layout.setRightWidth(width)
-})
+  setWidth: (width) => layout.setRightWidth(width),
+});
 
 // 已经在对话页时 router.push('/agent') 不会重新挂载组件，点「新对话」会毫无反应。
 // 递增 key 强制重挂载 ChatView，「全新对话」的语义正好等于「组件重新来过」，
 // 连输入框草稿和错误提示一起清干净。
-const chatKey = ref(0)
-const viewKey = computed(() => (route.path === '/agent' ? `agent#${chatKey.value}` : route.path))
+const chatKey = ref(0);
+const viewKey = computed(() => (route.path === "/agent" ? `agent#${chatKey.value}` : route.path));
 
 function onNewChat() {
-  sessionStore.startNew()
-  if (route.path === '/agent') {
-    chatKey.value += 1
+  sessionStore.startNew();
+  if (route.path === "/agent") {
+    chatKey.value += 1;
   } else {
-    router.push('/agent')
+    router.push("/agent");
   }
 }
 
 // 选中会话只改 store，由 ChatView 监听 currentId 去拉历史：
 // AppShell 拿不到 ChatView 内部的 useAgentStream 实例，没法直接灌消息
 function onSelectSession(id) {
-  sessionStore.select(id)
-  if (route.path !== '/agent') router.push('/agent')
+  sessionStore.select(id);
+  if (route.path !== "/agent") router.push("/agent");
 }
 </script>
 

@@ -3,6 +3,7 @@ import type { CreateHarnessOptions } from "@petrel/agent";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
+import { __resetAuthRateLimits } from "./auth.ts";
 
 const state = vi.hoisted(() => ({
   db: undefined as TestDb | undefined,
@@ -59,6 +60,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await reset();
+  __resetAuthRateLimits();
   __resetRegistry();
   faux = fauxProvider({ tokensPerSecond: 10_000 });
   const models = createModels();
@@ -69,7 +71,7 @@ beforeEach(async () => {
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
 
-/** 注册一个用户并返回它的 cookie 与 id（同 admin.test.ts 的 registerUser） */
+/** 注册一个用户并返回它的 cookie 与 id（同 admin.test.ts 的 registerUser；验证流程本身在 auth.test.ts 覆盖） */
 async function register(email: string): Promise<{ cookie: string; id: string }> {
   const response = await app.request("/api/auth/register", {
     method: "POST",
@@ -77,12 +79,20 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
   const body = (await response.json()) as { user: { id: string } };
-  return { cookie: (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+  await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
+  const login = await app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  return { cookie: (login.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "", id: body.user.id };
 }
 
 /** 注册后直接改库提权，再重新登录拿到 admin 身份的 cookie（同 admin.test.ts） */
 async function registerAdmin(email: string): Promise<string> {
   const { id } = await register(email);
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
   await createUserRepository(state.db!).setRole(id, "admin");
 
   const response = await app.request("/api/auth/login", {
@@ -141,6 +151,21 @@ describe("路由保护范围", () => {
 
   it("账号偏好没有 cookie 返回 401", async () => {
     const response = await app.request("/api/account/preferences");
+
+    expect(response.status).toBe(401);
+  });
+
+  // HEU-53：provider 配置状态接口也必须挂在 requireAuth 之下。同时锁住
+  // 「未登录访问未知 provider 的 models 端点也是 401（401 优先于 404）」——
+  // 否则匿名用户能通过遍历 providerId 探测部署状态。
+  it("provider 状态接口没有 cookie 返回 401", async () => {
+    const response = await app.request("/api/providers");
+
+    expect(response.status).toBe(401);
+  });
+
+  it("provider 模型目录没有 cookie 返回 401（而非 404）", async () => {
+    const response = await app.request("/api/providers/not-real/models");
 
     expect(response.status).toBe(401);
   });

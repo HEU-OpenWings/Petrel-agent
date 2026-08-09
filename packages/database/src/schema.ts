@@ -5,6 +5,7 @@ import {
   boolean,
   check,
   index,
+  integer,
   jsonb,
   numeric,
   pgTable,
@@ -14,15 +15,37 @@ import {
 } from "drizzle-orm/pg-core";
 
 /** 用户表。email 是登录标识，展示名由前端取邮箱前缀，不落库 */
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
-  // 用 text 而不是 pg enum：enum 加值要 migration，应用层收窄更灵活
-  role: text("role").notNull().default("user"),
-  disabled: boolean("disabled").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    email: text("email").notNull().unique(),
+    passwordHash: text("password_hash").notNull(),
+    // 用 text 而不是 pg enum：enum 加值要 migration，应用层收窄更灵活
+    role: text("role").notNull().default("user"),
+    disabled: boolean("disabled").notNull().default(false),
+    // 邮箱验证与密码重置：只存 token 的 sha256 哈希，明文只出现在邮件链接里；
+    // 验证 token 24h、重置 token 30min，各自单槽（再次申请覆盖旧的）
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+    emailVerifyTokenHash: text("email_verify_token_hash"),
+    emailVerifyTokenExpiresAt: timestamp("email_verify_token_expires_at", { withTimezone: true }),
+    passwordResetTokenHash: text("password_reset_token_hash"),
+    passwordResetTokenExpiresAt: timestamp("password_reset_token_expires_at", { withTimezone: true }),
+    // 会话版本号：签发时写进 JWT payload，requireAuth 与库里的值比对；
+    // 改密码 / 退出所有设备时自增，让旧 token 立即失效（JWT 无状态，只能靠这个）
+    tokenVersion: integer("token_version").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  // 验证/重置链接是公开无鉴权端点上的查询，部分索引避免全表顺序扫描（绝大多数行是 NULL）
+  (table) => [
+    index("users_email_verify_token_hash_idx")
+      .on(table.emailVerifyTokenHash)
+      .where(sql`${table.emailVerifyTokenHash} IS NOT NULL`),
+    index("users_password_reset_token_hash_idx")
+      .on(table.passwordResetTokenHash)
+      .where(sql`${table.passwordResetTokenHash} IS NOT NULL`),
+  ],
+);
 
 export const sessions = pgTable(
   "sessions",

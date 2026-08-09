@@ -42,11 +42,11 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import WebSearchResult from './WebSearchResult.vue'
-import KnowledgeBaseResult from './KnowledgeBaseResult.vue'
-import CalculatorResult from './CalculatorResult.vue'
-import TodoListResult from './TodoListResult.vue'
+import { computed } from "vue";
+import CalculatorResult from "./CalculatorResult.vue";
+import KnowledgeBaseResult from "./KnowledgeBaseResult.vue";
+import TodoListResult from "./TodoListResult.vue";
+import WebSearchResult from "./WebSearchResult.vue";
 
 // v0.5 说明：
 // 1. 知识图谱结果卡片已移除——该功能已从产品下线，且它 import GraphCanvas
@@ -57,141 +57,136 @@ import TodoListResult from './TodoListResult.vue'
 const props = defineProps({
   toolName: {
     type: String,
-    required: true
+    required: true,
   },
   resultContent: {
     type: [String, Object, Array, Number],
-    required: true
-  }
-})
+    required: true,
+  },
+});
 
 // 解析数据
 const parsedData = computed(() => {
-  if (typeof props.resultContent === 'string') {
+  if (typeof props.resultContent === "string") {
     try {
-      return JSON.parse(props.resultContent)
+      return JSON.parse(props.resultContent);
     } catch (error) {
-      return props.resultContent
+      return props.resultContent;
     }
   }
-  return props.resultContent
-})
+  return props.resultContent;
+});
 
 const todoListData = computed(() => {
-  if (props.toolName !== 'write_todos') return []
-  
-  const raw = props.resultContent
-  
+  if (props.toolName !== "write_todos") return [];
+
+  const raw = props.resultContent;
+
   // 1. Try from parsedData (JSON object)
-  const data = parsedData.value
-  if (data && typeof data === 'object') {
-     if (Array.isArray(data)) return data
-     if (data.todos && Array.isArray(data.todos)) return data.todos
+  const data = parsedData.value;
+  if (data && typeof data === "object") {
+    if (Array.isArray(data)) return data;
+    if (data.todos && Array.isArray(data.todos)) return data.todos;
   }
-  
+
   // 2. Try parsing string if it matches specific pattern
-  if (typeof raw === 'string') {
-    let str = raw
-    if (str.startsWith('Updated todo list to ')) {
-      str = str.replace('Updated todo list to ', '')
+  if (typeof raw === "string") {
+    let str = raw;
+    if (str.startsWith("Updated todo list to ")) {
+      str = str.replace("Updated todo list to ", "");
     }
-    
+
     // Try regex parsing for Python-like string
-    const items = []
+    const items = [];
     // Matches {'content': '...', 'status': '...'} with escaped quotes support
     // content might contain escaped quotes
-    const contentRegex = /'content':\s*'((?:[^'\\]|\\.)*)'/
-    const statusRegex = /'status':\s*'((?:[^'\\]|\\.)*)'/
-    
+    const contentRegex = /'content':\s*'((?:[^'\\]|\\.)*)'/;
+    const statusRegex = /'status':\s*'((?:[^'\\]|\\.)*)'/;
+
     // Split by "}, {" roughly, or just look for objects
     // Since it is a list of dicts, we can match individual dicts
-    const dictRegex = /\{.*?\}/g
-    const dictMatches = str.match(dictRegex)
-    
+    const dictRegex = /\{.*?\}/g;
+    const dictMatches = str.match(dictRegex);
+
     if (dictMatches) {
       for (const dictStr of dictMatches) {
-        const contentMatch = dictStr.match(contentRegex)
-        const statusMatch = dictStr.match(statusRegex)
-        
+        const contentMatch = dictStr.match(contentRegex);
+        const statusMatch = dictStr.match(statusRegex);
+
         if (contentMatch && statusMatch) {
           items.push({
             content: contentMatch[1].replace(/\\'/g, "'").replace(/\\\\/g, "\\"),
-            status: statusMatch[1]
-          })
+            status: statusMatch[1],
+          });
         }
       }
     }
-    if (items.length > 0) return items
+    if (items.length > 0) return items;
   }
-  
-  return []
-})
+
+  return [];
+});
 
 const isTodoListResult = computed(() => {
-  return props.toolName === 'write_todos' && todoListData.value.length > 0
-})
+  return props.toolName === "write_todos" && todoListData.value.length > 0;
+});
 
 // 判断是否为网页搜索结果
 const isWebSearchResult = computed(() => {
-  const toolNameLower = props.toolName.toLowerCase()
-  const isWebSearchTool = toolNameLower.includes('search') ||
-                         toolNameLower.includes('tavily') ||
-                         toolNameLower.includes('web')
+  const toolNameLower = props.toolName.toLowerCase();
+  const isWebSearchTool =
+    toolNameLower.includes("search") || toolNameLower.includes("tavily") || toolNameLower.includes("web");
 
-  if (!isWebSearchTool) return false
+  if (!isWebSearchTool) return false;
 
-  const data = parsedData.value
-  return data &&
-         typeof data === 'object' &&
-         'results' in data &&
-         Array.isArray(data.results) &&
-         'query' in data
-})
+  const data = parsedData.value;
+  return (
+    data && typeof data === "object" && "results" in data && Array.isArray(data.results) && "query" in data
+  );
+});
 
 // 判断是否为知识库检索结果：只看数据长什么样，不问后端这个工具是什么
 const isKnowledgeBaseResult = computed(() => {
-  const data = parsedData.value
-  return Array.isArray(data) &&
-         data.length > 0 &&
-         data.every(item =>
-           item &&
-           typeof item === 'object' &&
-           'content' in item &&
-           'score' in item &&
-           'metadata' in item
-         )
-})
+  const data = parsedData.value;
+  return (
+    Array.isArray(data) &&
+    data.length > 0 &&
+    data.every(
+      (item) =>
+        item && typeof item === "object" && "content" in item && "score" in item && "metadata" in item,
+    )
+  );
+});
 
 const isImageResult = computed(() => {
   // 包含 chart 且返回值是url
-  const data = parsedData.value
-  const toolNameLower = props.toolName.toLowerCase()
-  const isImageTool = toolNameLower.includes('chart')
+  const data = parsedData.value;
+  const toolNameLower = props.toolName.toLowerCase();
+  const isImageTool = toolNameLower.includes("chart");
 
-  if (!isImageTool) return false
+  if (!isImageTool) return false;
 
-  return data && typeof data === 'string' && data.startsWith('http')
-})
+  return data && typeof data === "string" && data.startsWith("http");
+});
 
 // 判断是否为计算器结果
 const isCalculatorResult = computed(() => {
-  const toolNameLower = props.toolName.toLowerCase()
-  const isCalculatorTool = toolNameLower.includes('calculator') ||
-                          toolNameLower.includes('calc') ||
-                          toolNameLower.includes('math')
+  const toolNameLower = props.toolName.toLowerCase();
+  const isCalculatorTool =
+    toolNameLower.includes("calculator") || toolNameLower.includes("calc") || toolNameLower.includes("math");
 
-  if (!isCalculatorTool) return false
+  if (!isCalculatorTool) return false;
 
-  return typeof parsedData.value === 'number'
-})
+  return typeof parsedData.value === "number";
+});
 
 // 格式化数据用于默认展示
 const formatData = (data) => {
-  if (typeof data === 'object') {
-    return JSON.stringify(data, null, 2)
+  if (typeof data === "object") {
+    return JSON.stringify(data, null, 2);
   }
-  return String(data)
-}
+  return String(data);
+};
 </script>
 
 <style lang="less" scoped>

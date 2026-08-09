@@ -3,7 +3,7 @@ import { userPreferences } from "../schema.ts";
 import type { Database } from "./sessions.ts";
 
 export interface UserPreferences {
-  /** null = 跟随 @petrel/ai 的 DEFAULT_MODEL_ID */
+  /** null = 跟随 packages/agent 的 DEFAULT_MODEL_ID */
   defaultModel: string | null;
   /** null = 跟随 @petrel/agent 的 DEFAULT_SYSTEM_PROMPT */
   systemPrompt: string | null;

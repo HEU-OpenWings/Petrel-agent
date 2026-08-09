@@ -160,26 +160,20 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, h } from 'vue';
-import { useDatabaseStore } from '@/stores/database';
-import { message } from 'ant-design-vue';
-import { useUserStore } from '@/stores/user';
-import { documentApi } from '@/apis/knowledge_api';
 import {
   CheckCircleFilled,
-  HourglassFilled,
-  CloseCircleFilled,
   ClockCircleFilled,
+  CloseCircleFilled,
+  HourglassFilled,
   PlusOutlined,
   ReloadOutlined,
-} from '@ant-design/icons-vue';
-import {
-  Trash2,
-  Download,
-  RefreshCw,
-  ChevronLast,
-  Ellipsis,
-} from 'lucide-vue-next';
+} from "@ant-design/icons-vue";
+import { message } from "ant-design-vue";
+import { ChevronLast, Download, Ellipsis, RefreshCw, Trash2 } from "lucide-vue-next";
+import { computed, h, ref, watch } from "vue";
+import { documentApi } from "@/apis/knowledge_api";
+import { useDatabaseStore } from "@/stores/database";
+import { useUserStore } from "@/stores/user";
 
 const store = useDatabaseStore();
 const userStore = useUserStore();
@@ -187,17 +181,14 @@ const userStore = useUserStore();
 const props = defineProps({
   rightPanelVisible: {
     type: Boolean,
-    default: true
+    default: true,
   },
 });
 
-const emit = defineEmits([
-  'showAddFilesModal',
-  'toggleRightPanel',
-]);
+const emit = defineEmits(["showAddFilesModal", "toggleRightPanel"]);
 
 const files = computed(() => Object.values(store.database.files || {}));
-const isLightRAG = computed(() => store.database?.kb_type?.toLowerCase() === 'lightrag');
+const isLightRAG = computed(() => store.database?.kb_type?.toLowerCase() === "lightrag");
 const refreshing = computed(() => store.state.refrashing);
 const lock = computed(() => store.state.lock);
 const batchDeleting = computed(() => store.state.batchDeleting);
@@ -205,7 +196,7 @@ const batchRechunking = ref(false);
 const autoRefresh = computed(() => store.state.autoRefresh);
 const selectedRowKeys = computed({
   get: () => store.selectedRowKeys,
-  set: (keys) => store.selectedRowKeys = keys,
+  set: (keys) => (store.selectedRowKeys = keys),
 });
 
 // 重新分块参数配置相关
@@ -216,54 +207,54 @@ const rechunkParams = ref({
   chunk_size: 1000,
   chunk_overlap: 200,
   use_qa_split: false,
-  qa_separator: '\n\n\n'
+  qa_separator: "\n\n\n",
 });
 const currentRechunkFileIds = ref([]);
 const isBatchRechunk = ref(false);
 
 // 文件名过滤
-const filenameFilter = ref('');
+const filenameFilter = ref("");
 
 // 紧凑表格列定义
 const columnsCompact = [
   {
-    title: '文件名',
-    dataIndex: 'filename',
-    key: 'filename',
+    title: "文件名",
+    dataIndex: "filename",
+    key: "filename",
     ellipsis: true,
     width: undefined, // 不设置宽度，让它占据剩余空间
-    sorter: (a, b) => (a.filename || '').localeCompare(b.filename || ''),
-    sortDirections: ['ascend', 'descend']
+    sorter: (a, b) => (a.filename || "").localeCompare(b.filename || ""),
+    sortDirections: ["ascend", "descend"],
   },
   {
-    title: '时间',
-    dataIndex: 'created_at',
-    key: 'created_at',
+    title: "时间",
+    dataIndex: "created_at",
+    key: "created_at",
     width: 120,
-    align: 'right',
+    align: "right",
     sorter: (a, b) => {
-      const timeA = parseToShanghai(a.created_at)
-      const timeB = parseToShanghai(b.created_at)
-      if (!timeA && !timeB) return 0
-      if (!timeA) return 1
-      if (!timeB) return -1
-      return timeA.valueOf() - timeB.valueOf()
+      const timeA = parseToShanghai(a.created_at);
+      const timeB = parseToShanghai(b.created_at);
+      if (!timeA && !timeB) return 0;
+      if (!timeA) return 1;
+      if (!timeB) return -1;
+      return timeA.valueOf() - timeB.valueOf();
     },
-    sortDirections: ['ascend', 'descend']
+    sortDirections: ["ascend", "descend"],
   },
   {
-    title: '状态',
-    dataIndex: 'status',
-    key: 'status',
+    title: "状态",
+    dataIndex: "status",
+    key: "status",
     width: 60,
-    align: 'right',
+    align: "right",
     sorter: (a, b) => {
-      const statusOrder = { 'done': 1, 'processing': 2, 'waiting': 3, 'failed': 4 };
+      const statusOrder = { done: 1, processing: 2, waiting: 3, failed: 4 };
       return (statusOrder[a.status] || 5) - (statusOrder[b.status] || 5);
     },
-    sortDirections: ['ascend', 'descend']
+    sortDirections: ["ascend", "descend"],
   },
-  { title: '', key: 'action', dataIndex: 'file_id', width: 40, align: 'center' }
+  { title: "", key: "action", dataIndex: "file_id", width: 40, align: "center" },
 ];
 
 // 过滤后的文件列表
@@ -273,9 +264,7 @@ const filteredFiles = computed(() => {
   // 应用文件名过滤
   if (filenameFilter.value.trim()) {
     const filterText = filenameFilter.value.toLowerCase().trim();
-    filtered = files.value.filter(file =>
-      file.filename && file.filename.toLowerCase().includes(filterText)
-    );
+    filtered = files.value.filter((file) => file.filename?.toLowerCase().includes(filterText));
   }
 
   return filtered;
@@ -283,7 +272,7 @@ const filteredFiles = computed(() => {
 
 // 空状态文本
 const emptyText = computed(() => {
-  return filenameFilter.value ? `没有找到包含"${filenameFilter.value}"的文件` : '暂无文件';
+  return filenameFilter.value ? `没有找到包含"${filenameFilter.value}"的文件` : "暂无文件";
 });
 
 // 紧凑分页配置
@@ -293,7 +282,7 @@ const paginationCompact = ref({
   total: 0,
   showSizeChanger: false,
   showTotal: (total) => `${total}`,
-  size: 'small',
+  size: "small",
   showQuickJumper: false,
   onChange: (page, pageSize) => {
     paginationCompact.value.current = page;
@@ -303,28 +292,32 @@ const paginationCompact = ref({
 });
 
 // 监听过滤后的文件列表变化，更新分页总数
-watch(filteredFiles, (newFiles) => {
-  paginationCompact.value.total = newFiles.length;
-}, { immediate: true });
+watch(
+  filteredFiles,
+  (newFiles) => {
+    paginationCompact.value.total = newFiles.length;
+  },
+  { immediate: true },
+);
 
 // 计算是否可以批量删除
 const canBatchDelete = computed(() => {
-  return selectedRowKeys.value.some(key => {
-    const file = filteredFiles.value.find(f => f.file_id === key);
-    return file && !(lock.value || file.status === 'processing' || file.status === 'waiting');
+  return selectedRowKeys.value.some((key) => {
+    const file = filteredFiles.value.find((f) => f.file_id === key);
+    return file && !(lock.value || file.status === "processing" || file.status === "waiting");
   });
 });
 
 // 计算是否可以批量重新分块
 const canBatchRechunk = computed(() => {
-  return selectedRowKeys.value.some(key => {
-    const file = filteredFiles.value.find(f => f.file_id === key);
-    return file && !(lock.value || file.status === 'processing' || file.status === 'waiting');
+  return selectedRowKeys.value.some((key) => {
+    const file = filteredFiles.value.find((f) => f.file_id === key);
+    return file && !(lock.value || file.status === "processing" || file.status === "waiting");
   });
 });
 
 const showAddFilesModal = () => {
-  emit('showAddFilesModal');
+  emit("showAddFilesModal");
 };
 
 const handleRefresh = () => {
@@ -337,7 +330,7 @@ const toggleAutoRefresh = () => {
 
 const toggleRightPanel = () => {
   console.log(props.rightPanelVisible);
-  emit('toggleRightPanel');
+  emit("toggleRightPanel");
 };
 
 const onSelectChange = (keys) => {
@@ -345,7 +338,7 @@ const onSelectChange = (keys) => {
 };
 
 const getCheckboxProps = (record) => ({
-  disabled: lock.value || record.status === 'processing' || record.status === 'waiting',
+  disabled: lock.value || record.status === "processing" || record.status === "waiting",
 });
 
 const onFilterChange = (e) => {
@@ -358,18 +351,18 @@ const handleDeleteFile = (fileId) => {
 
 const handleBatchDelete = () => {
   store.handleBatchDelete();
-}
+};
 
 const handleBatchRechunk = async () => {
   const dbId = store.databaseId;
   if (!dbId) {
-    console.error('无法获取数据库ID，数据库ID:', store.databaseId);
-    message.error('无法获取数据库ID，请刷新页面后重试');
+    console.error("无法获取数据库ID，数据库ID:", store.databaseId);
+    message.error("无法获取数据库ID，请刷新页面后重试");
     return;
   }
 
   if (selectedRowKeys.value.length === 0) {
-    message.warning('请选择要重新分块的文件');
+    message.warning("请选择要重新分块的文件");
     return;
   }
 
@@ -381,8 +374,8 @@ const handleBatchRechunk = async () => {
     // 显示参数配置模态框
     rechunkModalVisible.value = true;
   } catch (error) {
-    console.error('批量重新分块操作出错:', error);
-    message.error('操作失败，请稍后重试');
+    console.error("批量重新分块操作出错:", error);
+    message.error("操作失败，请稍后重试");
   }
 };
 
@@ -392,25 +385,25 @@ const selectAllFailedFiles = () => {
 };
 
 const openFileDetail = (record) => {
-  console.log('openFileDetail', record);
+  console.log("openFileDetail", record);
   store.openFileDetail(record);
 };
 
 const handleDownloadFile = async (record) => {
   const dbId = store.databaseId;
   if (!dbId) {
-    console.error('无法获取数据库ID，数据库ID:', store.databaseId, '记录:', record);
-    message.error('无法获取数据库ID，请刷新页面后重试');
+    console.error("无法获取数据库ID，数据库ID:", store.databaseId, "记录:", record);
+    message.error("无法获取数据库ID，请刷新页面后重试");
     return;
   }
 
-  console.log('开始下载文件:', { dbId, fileId: record.file_id, record });
+  console.log("开始下载文件:", { dbId, fileId: record.file_id, record });
 
   try {
     const response = await documentApi.downloadDocument(dbId, record.file_id);
 
     // 获取文件名
-    const contentDisposition = response.headers.get('content-disposition');
+    const contentDisposition = response.headers.get("content-disposition");
     let filename = record.filename;
     if (contentDisposition) {
       // 首先尝试匹配RFC 2231格式 filename*=UTF-8''...
@@ -419,18 +412,18 @@ const handleDownloadFile = async (record) => {
         try {
           filename = decodeURIComponent(rfc2231Match[1]);
         } catch (error) {
-          console.warn('Failed to decode RFC2231 filename:', rfc2231Match[1], error);
+          console.warn("Failed to decode RFC2231 filename:", rfc2231Match[1], error);
         }
       } else {
         // 回退到标准格式 filename="..."
         const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-        if (filenameMatch && filenameMatch[1]) {
-          filename = filenameMatch[1].replace(/['"]/g, '');
+        if (filenameMatch?.[1]) {
+          filename = filenameMatch[1].replace(/['"]/g, "");
           // 解码URL编码的文件名
           try {
             filename = decodeURIComponent(filename);
           } catch (error) {
-            console.warn('Failed to decode filename:', filename, error);
+            console.warn("Failed to decode filename:", filename, error);
             // 如果解码失败，使用原文件名
           }
         }
@@ -440,17 +433,17 @@ const handleDownloadFile = async (record) => {
     // 创建blob并下载
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
     link.download = filename;
-    link.style.display = 'none';
+    link.style.display = "none";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
   } catch (error) {
-    console.error('下载文件时出错:', error);
-    const errorMessage = error.message || '下载失败，请稍后重试';
+    console.error("下载文件时出错:", error);
+    const errorMessage = error.message || "下载失败，请稍后重试";
     message.error(errorMessage);
   }
 };
@@ -463,15 +456,15 @@ const handleRechunkFile = async (record) => {
 
     if (record?.processing_params) {
       rechunkParams.value = {
-        ...record?.processing_params
+        ...record?.processing_params,
       };
     }
 
     // 显示参数配置模态框
     rechunkModalVisible.value = true;
   } catch (error) {
-    console.error('重新分块操作出错:', error);
-    message.error('操作失败，请稍后重试');
+    console.error("重新分块操作出错:", error);
+    message.error("操作失败，请稍后重试");
   }
 };
 
@@ -479,7 +472,10 @@ const handleRechunkFile = async (record) => {
 const handleRechunkConfirm = async () => {
   try {
     // 调用 rechunks 接口
-    const result = await store.rechunksFiles({fileIds: currentRechunkFileIds.value, params: rechunkParams.value});
+    const result = await store.rechunksFiles({
+      fileIds: currentRechunkFileIds.value,
+      params: rechunkParams.value,
+    });
     if (result) {
       currentRechunkFileIds.value = [];
       // 清空选择
@@ -494,14 +490,14 @@ const handleRechunkConfirm = async () => {
         chunk_size: 1000,
         chunk_overlap: 200,
         use_qa_split: false,
-        qa_separator: '\n\n\n'
+        qa_separator: "\n\n\n",
       };
     } else {
       message.error(`重新分块失败: ${result.message}`);
     }
   } catch (error) {
-    console.error('重新分块失败:', error);
-    const errorMessage = error.message || '重新分块失败，请稍后重试';
+    console.error("重新分块失败:", error);
+    const errorMessage = error.message || "重新分块失败，请稍后重试";
     message.error(errorMessage);
   }
 };
@@ -517,14 +513,14 @@ const handleRechunkCancel = () => {
     chunk_size: 1000,
     chunk_overlap: 200,
     use_qa_split: false,
-    qa_separator: '\n\n\n'
+    qa_separator: "\n\n\n",
   };
 };
 
+import ChunkParamsConfig from "@/components/ChunkParamsConfig.vue";
 // 导入工具函数
-import { getFileIcon, getFileIconColor, formatRelativeTime } from '@/utils/file_utils';
-import { parseToShanghai } from '@/utils/time';
-import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue';
+import { formatRelativeTime, getFileIcon, getFileIconColor } from "@/utils/file_utils";
+import { parseToShanghai } from "@/utils/time";
 </script>
 
 <style scoped>

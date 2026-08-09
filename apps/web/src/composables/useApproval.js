@@ -1,30 +1,30 @@
-import { reactive } from 'vue';
-import { message } from 'ant-design-vue';
-import { handleChatError } from '@/utils/errorHandler';
-import { agentApi } from '@/apis';
+import { message } from "ant-design-vue";
+import { reactive } from "vue";
+import { agentApi } from "@/apis";
+import { handleChatError } from "@/utils/errorHandler";
 
 export function useApproval({ getThreadState, resetOnGoingConv, fetchThreadMessages }) {
   // 审批状态
   const approvalState = reactive({
     showModal: false,
-    question: '',
-    operation: '',
+    question: "",
+    operation: "",
     threadId: null,
-    interruptInfo: null
+    interruptInfo: null,
   });
 
   // 处理审批逻辑
   const handleApproval = async (approved, currentAgentId) => {
     const threadId = approvalState.threadId;
     if (!threadId) {
-      message.error('无效的审批请求');
+      message.error("无效的审批请求");
       approvalState.showModal = false;
       return;
     }
 
     const threadState = getThreadState(threadId);
     if (!threadState) {
-      message.error('无法找到对应的对话线程');
+      message.error("无法找到对应的对话线程");
       approvalState.showModal = false;
       return;
     }
@@ -43,7 +43,7 @@ export function useApproval({ getThreadState, resetOnGoingConv, fetchThreadMessa
     resetOnGoingConv(threadId);
     threadState.streamAbortController = new AbortController();
 
-    console.log('🔄 [APPROVAL] Starting resume process:', { approved, threadId, currentAgentId });
+    console.log("🔄 [APPROVAL] Starting resume process:", { approved, threadId, currentAgentId });
 
     try {
       // 调用恢复接口
@@ -51,29 +51,28 @@ export function useApproval({ getThreadState, resetOnGoingConv, fetchThreadMessa
         currentAgentId,
         {
           thread_id: threadId,
-          approved: approved
+          approved: approved,
         },
         {
-          signal: threadState.streamAbortController?.signal
-        }
+          signal: threadState.streamAbortController?.signal,
+        },
       );
 
-      console.log('🔄 [APPROVAL] Resume API response received');
+      console.log("🔄 [APPROVAL] Resume API response received");
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Resume API error:', response.status, errorText);
+        console.error("Resume API error:", response.status, errorText);
         throw new Error(`HTTP error! status: ${response.status}, details: ${errorText}`);
       }
 
-      console.log('🔄 [APPROVAL] Resume API successful, returning response for stream processing');
+      console.log("🔄 [APPROVAL] Resume API successful, returning response for stream processing");
       return response; // 返回响应供调用方处理流式数据
-
     } catch (error) {
-      console.error('❌ [APPROVAL] Resume failed:', error);
-      if (error.name !== 'AbortError') {
-        handleChatError(error, 'resume');
-        message.error(`恢复对话失败: ${error.message || '未知错误'}`);
+      console.error("❌ [APPROVAL] Resume failed:", error);
+      if (error.name !== "AbortError") {
+        handleChatError(error, "resume");
+        message.error(`恢复对话失败: ${error.message || "未知错误"}`);
       }
       // 重置状态 - 只在错误时重置
       threadState.isStreaming = false;
@@ -85,7 +84,7 @@ export function useApproval({ getThreadState, resetOnGoingConv, fetchThreadMessa
 
   // 在流式处理中处理审批请求
   const processApprovalInStream = (chunk, threadId, currentAgentId) => {
-    if (chunk.status !== 'human_approval_required') {
+    if (chunk.status !== "human_approval_required") {
       return false;
     }
 
@@ -99,8 +98,8 @@ export function useApproval({ getThreadState, resetOnGoingConv, fetchThreadMessa
 
     // 显示审批弹窗
     approvalState.showModal = true;
-    approvalState.question = interrupt_info?.question || '是否批准以下操作？';
-    approvalState.operation = interrupt_info?.operation || '未知操作';
+    approvalState.question = interrupt_info?.question || "是否批准以下操作？";
+    approvalState.operation = interrupt_info?.operation || "未知操作";
     approvalState.threadId = chunk.thread_id || threadId;
     approvalState.interruptInfo = interrupt_info;
 
@@ -113,8 +112,8 @@ export function useApproval({ getThreadState, resetOnGoingConv, fetchThreadMessa
   // 重置审批状态
   const resetApprovalState = () => {
     approvalState.showModal = false;
-    approvalState.question = '';
-    approvalState.operation = '';
+    approvalState.question = "";
+    approvalState.operation = "";
     approvalState.threadId = null;
     approvalState.interruptInfo = null;
   };
@@ -123,6 +122,6 @@ export function useApproval({ getThreadState, resetOnGoingConv, fetchThreadMessa
     approvalState,
     handleApproval,
     processApprovalInStream,
-    resetApprovalState
+    resetApprovalState,
   };
 }

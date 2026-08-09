@@ -8,7 +8,7 @@
 </template>
 
 <script setup>
-import { CircleCheck } from 'lucide-vue-next'
+import { CircleCheck } from "lucide-vue-next";
 </script>
 
 <style lang="less" scoped>

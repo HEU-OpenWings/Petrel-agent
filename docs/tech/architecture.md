@@ -113,8 +113,8 @@ app.route("/api/admin", admin);
 - 斜杠命令：机制在 `composables/useCommandPalette.js`，命令在
   `views/ChatView.vue` 注册（`/new` `/compact` `/context` `/workspace` `/sidebar`）。
 
-`apps/web` 目前**没有 typecheck，`pnpm run lint` 也不可用**（v0.4 遗留：eslint 9
-只认 `eslint.config.js`，仓库里是旧格式 `.eslintrc.cjs`）。Biome 配置里排除了它。
+`apps/web` 已从 v0.4 的 ESLint 迁移到 Biome，`pnpm run lint` 统一覆盖全仓（含前端）。
+前端目前仍为 JS 无 typecheck，但不影响 lint 运行。
 
 ### packages/agent
 
@@ -125,10 +125,16 @@ app.route("/api/admin", admin);
   `createPgSession()` 给生产用，`createMemorySession()` 给降级与测试用。
 - `compaction.ts` — 上下文压缩策略，见 [context-compaction.md](context-compaction.md)。
 - `tools/` — 内置工具，目前只有 `current-time`。
+- `models/` — 模型 provider 注册，见下。
 
-### packages/ai
+#### models/
 
-模型 provider 注册。DeepSeek 官方与 SiliconFlow 都不在 pi 内置 provider 里，
+- `providers.ts` — provider 与 `Model` 定义（四家手写 + 七家 pi 内置），
+  导出注册顺序固定的 `PROVIDERS`。**加模型只改这里。**
+- `index.ts` — 注册表装配与查询 API：`models`、`defaultModel()`、`findModel()`、
+  `listModels()`、`listConfiguredModels()`、`ModelSummary`。
+
+DeepSeek 官方与 SiliconFlow 都不在 pi 内置 provider 里，
 用 `createProvider` 自行注册：
 
 | 模型 id | provider | 传输 | 窗口 | 备注 |

@@ -1,6 +1,8 @@
+import { createUserRepository } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";
+import { __resetAuthRateLimits } from "./auth.ts";
 
 /** state 用 vi.hoisted：vi.mock 会被提升到 import 之上，工厂里不能引用普通顶层变量 */
 const state = vi.hoisted(() => ({ db: undefined as TestDb | undefined }));
@@ -28,6 +30,7 @@ beforeAll(async () => {
 // process.env。用例后清理，避免污染同进程其他测试文件（与 models.test.ts 同口径）。
 beforeEach(() => {
   vi.stubEnv("DEEPSEEK_API_KEY", "test-stub");
+  __resetAuthRateLimits();
   return reset();
 });
 
@@ -38,14 +41,22 @@ afterEach(() => {
 // beforeAll 超时时 close 还没赋值，可选调用避免 afterAll 抛错盖住真正的超时报错
 afterAll(() => close?.());
 
-/** 注册一个用户并返回它的 cookie（同 admin.test.ts 的 registerUser） */
+/** 注册一个用户并返回它的 cookie（验证流程本身在 routes/auth.test.ts 覆盖，这里直接置为已验证再登录） */
 async function registerUser(email: string): Promise<string> {
   const response = await app.request("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password: "hunter2hunter2" }),
   });
-  return (response.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+  const body = (await response.json()) as { user: { id: string } };
+  // biome-ignore lint/style/noNonNullAssertion: test db is always initialized in setup
+  await createUserRepository(state.db!).setEmailVerified(body.user.id, new Date());
+  const login = await app.request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hunter2hunter2" }),
+  });
+  return (login.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
 }
 
 function getPreferences(cookie: string) {
@@ -79,6 +90,7 @@ function login(email: string, password: string) {
 /** 取一个真实的模型 id。白名单校验要求它必须是注册过的，不能随便编一个 */
 async function firstModelId(cookie: string): Promise<string> {
   const body = (await (await getPreferences(cookie)).json()) as { models: { id: string }[] };
+  // biome-ignore lint/style/noNonNullAssertion: 模型注册表非空，白名单校验依赖这一点
   return body.models[0]!.id;
 }
 
@@ -302,5 +314,48 @@ describe("POST /api/account/password", () => {
     const cookie = await registerUser(email);
 
     expect((await changePassword(body, cookie)).status).toBe(400);
+  });
+
+  // 验收：A 设备登录拿到 token → B 设备改密码 → A 的下一个请求返回 401
+  it("改密码后其他设备的旧 cookie 立即失效（tokenVersion）", async () => {
+    const deviceA = await registerUser("pw-tv@x.io");
+    const deviceB = await app.request("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "pw-tv@x.io", password: OLD }),
+    });
+    const cookieB = (deviceB.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+
+    // B 设备改密码成功（当前会话重新签发，不掉线）
+    const change = await changePassword({ currentPassword: OLD, newPassword: NEW }, cookieB);
+    expect(change.status).toBe(200);
+    const newCookieB = (change.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+
+    // A 设备的下一个请求必须 401
+    const stale = await getPreferences(deviceA);
+    expect(stale.status).toBe(401);
+    // B 设备重签的新 cookie 仍然有效
+    expect((await getPreferences(newCookieB)).status).toBe(200);
+  });
+});
+
+describe("POST /api/account/logout-all", () => {
+  it("退出所有设备后旧 cookie 失效，响应清掉当前 cookie", async () => {
+    const cookie = await registerUser("logout-all@x.io");
+
+    const response = await app.request("/api/account/logout-all", {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Set-Cookie")).toContain("Max-Age=0");
+    expect((await getPreferences(cookie)).status).toBe(401);
+  });
+
+  it("未登录返回 401", async () => {
+    const response = await app.request("/api/account/logout-all", { method: "POST" });
+
+    expect(response.status).toBe(401);
   });
 });

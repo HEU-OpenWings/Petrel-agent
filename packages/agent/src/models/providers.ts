@@ -1,4 +1,4 @@
-import { type Api, createModels, createProvider, envApiKeyAuth, type Model } from "@earendil-works/pi-ai";
+import { createProvider, envApiKeyAuth, type Model } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
@@ -165,114 +165,112 @@ const BUILTIN_PROVIDERS = [
   qwenTokenPlanProvider(),
 ];
 
-export const models = createModels();
-models.setProvider(deepseek);
-models.setProvider(siliconflow);
-for (const provider of BUILTIN_PROVIDERS) {
-  models.setProvider(provider);
-}
-models.setProvider(ollama);
-models.setProvider(vllm);
-
-export function defaultModel(): Model<"openai-responses"> {
-  const model = models.getModel(DEFAULT_PROVIDER_ID, DEFAULT_MODEL_ID);
-  if (!model) throw new Error(`模型未注册：${DEFAULT_MODEL_ID}`);
-  return model as Model<"openai-responses">;
-}
-
-/** 给 HTTP 响应用的模型摘要。不含 baseUrl / cost / 内部开关 */
-export interface ModelSummary {
-  id: string;
-  name: string;
-  provider: string;
-  providerName: string;
-  /** 偏好为 null（跟随系统默认）时，前端靠这个知道实际用的是哪个 */
-  isDefault: boolean;
-}
+/** 注册顺序即 listModels() 的输出顺序（自建云端 → pi 内置 → 本地推理） */
+export const PROVIDERS = [deepseek, siliconflow, ...BUILTIN_PROVIDERS, ollama, vllm];
 
 /**
- * 从 models 注册表派生，不另存一份清单。
+ * 面向展示的 provider 凭据元数据：每个 provider「认哪些环境变量」+「用户该怎么填」。
  *
- * 早先的写法是手抄一个 { model, providerName } 数组，但那样往 provider 的
- * models: [...] 里加模型时必须记得同步两处，漏了就是「模型能跑但前端选不到」，
- * 且类型检查与测试都拦不住。providerName 也不必再抄一遍字面量——
- * Provider 自己就带 name。
+ * 为什么需要这份 side table：envApiKeyAuth(...) 把 env var 名以**闭包**形式塞进了
+ * pi-ai 的 resolve() 内部（auth/helpers.js），Provider / ApiKeyAuth 的公开类型都不暴露
+ * envVars 字段——也就是说**无法从运行时 Provider 对象反射出「它认哪个 env 变量」**。
+ * checkAuth().source 只在「已配置」时给到当前命中的那一个变量名，未配置时是 undefined，
+ * 既列不全、也覆盖不了「未配置 provider 该填哪个变量」这个 HEU-53 的核心需求。
+ *
+ * 所以这份清单是当前代码事实的同源副本：手写 provider（deepseek/siliconflow/ollama/vllm）
+ * 与上面 envApiKeyAuth([...]) 的实参对齐；内置 provider 与 pi-ai 0.83 的
+ * dist/providers/<name>.js 核对过。新增 provider 或改 env var 时**必须同步改这里**，
+ * provider-status.test.ts 的 hint parity 用例会守着「side table 的 key 集合 == 运行时
+ * getProviders() 的 id 集合」与「每个声明的 env var 真能让 checkAuth 判为已配置」。
  */
-export function listModels(): ModelSummary[] {
-  return models.getProviders().flatMap((provider) =>
-    provider.getModels().map((model) => ({
-      id: model.id,
-      name: model.name,
-      provider: provider.id,
-      providerName: provider.name,
-      // 必须同时判 provider：聚合型平台（如 qwen-token-plan / openrouter）会代售
-      // DeepSeek、Kimi 等他厂模型，model id 与原厂重名。只判 id 会把多个 provider
-      // 的同名模型都标成默认，破坏「恰好一个 isDefault」的不变式
-      isDefault: provider.id === DEFAULT_PROVIDER_ID && model.id === DEFAULT_MODEL_ID,
-    })),
-  );
+export interface ProviderCredentialHint {
+  /** 该 provider 接受的环境变量名。本地推理服务也可能非空（见 ollama/vllm）。 */
+  readonly envVars: readonly string[];
+  /** 面向用户的填写指引，纯文本，不含运行时 baseUrl / key / 异常细节。 */
+  readonly note: string;
 }
 
-/**
- * 按 model id 查。偏好里只存一个字符串，不区分 provider——因此遇到聚合平台
- * 代售的同名模型时，**默认 provider 优先**：例如 "deepseek-v4-flash" 同时存在于
- * deepseek 官方与 qwen-token-plan，查出来的是官方那条。
- *
- * 这是既有契约（偏好只存 id）下的取舍：用户若想用 qwen 平台的 deepseek-v4-flash，
- * 在 model id 唯一性假设下无法表达——那需要把偏好改成 (provider, id) 二元键，
- * 超出 HEU-9 范围。本函数至少保证默认场景无歧义。
- */
-export function findModel(id: string): Model<Api> | undefined {
-  const all = models.getModels();
-  // 默认 provider 的同名模型优先；没有再回退到第一个匹配
-  return (
-    all.find((model) => model.id === id && model.provider === DEFAULT_PROVIDER_ID) ??
-    all.find((model) => model.id === id)
-  );
-}
-
-/**
- * 只列**已配置**（API key 可解析）的 provider 的模型，供前端模型选择器。
- *
- * 与 listModels() 的区别：listModels 列全部注册模型（用于「model id 是否合法」的
- * 白名单校验——语义是「是否注册」，而不是「是否配了 key」）；本函数只返回
- * getAuth() 能解析出凭据的 provider，没配 key 的厂商不会出现在下拉里，避免
- * 「选了 OpenAI 但没配 key，一发消息就报错」。
- *
- * 注册了多家本地/云 provider 但只配了 DeepSeek 时，前端只看到 DeepSeek 一项。
- * pi 的 getAuth 是 async（要读 env / 凭据存储 / 可能刷新 OAuth），所以这里也是 async。
- *
- * **重名去重**：聚合平台（qwen-token-plan / openrouter 等）会代售他厂同名模型
- * （如 kimi-k2.6 同时挂在 moonshotai 与 qwen-token-plan 下），而偏好里只存 model id、
- * 运行时由 `findModel(id)` 解析——后者按「默认 provider 优先」挑一条，挑中的未必是
- * 选择器里展示的那条。若不去重，用户在只有 QWEN key 时选中 `kimi-k2.6`，
- * `findModel` 却解析到没配 key 的 moonshotai 那条，运行即报错。
- *
- * 因此这里对每个 model id 只保留 `findModel` 真正会解析到的那一条 provider，
- * 保证不变式：**选择器里的每个 id，findModel 解析出的 provider 等于摘要里的 provider**。
- * 非默认 provider 上的重名条目被跳过——想用它们需要先把偏好键改成 (provider, id) 二元，
- * 超出 HEU-9 范围。
- */
-export async function listConfiguredModels(): Promise<ModelSummary[]> {
-  // 用 pi-ai 的 getAvailable()：它并行解析所有 provider 的 auth、尊重 provider.filterModels
-  // 钩子（按实际凭据收窄目录，如 github-copilot），比手写串行 for-await 11 个 provider 更快、
-  // 更不易漏。getAvailable 只返回 auth 配置完整的 provider 的 Model[]（不含 providerName，
-  // 这里从 models.getProvider 反查补上）。
-  const available = await models.getAvailable();
-  const summaries: ModelSummary[] = [];
-  for (const model of available) {
-    // 重名去重：只暴露 findModel 会解析到的那一条，保证选择器与运行时解析一致
-    const resolved = findModel(model.id);
-    if (resolved && resolved.provider !== model.provider) continue;
-    const provider = models.getProvider(model.provider);
-    summaries.push({
-      id: model.id,
-      name: model.name,
-      provider: model.provider,
-      providerName: provider?.name ?? model.provider,
-      // 与 listModels() 同口径：聚合平台代售同名模型时，只有默认 provider 那条算默认
-      isDefault: model.provider === DEFAULT_PROVIDER_ID && model.id === DEFAULT_MODEL_ID,
-    });
-  }
-  return summaries;
-}
+export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHint> = new Map([
+  [
+    "deepseek",
+    {
+      envVars: ["DEEPSEEK_API_KEY"],
+      note: "DeepSeek 官方 API key，在 https://platform.deepseek.com 获取",
+    },
+  ],
+  [
+    "siliconflow",
+    {
+      envVars: ["SILICONFLOW_API_KEY"],
+      note: "硅基流动 API key，在 https://siliconflow.cn 获取",
+    },
+  ],
+  [
+    "openai",
+    {
+      envVars: ["OPENAI_API_KEY"],
+      note: "OpenAI API key，在 https://platform.openai.com/api-keys 获取",
+    },
+  ],
+  // anthropic 走 pi-ai 自定义的 anthropicApiKeyAuth，依次尝试三个变量，填任意一个均可
+  [
+    "anthropic",
+    {
+      envVars: ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+      note: "Anthropic key（依次尝试 ANTHROPIC_AUTH_TOKEN、ANTHROPIC_OAUTH_TOKEN、ANTHROPIC_API_KEY，填任意一个均可）",
+    },
+  ],
+  [
+    "google",
+    {
+      envVars: ["GEMINI_API_KEY"],
+      note: "Google AI / Gemini API key，在 https://aistudio.google.com/apikey 获取",
+    },
+  ],
+  [
+    "moonshotai",
+    {
+      envVars: ["MOONSHOT_API_KEY"],
+      note: "Moonshot / Kimi API key，在 https://platform.moonshot.cn 获取",
+    },
+  ],
+  [
+    "minimax",
+    {
+      envVars: ["MINIMAX_API_KEY"],
+      note: "MiniMax API key，在 https://platform.minimaxi.com 获取",
+    },
+  ],
+  [
+    "zai",
+    {
+      envVars: ["ZAI_API_KEY"],
+      note: "智谱 Z.AI API key，在 https://z.ai/manage-apikey 获取",
+    },
+  ],
+  [
+    "qwen-token-plan",
+    {
+      envVars: ["QWEN_TOKEN_PLAN_API_KEY"],
+      note: "阿里 Qwen Token Plan API key，在 https://bailian.console.aliyun.com 获取",
+    },
+  ],
+  // ollama/vllm：本地推理服务。注意当前注册走 envApiKeyAuth(["OLLAMA_API_KEY"])，
+  // 空 key 时 checkAuth() 判「未配置」——所以「通常无需 key」与「填任意非空占位值即可
+  // 让面板识别为已配置」要如实说明，不能简单写「留空」。真正的 keyless auth 行为
+  // （空值也判已配置）是另一回事，需要改 auth 解析，超出 HEU-53 范围。
+  [
+    "ollama",
+    {
+      envVars: ["OLLAMA_API_KEY"],
+      note: "本地推理服务。请确认已启动 Ollama（默认 http://localhost:11434）并 ollama pull 模型。当前运行时需设置非空的 OLLAMA_API_KEY 才会识别为已配置（可填任意占位值）",
+    },
+  ],
+  [
+    "vllm",
+    {
+      envVars: ["VLLM_API_KEY"],
+      note: "本地推理服务。通过 VLLM_BASE_URL 指定服务地址（默认 http://localhost:8000/v1）。当前运行时需设置非空的 VLLM_API_KEY 才会识别为已配置（可填任意占位值）",
+    },
+  ],
+]);

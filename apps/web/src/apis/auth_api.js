@@ -4,7 +4,7 @@
  * 走 apis/http.js 而不是 v0.4 遗留的 base.js：token 在 httpOnly cookie 里，
  * 同源请求浏览器会自动带上，前端不需要也拿不到它。
  */
-import { get, post } from '@/apis/http'
+import { get, post } from "@/apis/http";
 
 /**
  * treatUnauthorizedAsRequestError：登录/注册失败后端返 401（凭据错误、账号被禁用），
@@ -13,12 +13,16 @@ import { get, post } from '@/apis/http'
  * /login?redirect=/login（之后即使密码输对也会在守卫里打转）。
  */
 export const registerApi = (email, password) =>
-  post('/api/auth/register', { email, password }, { treatUnauthorizedAsRequestError: true })
+  post("/api/auth/register", { email, password }, { treatUnauthorizedAsRequestError: true });
 
 export const loginApi = (email, password) =>
-  post('/api/auth/login', { email, password }, { treatUnauthorizedAsRequestError: true })
+  post("/api/auth/login", { email, password }, { treatUnauthorizedAsRequestError: true });
 
-export const logoutApi = () => post('/api/auth/logout', {})
+/** 未验证登录被拒（403）后重发验证邮件；恒 200 防枚举，按邮箱限流 */
+export const resendVerificationApi = (email) =>
+  post("/api/auth/resend-verification", { email }, { treatUnauthorizedAsRequestError: true });
+
+export const logoutApi = () => post("/api/auth/logout", {});
 
 /** skipUnauthorizedHandler：未登录时的 401 是预期结果，见 http.js 的 handleUnauthorized */
-export const meApi = () => get('/api/auth/me', { skipUnauthorizedHandler: true })
+export const meApi = () => get("/api/auth/me", { skipUnauthorizedHandler: true });

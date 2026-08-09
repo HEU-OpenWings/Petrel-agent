@@ -1,11 +1,9 @@
-import { apiGet, apiPost, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
+import { apiAdminDelete, apiAdminGet, apiAdminPost, apiAdminPut, apiGet, apiPost } from "./base";
 
 /**
  * 系统管理API模块
  * 包含系统配置、健康检查、信息管理等功能
  */
-
-
 
 // =============================================================================
 // === 健康检查分组 ===
@@ -16,14 +14,14 @@ export const healthApi = {
    * 系统健康检查（公开接口）
    * @returns {Promise} - 健康检查结果
    */
-  checkHealth: () => apiGet('/api/system/health', {}, false),
+  checkHealth: () => apiGet("/api/system/health", {}, false),
 
   /**
    * OCR服务健康检查
    * @returns {Promise} - OCR服务健康状态
    */
-  checkOcrHealth: async () => apiAdminGet('/api/system/health/ocr')
-}
+  checkOcrHealth: async () => apiAdminGet("/api/system/health/ocr"),
+};
 
 // =============================================================================
 // === 配置管理分组 ===
@@ -34,7 +32,7 @@ export const configApi = {
    * 获取系统配置
    * @returns {Promise} - 系统配置
    */
-  getConfig: async () =>  apiAdminGet('/api/system/config'),
+  getConfig: async () => apiAdminGet("/api/system/config"),
 
   /**
    * 更新单个配置项
@@ -42,15 +40,14 @@ export const configApi = {
    * @param {any} value - 配置值
    * @returns {Promise} - 更新结果
    */
-  updateConfig: async (key, value) => apiAdminPost('/api/system/config', { key, value }),
+  updateConfig: async (key, value) => apiAdminPost("/api/system/config", { key, value }),
 
   /**
    * 批量更新配置项
    * @param {Object} items - 配置项对象
    * @returns {Promise} - 更新结果
    */
-  updateConfigBatch: async (items) => apiAdminPost('/api/system/config/update', items),
-
+  updateConfigBatch: async (items) => apiAdminPost("/api/system/config/update", items),
 
   /**
    * 获取系统日志
@@ -58,10 +55,10 @@ export const configApi = {
    * @returns {Promise} - 系统日志
    */
   getLogs: async (levels) => {
-    const url = levels ? `/api/system/logs?levels=${encodeURIComponent(levels)}` : '/api/system/logs';
+    const url = levels ? `/api/system/logs?levels=${encodeURIComponent(levels)}` : "/api/system/logs";
     return apiAdminGet(url);
-  }
-}
+  },
+};
 
 // =============================================================================
 // === 信息管理分组 ===
@@ -72,14 +69,14 @@ export const brandApi = {
    * 获取系统信息配置（公开接口）
    * @returns {Promise} - 系统信息配置
    */
-  getInfoConfig: () => apiGet('/api/system/info', {}, false),
+  getInfoConfig: () => apiGet("/api/system/info", {}, false),
 
   /**
    * 重新加载信息配置
    * @returns {Promise} - 重新加载结果
    */
-  reloadInfoConfig: async () =>  apiPost('/api/system/info/reload', {}, {}, false)
-}
+  reloadInfoConfig: async () => apiPost("/api/system/info/reload", {}, {}, false),
+};
 
 // =============================================================================
 // === OCR服务分组 ===
@@ -90,14 +87,14 @@ export const ocrApi = {
    * 获取OCR服务统计信息
    * @returns {Promise} - OCR统计信息
    */
-  getStats: async () => apiAdminGet('/api/system/ocr/stats'),
+  getStats: async () => apiAdminGet("/api/system/ocr/stats"),
 
   /**
    * 获取OCR服务健康状态
    * @returns {Promise} - OCR健康状态
    */
-  getHealth: async () => apiAdminGet('/api/system/ocr/health')
-}
+  getHealth: async () => apiAdminGet("/api/system/ocr/health"),
+};
 
 // =============================================================================
 // === 聊天模型状态检查分组 ===
@@ -111,7 +108,9 @@ export const chatModelApi = {
    * @returns {Promise} - 模型状态
    */
   getModelStatus: async (provider, modelName) => {
-    return apiAdminGet(`/api/system/chat-models/status?provider=${encodeURIComponent(provider)}&model_name=${encodeURIComponent(modelName)}`)
+    return apiAdminGet(
+      `/api/system/chat-models/status?provider=${encodeURIComponent(provider)}&model_name=${encodeURIComponent(modelName)}`,
+    );
   },
 
   /**
@@ -119,9 +118,9 @@ export const chatModelApi = {
    * @returns {Promise} - 所有模型状态
    */
   getAllModelsStatus: async () => {
-    return apiAdminGet('/api/system/chat-models/all/status')
-  }
-}
+    return apiAdminGet("/api/system/chat-models/all/status");
+  },
+};
 
 // =============================================================================
 // === 自定义供应商管理分组 ===
@@ -133,7 +132,7 @@ export const customProviderApi = {
    * @returns {Promise} - 自定义供应商列表
    */
   getCustomProviders: async () => {
-    return apiAdminGet('/api/system/custom-providers')
+    return apiAdminGet("/api/system/custom-providers");
   },
 
   /**
@@ -143,7 +142,10 @@ export const customProviderApi = {
    * @returns {Promise} - 添加结果
    */
   addCustomProvider: async (providerId, providerData) => {
-    return apiAdminPost('/api/system/custom-providers', { provider_id: providerId, provider_data: providerData })
+    return apiAdminPost("/api/system/custom-providers", {
+      provider_id: providerId,
+      provider_data: providerData,
+    });
   },
 
   /**
@@ -153,7 +155,7 @@ export const customProviderApi = {
    * @returns {Promise} - 更新结果
    */
   updateCustomProvider: async (providerId, providerData) => {
-    return apiAdminPut(`/api/system/custom-providers/${encodeURIComponent(providerId)}`, providerData)
+    return apiAdminPut(`/api/system/custom-providers/${encodeURIComponent(providerId)}`, providerData);
   },
 
   /**
@@ -162,7 +164,7 @@ export const customProviderApi = {
    * @returns {Promise} - 删除结果
    */
   deleteCustomProvider: async (providerId) => {
-    return apiAdminDelete(`/api/system/custom-providers/${encodeURIComponent(providerId)}`)
+    return apiAdminDelete(`/api/system/custom-providers/${encodeURIComponent(providerId)}`);
   },
 
   /**
@@ -172,9 +174,8 @@ export const customProviderApi = {
    * @returns {Promise} - 测试结果
    */
   testCustomProvider: async (providerId, modelName) => {
-    return apiAdminPost(`/api/system/custom-providers/${encodeURIComponent(providerId)}/test`, { model_name: modelName })
-  }
-}
-
-
-
+    return apiAdminPost(`/api/system/custom-providers/${encodeURIComponent(providerId)}/test`, {
+      model_name: modelName,
+    });
+  },
+};

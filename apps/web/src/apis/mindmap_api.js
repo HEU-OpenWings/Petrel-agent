@@ -1,4 +1,4 @@
-import { apiAdminGet, apiAdminPost } from './base'
+import { apiAdminGet, apiAdminPost } from "./base";
 
 /**
  * 思维导图API模块
@@ -15,7 +15,7 @@ export const mindmapApi = {
    * @returns {Promise} - 知识库列表
    */
   getDatabases: async () => {
-    return apiAdminGet('/api/mindmap/databases')
+    return apiAdminGet("/api/mindmap/databases");
   },
 
   /**
@@ -24,7 +24,7 @@ export const mindmapApi = {
    * @returns {Promise} - 文件列表
    */
   getDatabaseFiles: async (dbId) => {
-    return apiAdminGet(`/api/mindmap/databases/${dbId}/files`)
+    return apiAdminGet(`/api/mindmap/databases/${dbId}/files`);
   },
 
   /**
@@ -34,12 +34,12 @@ export const mindmapApi = {
    * @param {string} userPrompt - 用户自定义提示词
    * @returns {Promise} - 思维导图数据
    */
-  generateMindmap: async (dbId, fileIds = [], userPrompt = '') => {
-    return apiAdminPost('/api/mindmap/generate', {
+  generateMindmap: async (dbId, fileIds = [], userPrompt = "") => {
+    return apiAdminPost("/api/mindmap/generate", {
       db_id: dbId,
       file_ids: fileIds,
-      user_prompt: userPrompt
-    })
+      user_prompt: userPrompt,
+    });
   },
 
   /**
@@ -48,7 +48,6 @@ export const mindmapApi = {
    * @returns {Promise} - 思维导图数据
    */
   getByDatabase: async (dbId) => {
-    return apiAdminGet(`/api/mindmap/database/${dbId}`)
-  }
-}
-
+    return apiAdminGet(`/api/mindmap/database/${dbId}`);
+  },
+};

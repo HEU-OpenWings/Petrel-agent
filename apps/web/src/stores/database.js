@@ -1,12 +1,11 @@
+import { Modal, message } from "ant-design-vue";
+import { defineStore } from "pinia";
+import { reactive, ref } from "vue";
+import { useRouter } from "vue-router";
+import { databaseApi, documentApi, queryApi } from "@/apis/knowledge_api";
+import { useTaskerStore } from "@/stores/tasker";
 
-import { defineStore } from 'pinia';
-import { ref, reactive } from 'vue';
-import { message, Modal } from 'ant-design-vue';
-import { databaseApi, documentApi, queryApi } from '@/apis/knowledge_api';
-import { useTaskerStore } from '@/stores/tasker';
-import { useRouter } from 'vue-router';
-
-export const useDatabaseStore = defineStore('database', () => {
+export const useDatabaseStore = defineStore("database", () => {
   const router = useRouter();
   const taskerStore = useTaskerStore();
 
@@ -17,7 +16,7 @@ export const useDatabaseStore = defineStore('database', () => {
 
   const queryParams = ref([]);
   const meta = reactive({});
-    const selectedRowKeys = ref([]);
+  const selectedRowKeys = ref([]);
 
   const state = reactive({
     databaseLoading: false,
@@ -55,7 +54,7 @@ export const useDatabaseStore = defineStore('database', () => {
       }
     } catch (error) {
       console.error(error);
-      message.error(error.message || '获取数据库信息失败');
+      message.error(error.message || "获取数据库信息失败");
     } finally {
       state.lock = false;
       state.databaseLoading = false;
@@ -66,11 +65,11 @@ export const useDatabaseStore = defineStore('database', () => {
     try {
       state.lock = true;
       await databaseApi.updateDatabase(databaseId.value, formData);
-      message.success('知识库信息更新成功');
+      message.success("知识库信息更新成功");
       await getDatabaseInfo(); // Load query params after updating database info
     } catch (error) {
       console.error(error);
-      message.error(error.message || '更新失败');
+      message.error(error.message || "更新失败");
     } finally {
       state.lock = false;
     }
@@ -78,19 +77,19 @@ export const useDatabaseStore = defineStore('database', () => {
 
   function deleteDatabase() {
     Modal.confirm({
-      title: '删除数据库',
-      content: '确定要删除该数据库吗？',
-      okText: '确认',
-      cancelText: '取消',
+      title: "删除数据库",
+      content: "确定要删除该数据库吗？",
+      okText: "确认",
+      cancelText: "取消",
       onOk: async () => {
         state.lock = true;
         try {
           const data = await databaseApi.deleteDatabase(databaseId.value);
-          message.success(data.message || '删除成功');
-          router.push('/knowledge');
+          message.success(data.message || "删除成功");
+          router.push("/knowledge");
         } catch (error) {
           console.error(error);
-          message.error(error.message || '删除失败');
+          message.error(error.message || "删除失败");
         } finally {
           state.lock = false;
         }
@@ -105,7 +104,7 @@ export const useDatabaseStore = defineStore('database', () => {
       await getDatabaseInfo(undefined, true); // Skip query params for file deletion
     } catch (error) {
       console.error(error);
-      message.error(error.message || '删除失败');
+      message.error(error.message || "删除失败");
       throw error;
     } finally {
       state.lock = false;
@@ -114,31 +113,31 @@ export const useDatabaseStore = defineStore('database', () => {
 
   function handleDeleteFile(fileId) {
     Modal.confirm({
-      title: '删除文件',
-      content: '确定要删除该文件吗？',
-      okText: '确认',
-      cancelText: '取消',
+      title: "删除文件",
+      content: "确定要删除该文件吗？",
+      okText: "确认",
+      cancelText: "取消",
       onOk: () => deleteFile(fileId),
     });
   }
 
   function handleBatchDelete() {
     const files = database.value.files || {};
-    const validFileIds = selectedRowKeys.value.filter(fileId => {
+    const validFileIds = selectedRowKeys.value.filter((fileId) => {
       const file = files[fileId];
-      return file && !(file.status === 'processing' || file.status === 'waiting');
+      return file && !(file.status === "processing" || file.status === "waiting");
     });
 
     if (validFileIds.length === 0) {
-      message.info('没有可删除的文件');
+      message.info("没有可删除的文件");
       return;
     }
 
     Modal.confirm({
-      title: '批量删除文件',
+      title: "批量删除文件",
       content: `确定要删除选中的 ${validFileIds.length} 个文件吗？`,
-      okText: '确认',
-      cancelText: '取消',
+      okText: "确认",
+      cancelText: "取消",
       onOk: async () => {
         state.batchDeleting = true;
         let successCount = 0;
@@ -172,8 +171,8 @@ export const useDatabaseStore = defineStore('database', () => {
           await getDatabaseInfo(undefined, true); // Skip query params for batch deletion
         } catch (error) {
           progressMessage?.();
-          console.error('批量删除出错:', error);
-          message.error('批量删除过程中发生错误');
+          console.error("批量删除出错:", error);
+          message.error("批量删除过程中发生错误");
         } finally {
           state.batchDeleting = false;
         }
@@ -181,10 +180,10 @@ export const useDatabaseStore = defineStore('database', () => {
     });
   }
 
-  const processingStatuses = new Set(['processing', 'waiting']);
+  const processingStatuses = new Set(["processing", "waiting"]);
 
-  function enableAutoRefresh(source = 'auto') {
-    if (autoRefreshManualOverride && source === 'auto') {
+  function enableAutoRefresh(source = "auto") {
+    if (autoRefreshManualOverride && source === "auto") {
       return;
     }
 
@@ -196,8 +195,8 @@ export const useDatabaseStore = defineStore('database', () => {
       return;
     }
 
-    if (source === 'auto' && autoRefreshSource !== 'manual') {
-      autoRefreshSource = 'auto';
+    if (source === "auto" && autoRefreshSource !== "manual") {
+      autoRefreshSource = "auto";
     }
   }
 
@@ -205,8 +204,8 @@ export const useDatabaseStore = defineStore('database', () => {
     const files = Object.values(filesMap || {});
     const hasPending = files.some((file) => file && processingStatuses.has(file.status));
     if (hasPending) {
-      enableAutoRefresh('auto');
-    } else if (autoRefreshSource === 'auto' && state.autoRefresh) {
+      enableAutoRefresh("auto");
+    } else if (autoRefreshSource === "auto" && state.autoRefresh) {
       state.autoRefresh = false;
       autoRefreshSource = null;
       autoRefreshManualOverride = false;
@@ -217,39 +216,42 @@ export const useDatabaseStore = defineStore('database', () => {
 
   async function addFiles({ items, contentType, params }) {
     if (items.length === 0) {
-      message.error(contentType === 'file' ? '请先上传文件' : '请输入有效的网页链接');
+      message.error(contentType === "file" ? "请先上传文件" : "请输入有效的网页链接");
       return;
     }
 
     state.chunkLoading = true;
     try {
-      const data = await documentApi.addDocuments(databaseId.value, items, { ...params, content_type: contentType });
-      if (data.status === 'success' || data.status === 'queued') {
-        const itemType = contentType === 'file' ? '文件' : 'URL';
-        enableAutoRefresh('auto');
+      const data = await documentApi.addDocuments(databaseId.value, items, {
+        ...params,
+        content_type: contentType,
+      });
+      if (data.status === "success" || data.status === "queued") {
+        const itemType = contentType === "file" ? "文件" : "URL";
+        enableAutoRefresh("auto");
         message.success(data.message || `${itemType}已提交处理，请在任务中心查看进度`);
         if (data.task_id) {
           taskerStore.registerQueuedTask({
             task_id: data.task_id,
-            name: `知识库导入 (${databaseId.value || ''})`,
-            task_type: 'knowledge_ingest',
+            name: `知识库导入 (${databaseId.value || ""})`,
+            task_type: "knowledge_ingest",
             message: data.message,
             payload: {
               db_id: databaseId.value,
               count: items.length,
               content_type: contentType,
-            }
+            },
           });
         }
         await getDatabaseInfo(undefined, true); // Skip query params when adding files
         return true; // Indicate success
       } else {
-        message.error(data.message || '处理失败');
+        message.error(data.message || "处理失败");
         return false;
       }
     } catch (error) {
       console.error(error);
-      message.error(error.message || '处理请求失败');
+      message.error(error.message || "处理请求失败");
       return false;
     } finally {
       state.chunkLoading = false;
@@ -258,37 +260,37 @@ export const useDatabaseStore = defineStore('database', () => {
 
   async function rechunksFiles({ fileIds, params }) {
     if (fileIds.length === 0) {
-      message.error('请选择要重新分块的文件！');
+      message.error("请选择要重新分块的文件！");
       return;
     }
 
     state.chunkLoading = true;
     try {
       const data = await documentApi.rechunksDocuments(databaseId.value, fileIds, { ...params });
-      if (data.status === 'success' || data.status === 'queued') {
-        enableAutoRefresh('auto');
+      if (data.status === "success" || data.status === "queued") {
+        enableAutoRefresh("auto");
         message.success(data.message || `文档已提交处理，请在任务中心查看进度`);
         if (data.task_id) {
           taskerStore.registerQueuedTask({
             task_id: data.task_id,
-            name: `文档重新分块 (${databaseId.value || ''})`,
-            task_type: 'knowledge_rechunks',
+            name: `文档重新分块 (${databaseId.value || ""})`,
+            task_type: "knowledge_rechunks",
             message: data.message,
             payload: {
               db_id: databaseId.value,
               count: fileIds.length,
-            }
+            },
           });
         }
         await getDatabaseInfo(undefined, true); // Skip query params when adding files
         return true; // Indicate success
       } else {
-        message.error(data.message || '处理失败');
+        message.error(data.message || "处理失败");
         return false;
       }
     } catch (error) {
       console.error(error);
-      message.error(error.message || '处理请求失败');
+      message.error(error.message || "处理请求失败");
       return false;
     } finally {
       state.chunkLoading = false;
@@ -296,8 +298,8 @@ export const useDatabaseStore = defineStore('database', () => {
   }
 
   async function openFileDetail(record) {
-    if (record.status !== 'done') {
-      message.error('文件未处理完成，请稍后再试');
+    if (record.status !== "done") {
+      message.error("文件未处理完成，请稍后再试");
       return;
     }
     state.fileDetailModalVisible = true;
@@ -307,7 +309,7 @@ export const useDatabaseStore = defineStore('database', () => {
 
     try {
       const data = await documentApi.getDocumentInfo(databaseId.value, record.file_id);
-      if (data.status == "failed") {
+      if (data.status === "failed") {
         message.error(data.message);
         state.fileDetailModalVisible = false;
         return;
@@ -333,30 +335,28 @@ export const useDatabaseStore = defineStore('database', () => {
       queryParams.value = response.params?.options || [];
 
       // Create a set of currently supported parameter keys
-      const supportedParamKeys = new Set(queryParams.value.map(param => param.key));
+      const supportedParamKeys = new Set(queryParams.value.map((param) => param.key));
 
       // Remove unsupported parameters from meta
       for (const key in meta) {
-        if (key !== 'db_id' && !supportedParamKeys.has(key)) {
+        if (key !== "db_id" && !supportedParamKeys.has(key)) {
           delete meta[key];
         }
       }
 
       // Add default values for supported parameters that are not in meta
-      queryParams.value.forEach(param => {
+      queryParams.value.forEach((param) => {
         if (!(param.key in meta)) {
           meta[param.key] = param.default;
         }
       });
     } catch (error) {
-      console.error('Failed to load query params:', error);
-      message.error('加载查询参数失败');
+      console.error("Failed to load query params:", error);
+      message.error("加载查询参数失败");
     } finally {
       state.queryParamsLoading = false;
     }
   }
-
-
 
   function startAutoRefresh() {
     if (state.autoRefresh && !refreshInterval) {
@@ -377,7 +377,7 @@ export const useDatabaseStore = defineStore('database', () => {
     const nextState = !state.autoRefresh;
     state.autoRefresh = nextState;
     if (nextState) {
-      autoRefreshSource = 'manual';
+      autoRefreshSource = "manual";
       autoRefreshManualOverride = false;
       startAutoRefresh();
     } else {
@@ -389,9 +389,7 @@ export const useDatabaseStore = defineStore('database', () => {
 
   function selectAllFailedFiles() {
     const files = Object.values(database.value.files || {});
-    const failedFiles = files
-      .filter(file => file.status === 'failed')
-      .map(file => file.file_id);
+    const failedFiles = files.filter((file) => file.status === "failed").map((file) => file.file_id);
 
     const newSelectedKeys = [...new Set([...selectedRowKeys.value, ...failedFiles])];
     selectedRowKeys.value = newSelectedKeys;
@@ -399,7 +397,7 @@ export const useDatabaseStore = defineStore('database', () => {
     if (failedFiles.length > 0) {
       message.success(`已选择 ${failedFiles.length} 个失败的文件`);
     } else {
-      message.info('当前没有失败的文件');
+      message.info("当前没有失败的文件");
     }
   }
 

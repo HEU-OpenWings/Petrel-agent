@@ -72,6 +72,7 @@ describe("findById", () => {
       email: "a@x.io",
       role: "user",
       disabled: false,
+      emailVerifiedAt: null,
       createdAt: expect.any(Date),
     });
   });
@@ -121,17 +122,102 @@ describe("listAll", () => {
   });
 });
 
-describe("setPasswordHash", () => {
-  it("换掉哈希", async () => {
+describe("tokenVersion", () => {
+  it("新用户默认 0", async () => {
     const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
 
-    await expect(repo.setPasswordHash(user.id, "new")).resolves.toBe(true);
+    await expect(repo.getTokenVersion(user.id)).resolves.toBe(0);
+  });
+
+  it("getTokenVersion 对不存在的用户返回 undefined", async () => {
+    await expect(repo.getTokenVersion("00000000-0000-0000-0000-0000000000ff")).resolves.toBeUndefined();
+  });
+
+  it("findByIdWithSecrets 返回 tokenVersion 且不带进 findById（公开投影）", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+    await repo.bumpTokenVersion(user.id);
+
+    expect((await repo.findByIdWithSecrets(user.id))?.tokenVersion).toBe(1);
+    expect(await repo.findById(user.id)).not.toHaveProperty("tokenVersion");
+  });
+
+  it("bumpTokenVersion 自增", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+
+    await repo.bumpTokenVersion(user.id);
+    await repo.bumpTokenVersion(user.id);
+
+    await expect(repo.getTokenVersion(user.id)).resolves.toBe(2);
+  });
+});
+
+describe("changePassword", () => {
+  it("换掉哈希并自增 tokenVersion（旧 token 失效）", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+
+    await expect(repo.changePassword(user.id, "new")).resolves.toBe(true);
 
     const found = await repo.findByEmail("a@x.io");
     expect(found?.passwordHash).toBe("new");
+    expect(found?.tokenVersion).toBe(1);
   });
 
   it("用户不存在时返回 false", async () => {
-    await expect(repo.setPasswordHash("00000000-0000-0000-0000-0000000000ff", "new")).resolves.toBe(false);
+    await expect(repo.changePassword("00000000-0000-0000-0000-0000000000ff", "new")).resolves.toBe(false);
+  });
+});
+
+describe("邮箱验证 token", () => {
+  it("setEmailVerified 置位，保留 token 让重复点击幂等成功", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "scrypt$a$b" });
+    const expiresAt = new Date(Date.now() + 60_000);
+    await repo.setEmailVerifyToken(user.id, "hash1", expiresAt);
+
+    await expect(repo.setEmailVerified(user.id, new Date())).resolves.toBe(true);
+
+    expect((await repo.findByEmailVerifyToken("hash1"))?.id).toBe(user.id);
+    expect((await repo.findById(user.id))?.emailVerifiedAt).toBeInstanceOf(Date);
+  });
+
+  it("findByEmailVerifyToken 按哈希精确命中", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "scrypt$a$b" });
+    const expiresAt = new Date(Date.now() + 60_000);
+    await repo.setEmailVerifyToken(user.id, "hash-verify", expiresAt);
+
+    const found = await repo.findByEmailVerifyToken("hash-verify");
+    expect(found?.id).toBe(user.id);
+    expect(await repo.findByEmailVerifyToken("hash-other")).toBeUndefined();
+  });
+});
+
+describe("密码重置 token 与 resetPassword", () => {
+  it("findByPasswordResetToken 按哈希命中，resetPassword 换哈希、清 token、自增版本号", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+    const expiresAt = new Date(Date.now() + 60_000);
+    await repo.setPasswordResetToken(user.id, "hash-reset", expiresAt);
+
+    await expect(repo.resetPassword(user.id, "new", new Date())).resolves.toBe(true);
+
+    expect(await repo.findByPasswordResetToken("hash-reset")).toBeUndefined();
+    expect((await repo.findByEmail("a@x.io"))?.passwordHash).toBe("new");
+    expect((await repo.findByEmail("a@x.io"))?.tokenVersion).toBe(1);
+  });
+
+  it("resetPassword 把未验证邮箱顺带标记为已验证", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+
+    await repo.resetPassword(user.id, "new", new Date("2026-08-06T00:00:00Z"));
+
+    expect((await repo.findById(user.id))?.emailVerifiedAt).toEqual(new Date("2026-08-06T00:00:00Z"));
+  });
+
+  it("resetPassword 不覆盖已验证时间", async () => {
+    const user = await repo.create({ email: "a@x.io", passwordHash: "old" });
+    const verifiedAt = new Date("2026-08-01T00:00:00Z");
+    await repo.setEmailVerified(user.id, verifiedAt);
+
+    await repo.resetPassword(user.id, "new", new Date("2026-08-06T00:00:00Z"));
+
+    expect((await repo.findById(user.id))?.emailVerifiedAt).toEqual(verifiedAt);
   });
 });

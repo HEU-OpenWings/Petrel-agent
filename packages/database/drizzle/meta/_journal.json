@@ -50,6 +50,20 @@
       "when": 1785929812166,
       "tag": "0006_motionless_angel",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786065229186,
+      "tag": "0007_cloudy_nightcrawler",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786086830048,
+      "tag": "0008_tiny_the_order",
+      "breakpoints": true
     }
   ]
 }

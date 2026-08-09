@@ -1,10 +1,10 @@
 import { listConfiguredModels } from "@petrel/agent";
-import { createPreferencesRepository, getDb } from "@petrel/database";
+import { createPreferencesRepository, createUserRepository, getDb } from "@petrel/database";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { AuthError, getAuthService } from "../../services/auth.ts";
 import type { AppEnv } from "../../types.ts";
-import { issueToken } from "../middleware/auth.ts";
+import { clearToken, issueToken } from "../middleware/auth.ts";
 
 /**
  * system prompt 的长度上限。
@@ -110,9 +110,17 @@ export const account = new Hono<AppEnv>()
       .changePassword(user, fields.currentPassword, fields.newPassword)
       .catch(toHttpException);
 
-    // 重新签发：改完密码当前会话不该掉线。
-    // 这不会失效其他设备上的旧 token——JWT 无状态，见 CLAUDE.md「尚未实现」
+    // 重新签发：改完密码当前会话不该掉线。tokenVersion 已自增，
+    // 其他设备上的旧 token 在下一次请求就被 requireAuth 拒绝
     await issueToken(c, user);
 
+    return c.json({ ok: true });
+  })
+
+  .post("/logout-all", async (c) => {
+    // 自增会话版本号：所有已签发 token（含当前这个）立即失效。
+    // 当前会话的 cookie 顺手清掉，前端马上回到未登录态
+    await createUserRepository(getDb()).bumpTokenVersion(c.get("currentUser").id);
+    clearToken(c);
     return c.json({ ok: true });
   });

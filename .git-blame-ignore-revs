@@ -1,0 +1,15 @@
+# 启用：git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# 注意：git blame 对这里列出的、在当前仓库里不存在的 SHA 会**硬失败**
+# （fatal: could not find revision），没有「忽略缺失」的开关。
+# 所以每条记录都必须是 main 上真实存在的 commit。
+# 如果某个格式化提交是通过 squash merge 进 main 的，分支内的原始 SHA 会失效，
+# 合并后要把下面的行换成 main 上的那个 commit。
+
+# 前端 lint 迁移到 Biome，全量格式化（PR #13）
+# TODO(合并后): 若本 PR 走 squash merge，把这一行替换为 main 上的实际 commit SHA
+87146712b90cbba6f4cb6ea4df41fcb450ebd413
+
+# 合并 main 时对 main 侧 5 个前端文件补跑的格式化（同 PR #13）
+# TODO(合并后): 同上，squash merge 后需替换
+9d63e9eb8671fed02d833f667e65e9e1328a3d5a
