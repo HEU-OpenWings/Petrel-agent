@@ -154,12 +154,15 @@ export const userMemories = pgTable(
 EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
 EMBEDDING_API_KEY=
 EMBEDDING_MODEL=BAAI/bge-m3
-EMBEDDING_DIM=1024
+EMBEDDING_TIMEOUT_MS=10000
 MEMORY_MAX_PER_USER=200
+MEMORY_SEARCH_LIMIT=5
 ```
 
-- `EMBEDDING_DIM` 与表的列宽（1024）不一致时**启动即失败**——放行的话表现是运行期
-  INSERT 报维度不符，排查成本高得多。
+- **维度不做成环境变量**（M2 设计里收敛掉了本文初稿的 `EMBEDDING_DIM`）：
+  它是表的列宽，换模型要全量重建索引，做成运行时可配等于允许配出一个必然
+  INSERT 失败的组合。改为在 `packages/database/src/schema.ts` 导出
+  `MEMORY_EMBEDDING_DIM = 1024`，列定义与 embedding 响应校验共用同一个常量。
 - `MEMORY_MAX_PER_USER` 默认 200。它是**成本闸门**：embedding 按次计费而写入由模型驱动，
   没有上限等于成本可被无限放大。
 
@@ -173,14 +176,23 @@ MEMORY_MAX_PER_USER=200
 
 ## 7. 失败语义
 
+> **本节已按 pi 0.83 的 dist 修正。** 初稿照搬了 HEU-13 PRD 的「工具返回 `isError`、
+> 不要抛异常」，那是错的：`AgentToolResult` 上**没有 `isError` 字段**
+> （`dist/types.d.ts`），`throw` 是工具表达失败的唯一途径，而且 pi 在
+> `agent-loop.js:467-475` 的 `try/catch` 里捕获它、生成 `isError` 的 tool result
+> 并让 agent loop 继续——**不会**中断对话。详见 [M3 设计 §1](./2026-08-09-memory-m3-tools-design.md)。
+
 | 场景 | 行为 | 理由 |
 | --- | --- | --- |
 | 未配置 embedding 凭据 | 两个记忆工具**不进注册表**，模型看不到 | 与 HEU-13 对 `web_search` 的口径一致：模型看到一个必然失败的工具会反复重试 |
-| embedding provider 不可用（写入） | 工具返回 `isError`，**不落库**，对话不中断 | 落一条没有向量的记忆是静默失效 |
-| embedding provider 不可用（检索） | 工具返回 `isError`，对话不中断 | **不抛异常**——抛异常会走 pi 的 `stopReason: "error"`，整轮对话中断，代价过大 |
-| 记忆条数超上限 | `memory_write` 返回 `isError` 并说明原因 | 成本闸门，见 §6 |
-| 数据库写入失败 | 返回 `isError`，不静默吞 | 持久化 fail-closed |
+| embedding provider 不可用（写入） | 工具 `throw EmbeddingError`，**不落库**；pi 转成 `isError` 结果，对话不中断 | 落一条没有向量的记忆是静默失效 |
+| embedding provider 不可用（检索） | 同上 | 模型拿到错误结果后可以改口或换个做法 |
+| 记忆条数超上限 | `throw MemoryQuotaError`，消息里给出「请先删除一些记忆」这个可执行建议 | 成本闸门，见 §6。消息会被模型看到并转述给用户 |
+| 数据库写入失败 | 异常上抛，不静默吞 | 持久化 fail-closed |
 | 用户点停止 | 进行中的 embedding 请求响应 `signal` 取消 | 不留悬挂请求 |
+
+**附带的硬约束**：`error.message` 会原样进入模型上下文（pi 用它构造 tool result），
+所以异常信息里不能有凭据、provider 的原始响应体或用户的记忆原文。
 
 ## 8. 安全边界与测试策略
 
