@@ -52,7 +52,15 @@ function fauxFactory(chunked = false) {
     async create(sessionId: string) {
       created += 1;
       const session = await createMemorySession(sessionId);
-      return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+      return {
+        harness: createHarness({
+          session,
+          models,
+          model: faux.getModel(),
+          toolContext: () => ({ userId: TEST_USER_ID, sessionId }),
+        }),
+        session,
+      };
     },
   };
 }
@@ -440,7 +448,15 @@ function compactionFactory() {
         });
         await session.appendMessage(fauxAssistantMessage([fauxText(chunk)]));
       }
-      return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+      return {
+        harness: createHarness({
+          session,
+          models,
+          model: faux.getModel(),
+          toolContext: () => ({ userId: TEST_USER_ID, sessionId }),
+        }),
+        session,
+      };
     },
   };
 }
@@ -870,7 +886,15 @@ function overflowRecoveryFactory() {
         });
         await session.appendMessage(fauxAssistantMessage([fauxText(chunk)]));
       }
-      return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+      return {
+        harness: createHarness({
+          session,
+          models,
+          model: faux.getModel(),
+          toolContext: () => ({ userId: TEST_USER_ID, sessionId }),
+        }),
+        session,
+      };
     },
   };
 }
@@ -1179,7 +1203,15 @@ describe("createHarnessRegistry 的 overflow 兜底", () => {
       db,
       createHarness: async (sessionId) => {
         const session = await createMemorySession(sessionId);
-        return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+        return {
+          harness: createHarness({
+            session,
+            models,
+            model: faux.getModel(),
+            toolContext: () => ({ userId: TEST_USER_ID, sessionId }),
+          }),
+          session,
+        };
       },
     });
     const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, HUGE);

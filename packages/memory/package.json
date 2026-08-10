@@ -1,5 +1,5 @@
 {
-  "name": "@petrel/agent",
+  "name": "@petrel/memory",
   "version": "0.5.0-dev",
   "private": true,
   "type": "module",
@@ -14,9 +14,6 @@
     "typecheck": "tsc -p tsconfig.check.json"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.83.0",
-    "@earendil-works/pi-ai": "0.83.0",
-    "@modelcontextprotocol/sdk": "^1.25.2",
     "@petrel/config": "workspace:*",
     "@petrel/database": "workspace:*"
   }
