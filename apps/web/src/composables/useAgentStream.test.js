@@ -419,4 +419,54 @@ describe("stop", () => {
     await pending;
     expect(stream.running.value).toBe(false);
   });
+
+  it("停止请求在飞时进入 stopping，重复点击只调用一次 abort", async () => {
+    let finishAbort;
+    abortChat.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishAbort = resolve;
+        }),
+    );
+    const stream = useAgentStream();
+    const flow = controllableStream();
+    const pending = stream.send("你好", { sessionId: "session-a" });
+    await tick();
+
+    const first = stream.stop();
+    const second = stream.stop();
+
+    expect(stream.stopping.value).toBe(true);
+    expect(abortChat).toHaveBeenCalledOnce();
+    finishAbort();
+    await Promise.all([first, second]);
+    await pending;
+    expect(stream.stopping.value).toBe(false);
+    expect(stream.running.value).toBe(false);
+
+    flow.close();
+  });
+
+  it("abort 接口失败时恢复停止按钮并保留流，允许用户重试", async () => {
+    abortChat.mockRejectedValue(new Error("网络错误"));
+    const stream = useAgentStream();
+    const flow = controllableStream();
+    const pending = stream.send("你好", { sessionId: "session-a" });
+    await tick();
+
+    await stream.stop();
+
+    expect(stream.running.value).toBe(true);
+    expect(stream.stopping.value).toBe(false);
+    expect(stream.error.value).toContain("网络错误");
+
+    abortChat.mockResolvedValue(undefined);
+    await stream.stop();
+    await pending;
+
+    expect(abortChat).toHaveBeenCalledTimes(2);
+    expect(stream.running.value).toBe(false);
+    expect(stream.error.value).toBe("");
+    flow.close();
+  });
 });
