@@ -447,7 +447,7 @@ describe("stop", () => {
     flow.close();
   });
 
-  it("abort 接口失败时仍断开本地流，并显示服务端可能继续生成", async () => {
+  it("abort 接口失败时恢复停止按钮并保留流，允许用户重试", async () => {
     abortChat.mockRejectedValue(new Error("网络错误"));
     const stream = useAgentStream();
     const flow = controllableStream();
@@ -455,12 +455,18 @@ describe("stop", () => {
     await tick();
 
     await stream.stop();
+
+    expect(stream.running.value).toBe(true);
+    expect(stream.stopping.value).toBe(false);
+    expect(stream.error.value).toContain("网络错误");
+
+    abortChat.mockResolvedValue(undefined);
+    await stream.stop();
     await pending;
 
+    expect(abortChat).toHaveBeenCalledTimes(2);
     expect(stream.running.value).toBe(false);
-    expect(stream.stopping.value).toBe(false);
-    expect(stream.error.value).toContain("服务端可能仍在生成");
-
+    expect(stream.error.value).toBe("");
     flow.close();
   });
 });

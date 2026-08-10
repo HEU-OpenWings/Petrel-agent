@@ -6,6 +6,8 @@
  */
 import { handleUnauthorized } from "@/apis/http";
 
+const ABORT_TIMEOUT_MS = 10_000;
+
 /** 把 SSE 帧文本解析为 { event, data }，data 解析失败时为 null。 */
 function parseFrame(frame) {
   let event = "message";
@@ -88,11 +90,24 @@ export async function streamChat({ message, sessionId, systemPrompt, model, sign
  * （这是有意的：关页面不再丢回答），所以停止必须走一个显式接口。
  */
 export async function abortChat(sessionId) {
-  const response = await fetch("/api/chat/abort", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ABORT_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch("/api/chat/abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("停止请求超时，请重试");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     if (response.status === 401) {

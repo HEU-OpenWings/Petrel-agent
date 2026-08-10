@@ -242,8 +242,9 @@ event: error   data: { message }
   本轮新增的 `components/settings/*` 三个组件因此零测试覆盖：tab 切换、表单校验、
   保存按钮的禁用态、加载失败时的错误态全靠人眼（本轮已用 Chrome DevTools 手工验证过
   一遍主要路径）。
-- **Composer 增强（HEU-25）**：`/` 与 `Ctrl+K` 命令面板、`/clear`、`/model`、
-  账号偏好模型选择器、发送/中断防重复状态已完成。剩余 `@` 引用依赖 HEU-21 的 kb 接口，
+- **Composer 增强（HEU-25）**：对话页 `/` 命令面板、Shell 级 `Ctrl+K` 全局命令面板、
+  `/clear`、`/model`、账号偏好模型选择器、发送/中断防重复与超时恢复状态已完成。
+  剩余 `@` 引用依赖 HEU-21 的 kb 接口，
   agent / 深度模式切换依赖 HEU-12 的 agent 注册表，附件上传依赖文件服务。
 
 ### 依赖后端

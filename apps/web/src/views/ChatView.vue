@@ -96,19 +96,6 @@
       </div>
     </footer>
 
-    <Teleport to="body">
-      <GlobalCommandPalette
-        v-if="globalPalette.open.value"
-        ref="globalPaletteDialog"
-        :commands="globalPalette.filtered.value"
-        :active-index="globalPalette.activeIndex.value"
-        :query="globalPalette.query.value"
-        @close="globalPalette.close()"
-        @hover="globalPalette.activeIndex.value = $event"
-        @pick="onPickGlobalCommand"
-        @update:query="updateGlobalQuery"
-      />
-    </Teleport>
   </div>
 </template>
 
@@ -120,7 +107,6 @@ import { fetchMessages } from "@/apis/session_api";
 import CommandPalette from "@/components/chat/CommandPalette.vue";
 import CompactionDivider from "@/components/chat/CompactionDivider.vue";
 import ComposerModelSelector from "@/components/chat/ComposerModelSelector.vue";
-import GlobalCommandPalette from "@/components/chat/GlobalCommandPalette.vue";
 import MessageItem from "@/components/chat/MessageItem.vue";
 import MessageInputComponent from "@/components/MessageInputComponent.vue";
 import { useAgentStream } from "@/composables/useAgentStream";
@@ -169,13 +155,9 @@ onMounted(() => {
   else void loadSession(sessionStore.currentId);
 });
 
-onMounted(() => window.addEventListener("keydown", onWindowKeydown, true));
-// AppShell 用 key 强制重挂载来实现「新对话」，卸载时只断开本地接收；同时移除
-// Ctrl+K 的全局监听，避免每重挂一次 ChatView 就多执行一遍命令。
-onUnmounted(() => {
-  window.removeEventListener("keydown", onWindowKeydown, true);
-  disconnect();
-});
+// AppShell 用 key 强制重挂载来实现「新对话」，卸载时只断开本地接收——
+// harness 是常驻的，旧对话的生成会继续跑完并落库，不是真的要停止它。
+onUnmounted(disconnect);
 
 /**
  * submit() 的自增计数。守的是这个场景：历史 GET 慢，用户没等它回来就发了消息，
@@ -213,7 +195,6 @@ const draft = ref("");
 const scrollArea = ref(null);
 const input = ref(null);
 const modelSelector = ref(null);
-const globalPaletteDialog = ref(null);
 const modelSaving = ref(false);
 const modelError = ref("");
 let pendingModelSave = null;
@@ -260,7 +241,16 @@ async function runContext() {
 }
 
 async function openModelSelector() {
+  modelError.value = "";
   await preferences.ensureLoaded();
+  if (preferences.loadFailed) {
+    modelError.value = "模型列表加载失败，请在设置中重试";
+    return;
+  }
+  if (preferences.models.length === 0) {
+    modelError.value = "没有已配置的可用模型";
+    return;
+  }
   await nextTick();
   modelSelector.value?.open();
 }
@@ -269,33 +259,27 @@ async function selectModel(modelId) {
   if (modelSaving.value) return;
   modelError.value = "";
   modelSaving.value = true;
-  const request = (async () => {
-    try {
-      await preferences.save({
-        defaultModel: modelId,
-        systemPrompt: preferences.systemPrompt,
-      });
-      return true;
-    } catch (err) {
+  pendingModelSave = preferences
+    .save({
+      defaultModel: modelId,
+      systemPrompt: preferences.systemPrompt,
+    })
+    .then(() => true)
+    .catch((err) => {
       modelError.value = `模型切换失败：${err.message}`;
       return false;
-    }
-  })();
-  pendingModelSave = request;
+    });
 
   try {
-    await request;
+    await pendingModelSave;
   } finally {
-    if (pendingModelSave === request) {
-      pendingModelSave = null;
-      modelSaving.value = false;
-    }
+    pendingModelSave = null;
+    modelSaving.value = false;
   }
 }
 
 const commands = [
   { name: "new", description: "新对话", keywords: ["新建"], run: newChat },
-  { name: "clear", description: "清空上下文并开始新对话", keywords: ["重置"], run: newChat },
   {
     name: "model",
     description: "切换下一条消息使用的模型",
@@ -304,6 +288,7 @@ const commands = [
   },
   { name: "compact", description: "压缩上下文", run: runCompact },
   { name: "context", description: "查看上下文占用", run: runContext },
+  { name: "clear", description: "清空上下文并开始新对话", keywords: ["重置"], run: newChat },
   {
     name: "workspace",
     description: "开合右栏",
@@ -314,7 +299,6 @@ const commands = [
 ];
 
 const slashPalette = useCommandPalette(commands);
-const globalPalette = useCommandPalette(commands);
 
 /** 只在整段输入以 / 开头时唤起面板，避免正文里的斜杠误触发 */
 function onDraftChange(value) {
@@ -340,7 +324,6 @@ function onSendOrStop() {
 const canUseCommands = computed(() => slashPalette.open.value || !draft.value.trim());
 
 function toggleCommands() {
-  globalPalette.close();
   if (slashPalette.open.value) {
     slashPalette.close();
     return;
@@ -356,49 +339,6 @@ function toggleCommands() {
 function onPickCommand(index) {
   slashPalette.pick(index);
   draft.value = "";
-}
-
-function openGlobalCommands() {
-  slashPalette.close();
-  globalPalette.openWith("", { keepOpen: true });
-  void nextTick(() => globalPaletteDialog.value?.focus());
-}
-
-function updateGlobalQuery(value) {
-  globalPalette.openWith(value, { keepOpen: true });
-}
-
-function onPickGlobalCommand(index) {
-  globalPalette.pick(index);
-}
-
-function onWindowKeydown(event) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-    event.preventDefault();
-    event.stopPropagation();
-    if (globalPalette.open.value) globalPalette.close();
-    else openGlobalCommands();
-    return;
-  }
-  if (!globalPalette.open.value || event.isComposing) return;
-
-  if (event.key === "ArrowDown") {
-    event.preventDefault();
-    event.stopPropagation();
-    globalPalette.moveDown();
-  } else if (event.key === "ArrowUp") {
-    event.preventDefault();
-    event.stopPropagation();
-    globalPalette.moveUp();
-  } else if (event.key === "Escape") {
-    event.preventDefault();
-    event.stopPropagation();
-    globalPalette.close();
-  } else if (event.key === "Enter") {
-    event.preventDefault();
-    event.stopPropagation();
-    globalPalette.pick();
-  }
 }
 
 function onKeydown(event) {

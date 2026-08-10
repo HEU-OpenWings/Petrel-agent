@@ -1,8 +1,8 @@
 <template>
   <a-dropdown v-model:open="dropdownOpen" trigger="click" placement="topRight" :disabled="disabled">
-    <span class="trigger-wrap">
+    <span class="trigger-wrap" @click.stop>
       <a-tooltip :title="tooltip">
-        <a-button type="text" class="trigger" :disabled="disabled" :loading="saving" @click.stop>
+        <a-button type="text" class="trigger" :disabled="disabled" :loading="saving">
           <span class="label">{{ label }}</span>
           <ChevronDown v-if="!saving" :size="13" aria-hidden="true" />
         </a-button>

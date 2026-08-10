@@ -9,24 +9,37 @@ import { computed, ref } from "vue";
  * @typedef {{ name: string, description: string, keywords?: string[], run: () => void }} Command
  */
 
-/** @param {Command[]} commands @param {string} query 不含前导斜杠 */
-export function filterCommands(commands, query) {
+/**
+ * @param {Command[]} commands
+ * @param {string} query 不含前导斜杠
+ * @param {{ searchAll?: boolean }} options
+ */
+export function filterCommands(commands, query, { searchAll = false } = {}) {
   const keyword = query.trim().toLowerCase();
   if (!keyword) return commands;
-  return commands.filter((command) =>
-    [command.name, command.description, ...(command.keywords ?? [])].some((field) =>
-      field.toLowerCase().includes(keyword),
-    ),
+  if (!searchAll) {
+    return commands.filter((command) => command.name.toLowerCase().startsWith(keyword));
+  }
+  return commands.filter((command) => {
+    const fields = [command.name, command.description, ...(command.keywords ?? [])];
+    return fields.some((field) => field.toLowerCase().includes(keyword));
+  });
+}
+
+/** 只认 Ctrl/Cmd+K 本身，不吞掉浏览器的 Ctrl+Shift+K / Ctrl+Alt+K。 */
+export function isCommandPaletteShortcut(event) {
+  return (
+    (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k"
   );
 }
 
-/** @param {Command[]} commands */
-export function useCommandPalette(commands) {
+/** @param {Command[]} commands @param {{ searchAll?: boolean }} options */
+export function useCommandPalette(commands, { searchAll = false } = {}) {
   const open = ref(false);
   const query = ref("");
   const activeIndex = ref(0);
 
-  const filtered = computed(() => filterCommands(commands, query.value));
+  const filtered = computed(() => filterCommands(commands, query.value, { searchAll }));
 
   function close() {
     open.value = false;

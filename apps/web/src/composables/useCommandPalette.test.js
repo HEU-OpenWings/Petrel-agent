@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { filterCommands, useCommandPalette } from "./useCommandPalette.js";
+import { filterCommands, isCommandPaletteShortcut, useCommandPalette } from "./useCommandPalette.js";
 
 const COMMANDS = [
   { name: "new", description: "新对话", run: () => {} },
@@ -12,13 +12,34 @@ describe("filterCommands", () => {
     expect(filterCommands(COMMANDS, "")).toHaveLength(3);
   });
 
-  it("按命令名匹配且大小写不敏感", () => {
+  it("斜杠命令按名称前缀匹配且大小写不敏感", () => {
     expect(filterCommands(COMMANDS, "WOR").map((c) => c.name)).toEqual(["workspace"]);
   });
 
-  it("也匹配描述和补充关键词，供 Ctrl+K 用自然语言搜索", () => {
-    expect(filterCommands(COMMANDS, "右栏").map((c) => c.name)).toEqual(["workspace"]);
-    expect(filterCommands(COMMANDS, "引用").map((c) => c.name)).toEqual(["workspace"]);
+  it("斜杠命令不做子串或自然语言匹配，避免劫持普通输入", () => {
+    expect(filterCommands(COMMANDS, "e")).toEqual([]);
+    expect(filterCommands(COMMANDS, "右栏")).toEqual([]);
+    expect(filterCommands(COMMANDS, "引用")).toEqual([]);
+  });
+
+  it("/c 保留 compact 为首选，clear 只有输入 /cl 才会成为唯一匹配", () => {
+    const commands = [
+      { name: "compact", description: "压缩上下文", run: () => {} },
+      { name: "context", description: "查看上下文", run: () => {} },
+      { name: "clear", description: "清空上下文", run: () => {} },
+    ];
+    expect(filterCommands(commands, "c").map((command) => command.name)).toEqual([
+      "compact",
+      "context",
+      "clear",
+    ]);
+    expect(filterCommands(commands, "cl").map((command) => command.name)).toEqual(["clear"]);
+  });
+
+  it("Ctrl+K 面板显式启用全字段搜索", () => {
+    const options = { searchAll: true };
+    expect(filterCommands(COMMANDS, "右栏", options).map((c) => c.name)).toEqual(["workspace"]);
+    expect(filterCommands(COMMANDS, "引用", options).map((c) => c.name)).toEqual(["workspace"]);
   });
 
   it("无匹配时返回空数组", () => {
@@ -41,7 +62,7 @@ describe("useCommandPalette", () => {
   });
 
   it("全局面板可以保留空结果态", () => {
-    const palette = useCommandPalette(COMMANDS);
+    const palette = useCommandPalette(COMMANDS, { searchAll: true });
     palette.openWith("zzz", { keepOpen: true });
     expect(palette.open.value).toBe(true);
     expect(palette.filtered.value).toEqual([]);
@@ -77,5 +98,26 @@ describe("useCommandPalette", () => {
     const palette = useCommandPalette([{ name: "new", description: "新对话", run }]);
     palette.pick();
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe("isCommandPaletteShortcut", () => {
+  const keyEvent = (overrides = {}) => ({
+    key: "k",
+    ctrlKey: true,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...overrides,
+  });
+
+  it("接受 Ctrl+K 与 Cmd+K", () => {
+    expect(isCommandPaletteShortcut(keyEvent())).toBe(true);
+    expect(isCommandPaletteShortcut(keyEvent({ ctrlKey: false, metaKey: true }))).toBe(true);
+  });
+
+  it("不吞掉带 Shift / Alt 的浏览器快捷键", () => {
+    expect(isCommandPaletteShortcut(keyEvent({ shiftKey: true }))).toBe(false);
+    expect(isCommandPaletteShortcut(keyEvent({ altKey: true }))).toBe(false);
   });
 });
