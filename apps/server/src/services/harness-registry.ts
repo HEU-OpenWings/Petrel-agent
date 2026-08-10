@@ -16,6 +16,7 @@ import {
   isContextOverflow,
   maybeCompact,
   resolveModel,
+  resolveTools,
 } from "@petrel/agent";
 import { env } from "@petrel/config";
 import { createSessionRepository, type Database } from "@petrel/database";
@@ -131,6 +132,8 @@ interface Entry {
   systemPrompt: string;
   /** 当前 harness 对应的模型偏好；undefined 表示跟随系统默认。 */
   modelId: string | undefined;
+  /** 当前启用的工具子集；undefined 表示全部 enabled 的工具。 */
+  activeToolNames: string[] | undefined;
   /** 有几个 SSE 连接正在用它。> 0 时不回收。 */
   refCount: number;
   lastUsedAt: number;
@@ -168,6 +171,11 @@ interface Entry {
 export interface HarnessAssemblyOptions {
   systemPrompt?: string;
   modelId?: string;
+  /**
+   * 此会话启用的工具子集（从注册表按名选）。
+   * undefined 表示取全部 enabled 的工具。
+   */
+  activeToolNames?: string[];
 }
 
 export interface SendOptions {
@@ -280,6 +288,8 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
               session,
               systemPrompt: assembly.systemPrompt,
               modelId: assembly.modelId,
+              toolContext: () => ({ userId, sessionId }),
+              activeToolNames: assembly.activeToolNames,
             }),
             session,
           };
@@ -291,6 +301,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       session,
       systemPrompt: assembly.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       modelId: assembly.modelId,
+      activeToolNames: assembly.activeToolNames,
       refCount: 0,
       lastUsedAt: now(),
       running: false,
@@ -367,7 +378,11 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
    * 降级用的一次性 handle：内存会话、不进缓存、不需要 running 标记与 chain
    * （它只服务当前这一个请求，不存在第二个请求撞上来的可能）。
    */
-  async function ephemeral(sessionId: string, assembly: HarnessAssemblyOptions = {}): Promise<HarnessHandle> {
+  async function ephemeral(
+    sessionId: string,
+    userId: string,
+    assembly: HarnessAssemblyOptions = {},
+  ): Promise<HarnessHandle> {
     const built = options.createHarness
       ? await options.createHarness(sessionId)
       : await (async () => {
@@ -377,6 +392,8 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
               session,
               systemPrompt: assembly.systemPrompt,
               modelId: assembly.modelId,
+              toolContext: () => ({ userId, sessionId }),
+              activeToolNames: assembly.activeToolNames,
             }),
             session,
           };
@@ -417,7 +434,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
         // 注意与 owned === false 的区别：那是越权（必须 403），这是故障（可以降级）。
         // 降级实例不进缓存——它没有经过归属校验，留在 Map 里会被后续请求错误复用
         logger.error({ err: error, sessionId }, "session store unavailable, degrading to memory session");
-        return ephemeral(sessionId, assembly);
+        return ephemeral(sessionId, userId, assembly);
       }
       if (!owned) {
         throw new HarnessRegistryError("会话不存在或无权访问", "forbidden");
@@ -432,10 +449,20 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
 
       async function applyAssembly(): Promise<void> {
         held.systemPrompt = assembly.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-        if (held.modelId === assembly.modelId) return;
-        const desired = resolveModel({ modelId: assembly.modelId });
-        await held.harness.setModel(desired);
-        held.modelId = assembly.modelId;
+
+        // 模型偏好变更
+        if (held.modelId !== assembly.modelId) {
+          const desired = resolveModel({ modelId: assembly.modelId });
+          await held.harness.setModel(desired);
+          held.modelId = assembly.modelId;
+        }
+
+        // 工具子集变更（值比较：前端每次传的数组引用不同，内容可能相同）
+        if (!sameTools(held.activeToolNames, assembly.activeToolNames)) {
+          const tools = resolveTools(assembly.activeToolNames);
+          await held.harness.setTools(tools, assembly.activeToolNames);
+          held.activeToolNames = assembly.activeToolNames;
+        }
       }
 
       // 保留 acquire() 原有的「空闲实例立即反映模型偏好」契约，但也纳入 chain：
@@ -760,6 +787,17 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       return entries.get(sessionId)?.compactionState;
     },
   };
+}
+
+/**
+ * 比较两个 activeToolNames 是否内容相同。
+ * 不能用 `===`：前端每次请求传的是新数组对象（引用不同），即使工具列表没变。
+ */
+function sameTools(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true; // 两个都是 undefined 或同一引用
+  if (!a || !b) return false; // 一个 undefined 一个不是
+  if (a.length !== b.length) return false;
+  return a.every((name, i) => name === b[i]);
 }
 
 const TITLE_MAX_LENGTH = 30;
