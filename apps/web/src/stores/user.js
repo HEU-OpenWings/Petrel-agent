@@ -53,14 +53,6 @@ export const useUserStore = defineStore("user", () => {
     return data.user;
   }
 
-  /**
-   * 兼容垫片（store 方法）：v0.4 的 apis/base.js、apis/agent_api.js、
-   * views/GraphView.vue、components/FileUploadModal.vue 还在调
-   * userStore.getAuthHeaders()，删掉会让它们运行时 TypeError。
-   * cookie 方案下不需要手动加认证头，返回空对象即可。
-   */
-  const getAuthHeaders = () => ({});
-
   return {
     user,
     isLoggedIn,
@@ -70,29 +62,5 @@ export const useUserStore = defineStore("user", () => {
     register,
     logout,
     fetchMe,
-    getAuthHeaders,
   };
 });
-
-/**
- * 以下两个是兼容垫片（具名导入），不是新功能。
- *
- * apis/base.js:5 与 components/DebugComponent.vue:125 还在具名导入它们。
- * ESM 里导入一个不存在的符号会让 Vite 构建期直接失败——那两个文件本来就打不通
- * v0.4 的 Python API，但不该因为这次改动连构建都过不去。
- *
- * （第三个垫片 getAuthHeaders 是 store 方法，不是具名导入，见上面 store 内部。）
- *
- * 它们随那批组件一起删除，见 docs/frontend-plan.md 的组件处置清单。
- */
-
-export const checkAdminPermission = () => {
-  const userStore = useUserStore();
-  if (!userStore.isAdmin) {
-    throw new Error("需要管理员权限");
-  }
-  return true;
-};
-
-/** v0.5 没有 superadmin 这一级，等同于 admin 校验 */
-export const checkSuperAdminPermission = checkAdminPermission;

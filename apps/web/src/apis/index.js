@@ -19,9 +19,7 @@ export {
   apiSuperAdminPost,
   apiSuperAdminPut,
 } from "./base";
-export * from "./graph_api"; // 图谱API
 export * from "./knowledge_api"; // 知识库管理API
-export * from "./mindmap_api"; // 思维导图API
 // 导出API模块
 export * from "./system_api"; // 系统管理API
 export * from "./tasker"; // 任务管理API
@@ -38,10 +36,7 @@ export * from "./tasker"; // 任务管理API
  *    - 权限要求: 管理员权限
  *
  *
- * 4. graph_api.js: 图谱API
- *    - 知识图谱相关功能
- *
- * 5. tools.js: 工具API
+ * 4. tools.js: 工具API
  *    - 工具信息获取
  *
  * 6. agent.js: 智能体API

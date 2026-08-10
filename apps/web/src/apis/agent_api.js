@@ -1,4 +1,3 @@
-import { useUserStore } from "@/stores/user";
 import { apiAdminGet, apiAdminPost, apiDelete, apiGet, apiPost, apiPut, apiRequest } from "./base";
 
 /**
@@ -20,17 +19,12 @@ export const agentApi = {
    */
   sendAgentMessage: (agentId, data, options = {}) => {
     const { signal, headers: extraHeaders, ...restOptions } = options || {};
-    const baseHeaders = {
-      "Content-Type": "application/json",
-      ...useUserStore().getAuthHeaders(),
-    };
-
     return fetch(`/api/chat/agent/${agentId}`, {
       method: "POST",
       body: JSON.stringify(data),
       signal,
       headers: {
-        ...baseHeaders,
+        "Content-Type": "application/json",
         ...(extraHeaders || {}),
       },
       ...restOptions,
@@ -149,17 +143,13 @@ export const agentApi = {
    */
   resumeAgentChat: (agentId, data, options = {}) => {
     const { signal, headers: extraHeaders, ...restOptions } = options || {};
-    const baseHeaders = {
-      "Content-Type": "application/json",
-      ...useUserStore().getAuthHeaders(),
-    };
 
     return fetch(`/api/chat/agent/${agentId}/resume`, {
       method: "POST",
       body: JSON.stringify(data),
       signal,
       headers: {
-        ...baseHeaders,
+        "Content-Type": "application/json",
         ...(extraHeaders || {}),
       },
       ...restOptions,

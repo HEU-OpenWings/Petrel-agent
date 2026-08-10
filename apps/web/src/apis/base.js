@@ -4,7 +4,14 @@
  */
 
 import { message } from "ant-design-vue";
-import { checkAdminPermission, checkSuperAdminPermission, useUserStore } from "@/stores/user";
+import { useUserStore } from "@/stores/user";
+
+// v0.5 没有独立 superadmin 层级，等同于 admin 校验
+const checkAdminPermission = () => {
+  const userStore = useUserStore();
+  if (!userStore.isAdmin) throw new Error("需要管理员权限");
+};
+const checkSuperAdminPermission = checkAdminPermission;
 
 /**
  * 基础API请求封装
@@ -38,7 +45,7 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
         throw new Error("用户未登录");
       }
 
-      Object.assign(requestOptions.headers, userStore.getAuthHeaders());
+      // cookie-based auth — no manual auth header needed
     }
 
     // 发送请求

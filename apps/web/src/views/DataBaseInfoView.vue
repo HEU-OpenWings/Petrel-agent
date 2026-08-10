@@ -2,17 +2,11 @@
 <div class="database-info-container">
   <FileDetailModal />
 
-  <FileUploadModal
-    v-model:visible="addFilesModalVisible"
-    @success="onFileUploadSuccess"
-  />
-
   <div class="unified-layout">
     <div class="left-panel" :style="{ width: leftPanelWidth + '%' }">
       <KnowledgeBaseCard />
       <FileTable
         :right-panel-visible="state.rightPanelVisible"
-        @show-add-files-modal="showAddFilesModal"
         @toggle-right-panel="toggleRightPanel"
       />
     </div>
@@ -21,25 +15,11 @@
 
     <div class="right-panel" :style="{ width: (100 - leftPanelWidth) + '%', display: store.state.rightPanelVisible ? 'flex' : 'none' }">
       <a-tabs v-model:activeKey="activeTab" class="knowledge-tabs" :tabBarStyle="{ margin: 0, padding: '0 16px' }">
-        <a-tab-pane key="graph" tab="知识图谱" v-if="isGraphSupported">
-          <KnowledgeGraphSection
-            :visible="true"
-            :active="activeTab === 'graph'"
-            @toggle-visible="() => {}"
-          />
-        </a-tab-pane>
         <a-tab-pane key="query" tab="检索测试">
           <QuerySection
             ref="querySectionRef"
             :visible="true"
             @toggle-visible="() => {}"
-          />
-        </a-tab-pane>
-        <a-tab-pane key="mindmap" tab="知识导图">
-          <MindMapSection
-            v-if="databaseId"
-            :database-id="databaseId"
-            ref="mindmapSectionRef"
           />
         </a-tab-pane>
         <a-tab-pane key="evaluation" tab="RAG评估" :disabled="!isEvaluationSupported">
@@ -95,27 +75,17 @@ import { useRoute } from "vue-router";
 import EvaluationBenchmarks from "@/components/EvaluationBenchmarks.vue";
 import FileDetailModal from "@/components/FileDetailModal.vue";
 import FileTable from "@/components/FileTable.vue";
-import FileUploadModal from "@/components/FileUploadModal.vue";
 import KnowledgeBaseCard from "@/components/KnowledgeBaseCard.vue";
-import KnowledgeGraphSection from "@/components/KnowledgeGraphSection.vue";
-import MindMapSection from "@/components/MindMapSection.vue";
 import QuerySection from "@/components/QuerySection.vue";
 import RAGEvaluationTab from "@/components/RAGEvaluationTab.vue";
 import { useDatabaseStore } from "@/stores/database";
-import { useTaskerStore } from "@/stores/tasker";
 
 const route = useRoute();
 const store = useDatabaseStore();
-const taskerStore = useTaskerStore();
 
 const databaseId = computed(() => store.databaseId);
 const database = computed(() => store.database);
 const state = computed(() => store.state);
-// 计算属性：是否支持知识图谱
-const isGraphSupported = computed(() => {
-  const kbType = database.value.kb_type?.toLowerCase();
-  return kbType === "lightrag";
-});
 
 // 计算属性：是否支持评估功能
 const isEvaluationSupported = computed(() => {
@@ -123,58 +93,17 @@ const isEvaluationSupported = computed(() => {
   return kbType === "milvus";
 });
 
-// Tab 切换逻辑 - 智能默认
+// Tab 切换逻辑
 const activeTab = ref("query");
-
-// 思维导图引用
-const mindmapSectionRef = ref(null);
 
 // 查询区域引用
 const querySectionRef = ref(null);
 
-const resetGraphStats = () => {
-  store.graphStats = {
-    total_nodes: 0,
-    total_edges: 0,
-    displayed_nodes: 0,
-    displayed_edges: 0,
-    is_truncated: false,
-  };
-};
-
-// LightRAG 默认展示知识图谱
+// 如果知识库类型不支持评估功能且当前在评估相关 tab，切换到查询 tab
 watch(
-  () => [databaseId.value, isGraphSupported.value, isEvaluationSupported.value],
-  ([newDbId, supported, _evaluationSupported], oldValue = []) => {
-    const [oldDbId, previouslySupported, previouslyEvaluationSupported] = oldValue;
-
-    if (!newDbId) {
-      return;
-    }
-
-    if (newDbId && newDbId !== oldDbId) {
-      resetGraphStats();
-    } else if (!supported && previouslySupported) {
-      resetGraphStats();
-    }
-
-    if (
-      supported &&
-      (newDbId !== oldDbId || previouslySupported === false || previouslySupported === undefined)
-    ) {
-      activeTab.value = "graph";
-      return;
-    }
-
-    if (!supported && activeTab.value === "graph") {
-      activeTab.value = "query";
-    }
-
-    // 如果知识库类型不支持评估功能且当前在评估相关 tab，切换到查询 tab
-    if (
-      !isEvaluationSupported.value &&
-      (activeTab.value === "evaluation" || activeTab.value === "benchmarks")
-    ) {
+  () => [isEvaluationSupported.value, activeTab.value],
+  ([supported, tab]) => {
+    if (!supported && (tab === "evaluation" || tab === "benchmarks")) {
       activeTab.value = "query";
     }
   },
@@ -191,21 +120,8 @@ const leftPanelWidth = ref(50);
 const isDragging = ref(false);
 const resizeHandle = ref(null);
 
-// 添加文件弹窗
-const addFilesModalVisible = ref(false);
-
 // 标记是否是初次加载
 const isInitialLoad = ref(true);
-
-// 显示添加文件弹窗
-const showAddFilesModal = () => {
-  addFilesModalVisible.value = true;
-};
-
-// 文件上传成功回调
-const onFileUploadSuccess = () => {
-  taskerStore.loadTasks();
-};
 
 // 重置文件选中状态
 const resetFileSelectionState = () => {
@@ -222,7 +138,6 @@ watch(
 
     store.databaseId = newId;
     resetFileSelectionState();
-    resetGraphStats();
     store.stopAutoRefresh();
     await store.getDatabaseInfo(newId, false); // Explicitly load query params on initial load
     store.startAutoRefresh();
@@ -562,8 +477,7 @@ const handleMouseUp = () => {
   }
 }
 
-.query-section,
-.graph-section {
+.query-section {
   .panel-section();
 
   .content {
