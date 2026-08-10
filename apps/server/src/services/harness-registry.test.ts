@@ -50,6 +50,7 @@ function fauxFactory(chunked = false) {
   let created = 0;
   return {
     faux,
+    models,
     get created() {
       return created;
     },
@@ -629,6 +630,11 @@ describe("createHarnessRegistry 的自动压缩", () => {
 
   it("运行中 acquire 的配置会在它自己的排队 run 开始前应用", async () => {
     const factory = fauxFactory();
+    const alternate = fauxProvider({
+      provider: "faux-alternate",
+      models: [{ id: "faux-alternate", name: "Faux Alternate" }],
+    });
+    factory.models.setProvider(alternate.provider);
     let firstStarted = false;
     let releaseFirst: () => void = () => undefined;
     const firstGate = new Promise<void>((resolve) => {
@@ -650,11 +656,6 @@ describe("createHarnessRegistry 的自动压缩", () => {
     const firstHandle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题", {
       systemPrompt: "第一个提示",
     });
-    const alternate = fauxProvider({
-      provider: "faux-alternate",
-      models: [{ id: "faux-alternate", name: "Faux Alternate" }],
-    });
-    firstHandle.harness.models.setProvider(alternate.provider);
     const first = firstHandle.send("第一个问题");
     await vi.waitFor(() => expect(firstStarted).toBe(true));
 
