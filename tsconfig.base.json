@@ -21,7 +21,8 @@
       "@petrel/config": ["packages/config/src/index.ts"],
       "@petrel/database/testing": ["packages/database/src/testing.ts"],
       "@petrel/database": ["packages/database/src/index.ts"],
-      "@petrel/logger": ["packages/logger/src/index.ts"]
+      "@petrel/logger": ["packages/logger/src/index.ts"],
+      "@petrel/memory": ["packages/memory/src/index.ts"]
     }
   }
 }

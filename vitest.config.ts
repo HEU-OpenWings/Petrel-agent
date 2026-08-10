@@ -11,6 +11,7 @@ export default defineConfig({
       ),
       "@petrel/database": fileURLToPath(new URL("./packages/database/src/index.ts", import.meta.url)),
       "@petrel/logger": fileURLToPath(new URL("./packages/logger/src/index.ts", import.meta.url)),
+      "@petrel/memory": fileURLToPath(new URL("./packages/memory/src/index.ts", import.meta.url)),
       "@": fileURLToPath(new URL("./apps/web/src", import.meta.url)),
     },
   },
