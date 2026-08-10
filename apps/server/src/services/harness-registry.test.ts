@@ -1,5 +1,11 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import { createHarness, createMemorySession, resolveModel } from "@petrel/agent";
+import {
+  createHarness,
+  createMemorySession,
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER_ID,
+  resolveModel,
+} from "@petrel/agent";
 import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 // HarnessNotice 定义在 registry 自己这里（它是 registry 与 route 之间的契约，
@@ -1153,8 +1159,9 @@ describe("HEU-54 R1 checkModelAuth 与 userId 防御", () => {
     const registry = createHarnessRegistry({ db });
     const SESSION_B5 = "33333333-3333-3333-4444-555555555555";
 
-    // H1：默认模型（deepseek）。H2：siliconflow 的模型
+    // H1：公共常量声明的系统默认模型。H2：siliconflow 的模型
     const h1 = await registry.acquire(SESSION_B5, TEST_USER_ID, "H1 默认", {});
+    expect(h1.harness.getModel().id).toBe(DEFAULT_MODEL_ID);
     const h2 = await registry.acquire(SESSION_B5, TEST_USER_ID, "H2", { modelId: "deepseek-ai/DeepSeek-V3" });
 
     // 此时共享 harness 的 model 已被 H2 的 applyAssembly 切到 siliconflow（最后应用的）
@@ -1164,10 +1171,10 @@ describe("HEU-54 R1 checkModelAuth 与 userId 防御", () => {
     await h1.checkModelAuth();
     await h2.checkModelAuth();
 
-    // H1 检查的必须是 deepseek（默认），H2 必须是 siliconflow——不因共享 harness 当前 model 而串
+    // H1 检查的必须是公共默认 provider，H2 必须是 siliconflow——不因共享 harness 当前 model 而串
     const checkedByH1 = spy.mock.calls[0]?.[0];
     const checkedByH2 = spy.mock.calls[1]?.[0];
-    expect(checkedByH1).toBe("deepseek");
+    expect(checkedByH1).toBe(DEFAULT_PROVIDER_ID);
     expect(checkedByH2).toBe("siliconflow");
     // 关键断言：H1 和 H2 检查的 provider 不同（若读 getModel() 则两者都是最后应用的 siliconflow）
     expect(checkedByH1).not.toBe(checkedByH2);

@@ -11,6 +11,8 @@ import {
   createMemorySession,
   createPgSession,
   createHarness as createRealHarness,
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER_ID,
   DEFAULT_SYSTEM_PROMPT,
   inspectContext,
   isContextOverflow,
@@ -117,14 +119,6 @@ function toFailedOutcome(error: unknown): CompactionOutcome {
 const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
 
 /**
- * HEU-54 R1：系统默认 provider/model id（用于 checkModelAuth 的 undefined modelId 解析）。
- * 与 packages/agent/src/models/providers.ts 的 DEFAULT_PROVIDER_ID / DEFAULT_MODEL_ID 保持一致；
- * 这里局部定义避免跨包转出链依赖。改默认模型时两处要同步。
- */
-const DEFAULT_PROVIDER_ID_FOR_CHECK = "deepseek";
-const DEFAULT_MODEL_ID_FOR_CHECK = "deepseek-v4-flash";
-
-/**
  * HEU-54 R1（B5）：解析 handle 的目标 providerId，供 checkModelAuth 用。
  * - 具体 modelId：从 scoped models 严格解析（B7：不回落 global catalog）
  * - undefined：scoped 系统默认 provider；scoped 无默认（faux 测试）→ harness.getModel() fallback
@@ -135,7 +129,7 @@ const DEFAULT_MODEL_ID_FOR_CHECK = "deepseek-v4-flash";
 function resolveHandleProviderId(modelId: string | undefined, harness: AgentHarness): string {
   const models = harness.models;
   if (modelId === undefined) {
-    const scopedDefault = models.getModel(DEFAULT_PROVIDER_ID_FOR_CHECK, DEFAULT_MODEL_ID_FOR_CHECK);
+    const scopedDefault = models.getModel(DEFAULT_PROVIDER_ID, DEFAULT_MODEL_ID);
     if (scopedDefault) return scopedDefault.provider;
     return harness.getModel().provider;
   }

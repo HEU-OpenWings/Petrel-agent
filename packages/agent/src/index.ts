@@ -33,6 +33,8 @@ export {
 } from "./harness.ts";
 // HEU-53 provider 配置状态查询（只读，给 Settings「模型服务」面板）
 export {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER_ID,
   listConfiguredModels,
   listModels,
   listProviderModels,

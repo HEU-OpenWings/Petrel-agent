@@ -1,6 +1,6 @@
 # HEU-54：普通用户 Provider 凭据（BYOK）
 
-> 状态：PR #19 实现中（2026-08-09）
+> 状态：PR #19 完整 R1 已实现，review 跟进中（2026-08-10）
 > 分支：`feat/heu-54-provider-credentials`
 > 前置契约：[HEU-53 Provider 状态与模型目录 API](heu53-provider-config-api.md)
 
@@ -12,7 +12,7 @@
 - 测试使用独立最小请求，不保存 candidate、不记 `token_usage`、不消耗聊天配额，也不创建聊天 session/tree。
 - 删除个人凭据后重算 runtime 模型可用性，并以条件更新归一当前默认模型。
 
-API Key 在 trim 后必须为 8–4096 个可打印 ASCII 字符（`\x21-\x7E`）。任何响应、日志、文档、截图、trace 或 HAR 都不得包含明文 Key、密文 envelope、加密主密钥、Provider 响应正文或不透明上游错误。
+API Key 在 trim 后必须为 8–4096 个可打印 ASCII 字符（`\x21-\x7E`）；当前合同不接受 Unicode Key，此类输入会在联网和落库前被拒绝。任何响应、日志、文档、截图、trace 或 HAR 都不得包含明文 Key、密文 envelope、加密主密钥、Provider 响应正文或不透明上游错误。
 
 ## Kill switch 矩阵
 
@@ -24,6 +24,8 @@ API Key 在 trim 后必须为 8–4096 个可打印 ASCII 字符（`\x21-\x7E`�
 | `true` | `true` | 完整 R1 |
 
 两个开关是启动配置，不热切换。任一为 `true` 时必须配置合法的 32-byte base64 加密主密钥。
+
+`stored=false, management=true` 是有意设计的预灌阶段：带 candidate 时只测试 candidate；不带 candidate 时，management probe Models 会优先读取并测试已保存的个人 Key，确认没有个人记录才回落 ambient。该阶段对话 runtime 仍只使用 ambient/env，直到 `stored=true` 后个人 Key 才参与下一轮对话。
 
 ## 存储与并发
 
@@ -69,7 +71,7 @@ GET DTO 必须同时表达三组事实：
 | `CREDENTIAL_TEST_TIMEOUT` | 504 |
 | `PROVIDER_OPERATION_FAILED` | 500 |
 
-PUT/DELETE 共用按 userId 的 write limiter；POST test 使用独立 test limiter，不按 Provider 分桶。无法准确计算时不返回 `Retry-After`。
+PUT/DELETE 共用按 userId 的 write limiter；POST test 使用独立 test limiter，不按 Provider 分桶。无法准确计算时不返回 `Retry-After`。当前 limiter 是单个服务进程内的内存状态，多副本之间不共享总额度；跨实例统一限流留待 HEU-43 迁移到 Redis。
 
 ## Candidate 连接测试
 
@@ -130,7 +132,7 @@ chat preflight 顺序固定为：
 - `PROVIDER_CREDENTIAL_TEST_RATE_LIMIT_MAX`
 - `PROVIDER_CREDENTIAL_RATE_LIMIT_WINDOW_MINUTES`
 
-生产建议先配置加密主密钥并执行迁移，再按 `management=true, stored=false` 预灌/验证，最后开启 stored。加密主密钥轮换必须另行设计 envelope 重加密流程，不能直接替换后重启。
+生产建议先配置加密主密钥并执行迁移，再按 `management=true, stored=false` 预灌/验证，最后开启 stored。cipher 在进程内惰性初始化后会缓存，因此修改加密主密钥环境变量不会热生效，配置变更后必须重启进程。当前又只有一个 active key：已有 envelope 时不能直接替换主密钥并重启，否则旧记录会因 keyId/解密失败而 fail-closed；正式轮换必须先实现旧/新 key 并存与分批重加密流程。
 
 ## 验证门禁
 
