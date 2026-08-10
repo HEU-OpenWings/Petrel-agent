@@ -1,7 +1,9 @@
 import { fileURLToPath, URL } from "node:url";
+import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [vue()],
   resolve: {
     alias: {
       "@petrel/agent": fileURLToPath(new URL("./packages/agent/src/index.ts", import.meta.url)),
@@ -16,6 +18,9 @@ export default defineConfig({
   },
   test: {
     exclude: ["**/dist/**", "**/node_modules/**"],
+    // 前端测试默认 jsdom（Vue 组件、composable、store 等依赖 DOM API）。
+    // 每个文件手动写 // @vitest-environment jsdom 也行，但全局配置更不容易漏。
+    environmentMatchGlobs: [["apps/web/**", "jsdom"]],
     // PGlite 是 WASM，实例化空载就要约 1 秒，CPU 被打满时会超线性劣化到十几秒，
     // 默认 10 秒的 hookTimeout 挡不住。数据层测试每个文件在 beforeAll 里建一次实例。
     //
