@@ -1,5 +1,5 @@
 import type { CompactionOutcome } from "@petrel/agent";
-import { listModels } from "@petrel/agent";
+import { listModels, projectAgentEvent } from "@petrel/agent";
 import { getDb } from "@petrel/database";
 import { logger } from "@petrel/logger";
 import { Hono } from "hono";
@@ -146,8 +146,26 @@ export const chat = new Hono<AppEnv>()
       .acquire(sessionId, c.get("currentUser").id, message, { systemPrompt, modelId: model })
       .catch(toHttpException);
 
-    // HEU-40：配额检查。挂在 acquire 之后、streamSSE 之前——
+    // HEU-54：凭据检查必须在配额与开流之前。checkModelAuth 走 handle 自己的 Models，
+    // stored kill switch 开启时会在每一轮重新读取当前用户的 DB CredentialStore；因此保存或
+    // 覆盖个人 Key 后不需要重建常驻 harness。DB / envelope / 解密异常全部 fail-closed 为 503，
+    // 未配置则用普通 HTTP 409 拒绝，二者都不会扣配额或打开 SSE。
+    let modelAuthConfigured: boolean;
+    try {
+      modelAuthConfigured = await handle.checkModelAuth();
+    } catch {
+      handle.release();
+      logger.error({ sessionId }, "model credential preflight failed");
+      throw new HTTPException(503, { message: "模型服务凭据暂时无法读取，请稍后重试" });
+    }
+    if (!modelAuthConfigured) {
+      handle.release();
+      throw new HTTPException(409, { message: "当前模型服务凭据未配置" });
+    }
+
+    // HEU-40：配额检查。挂在 acquire / 模型凭据检查之后、streamSSE 之前——
     // acquire 之后：归属校验已完成（不会把越权也当超配额拒绝，泄漏会话是否存在）；
+    // 凭据之后：无凭据时不查询、更不消耗聊天配额；
     // streamSSE 之前：开流后只能用 event:error，无法用 HTTP 状态码区分「超配额」与「错误」。
     //
     // 任何拒绝都必须先 release：acquire 内部已经 refCount+=1，不释放会泄漏，最终耗尽容量（registry 503）。
@@ -186,13 +204,16 @@ export const chat = new Hono<AppEnv>()
         queue.close();
       }
 
-      // pi 的事件原样透传，前端按事件类型归约为消息状态。
+      // 只把 core AgentEvent 的安全投影交给浏览器。Harness 自有事件可能含 provider payload、
+      // headers、完整 context / model / baseUrl 或内部重试错误，由 projector fail-closed 丢弃。
       // 订阅是会话级的，所以同一会话的另一个连接的输出也会流过来——
       // 它们本来就是这个会话的消息，前端按消息 id 归约，多标签页因此自动同步。
       //
       // 这个回调必须保持同步（不能 async/await 任何 I/O），见 createSseQueue 顶部注释
       unsubscribe = handle.harness.subscribe((event) => {
-        const accepted = queue.push({ event: "agent", data: JSON.stringify(event) });
+        const projected = projectAgentEvent(event);
+        if (!projected) return;
+        const accepted = queue.push({ event: "agent", data: JSON.stringify(projected) });
         if (!accepted) {
           logger.error({ sessionId }, "chat SSE 队列溢出，客户端疑似不读流，断开这一个连接");
           teardown();
@@ -219,11 +240,12 @@ export const chat = new Hono<AppEnv>()
             queue.push({ event: "compaction", data: JSON.stringify(toCompactionFrame(notice)) });
           },
         });
-      } catch (error) {
-        logger.error({ err: error, sessionId }, "agent run failed");
+      } catch {
+        // 上游异常可能带请求 id、headers、响应正文甚至 key 片段：既不进日志，也不进 SSE。
+        logger.error({ sessionId }, "agent run failed");
         queue.push({
           event: "error",
-          data: JSON.stringify({ message: error instanceof Error ? error.message : String(error) }),
+          data: JSON.stringify({ message: "模型调用失败，请稍后重试" }),
         });
       } finally {
         teardown();

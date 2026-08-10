@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createHarness, resolveModel, type ToolContext } from "./harness.ts";
-import { DEFAULT_MODEL_ID } from "./models/index.ts";
+import { DEFAULT_MODEL_ID, models as globalModels } from "./models/index.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 const TEST_CONTEXT = () => ({ userId: "test-user", sessionId: SESSION_ID });
@@ -174,6 +174,94 @@ describe("createHarness 的模型解析", () => {
     await harness.setModel(resolveModel({ modelId: "deepseek-ai/DeepSeek-V3" }));
 
     expect(harness.getModel().id).toBe("deepseek-ai/DeepSeek-V3");
+  });
+});
+
+/**
+ * HEU-54 R1 per-session Models 的约束合同。
+ *
+ * per-user 凭据方案依赖：AgentHarness 在构造时绑定 models，且**没有 setModels()**。
+ * 因此 per-session Models 必须在 createHarness 时注入，不能在复用实例时换。
+ *
+ * 下方的类型断言用 @ts-expect-error 钉死 setModels 在类型层不存在：
+ * 若未来 pi 新增了 setModels，这行会编译失败（"Unused @ts-expect-error"），
+ * 强制重新审查「是否可以复用 Entry + setModels 简化装配」——而不是静默沿用旧设计。
+ */
+describe("AgentHarness 的 models 绑定合同（HEU-54 R1）", () => {
+  it("models 是构造时绑定的实例（注入的 models 等于 harness.models）", async () => {
+    const faux = fauxProvider({ tokensPerSecond: 10_000 });
+    const models = createModels();
+    models.setProvider(faux.provider);
+
+    const harness = createHarness({
+      session: await new InMemorySessionRepo().create({ id: SESSION_ID }),
+      models,
+      model: faux.getModel(),
+      toolContext: TEST_CONTEXT,
+    });
+
+    // harness.models 必须是构造时传入的那个实例——per-session Models 装配后跟随实例
+    expect(harness.models).toBe(models);
+  });
+
+  it("setModel（单数）存在，setModels（复数）不存在", async () => {
+    const harness = createHarness({
+      session: await new InMemorySessionRepo().create({ id: SESSION_ID }),
+      toolContext: TEST_CONTEXT,
+    });
+
+    // 运行时确认：setModel（单数）是函数；setModels（复数）不是 harness 的属性
+    expect(typeof harness.setModel).toBe("function");
+    const anyHarness = harness as unknown as Record<string, unknown>;
+    expect(anyHarness.setModels).toBeUndefined();
+
+    // 类型层合同：下面两行访问 harness.setModels，TS 应报「Property 'setModels' does not exist」。
+    // @ts-expect-error — setModels 不存在；若 pi 新增它，此注释变成未使用，typecheck 失败
+    harness.setModels;
+  });
+});
+
+/**
+ * B7 回归：resolveModel 传了 scoped models 时不回落 global catalog。
+ * per-session Models 的 harness 必须只用自己的 catalog，否则会把 global model 塞进 user harness。
+ */
+describe("resolveModel 的 scoped 隔离（B7）", () => {
+  it("scoped 里查不到的 modelId 抛错，不回落 global findModel", () => {
+    // scoped 只注册 deepseek（从 global 取 provider 对象）
+    const scoped = createModels();
+    const deepseekProvider = globalModels.getProvider("deepseek");
+    if (!deepseekProvider) throw new Error("测试前提：global 应有 deepseek provider");
+    scoped.setProvider(deepseekProvider);
+
+    // "deepseek-ai/DeepSeek-V3" 在 global(siliconflow)有，但 scoped 没有 → 必须抛错
+    expect(() => resolveModel({ modelId: "deepseek-ai/DeepSeek-V3", models: scoped })).toThrow("模型未注册");
+    // 错误信息只列 scoped catalog，不泄露 global-only 的 model。
+    // 注意：错误必含请求的 modelId 本身（deepseek-ai/DeepSeek-V3），但「可选值为」之后
+    // 只能是 scoped catalog，不能把 global-only 的 DeepSeek-V3 列为可选。
+    try {
+      resolveModel({ modelId: "deepseek-ai/DeepSeek-V3", models: scoped });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const afterOptions = msg.split("可选值为")[1] ?? "";
+      expect(afterOptions).toContain("deepseek-v4-flash"); // scoped 有的
+      expect(afterOptions).not.toContain("deepseek-ai/DeepSeek-V3"); // global-only 不该列为可选
+    }
+  });
+
+  it("scoped 有该 modelId 时正常返回（不误拒）", () => {
+    const scoped = createModels();
+    const deepseekProvider = globalModels.getProvider("deepseek");
+    if (!deepseekProvider) throw new Error("测试前提");
+    scoped.setProvider(deepseekProvider);
+
+    const model = resolveModel({ modelId: "deepseek-v4-flash", models: scoped });
+    expect(model.id).toBe("deepseek-v4-flash");
+    expect(model.provider).toBe("deepseek");
+  });
+
+  it("未传 models 时仍走 global（R0 调用方向后兼容）", () => {
+    const model = resolveModel({ modelId: "deepseek-ai/DeepSeek-V3" });
+    expect(model.id).toBe("deepseek-ai/DeepSeek-V3");
   });
 });
 

@@ -12,6 +12,7 @@ export * from "./client.ts";
 export * from "./migrate.ts";
 export * from "./repositories/entries.ts";
 export * from "./repositories/preferences.ts";
+export * from "./repositories/provider-credentials.ts";
 export * from "./repositories/quota-limits.ts";
 export * from "./repositories/sessions.ts";
 export * from "./repositories/token-usage.ts";

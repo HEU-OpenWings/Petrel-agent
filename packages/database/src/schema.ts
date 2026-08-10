@@ -9,6 +9,7 @@ import {
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uuid,
@@ -192,3 +193,72 @@ export const userQuotaLimits = pgTable("user_quota_limits", {
   tokenLimit: bigint("token_limit", { mode: "number" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * 用户自填的 provider API key（HEU-54 R1）。每个用户对每家 provider 只存一份最新凭据，
+ * 复合主键 (user_id, provider_id)。key 用 AES-256-GCM 加密落盘，DB 层永远不接触明文。
+ *
+ * **provider_id 不做外键**：provider catalog 是 agent 运行时的内存注册表（见
+ * packages/agent/src/models/providers.ts），不是数据库实体。加外键反而会让
+ * 「先在代码里删 provider 再清 DB 孤儿凭据」这类运维操作变得脆弱。
+ *
+ * **加密 envelope 分列存放**（nonce / ciphertext / auth_tag 三段），不塞进 jsonb：
+ * 分列能被 NOT NULL、长度与字符集 CHECK 钉死，jsonb 绕得过这些约束。key_id 标识
+ * 加密用的是哪个 master key（SHA-256(masterKey) 指纹），为将来密钥轮换留接口——
+ * 当前只有一个 active key，但轮换时按 key_id 分批重加密。
+ *
+ * **key_hint 存 key 的末 4 位**：面板显示「••••1234」帮用户辨认存的是哪个 key，
+ * 不存前缀（sk- 之类无辨识度）。hint 不是机密，但与 ciphertext 同列、随同更新。
+ *
+ * **revision 乐观锁**：并发改同一 (user, provider) 的 key（两个标签页）用 last-write-wins，
+ * revision 递增。revision 主要给 CredentialStore.modify 的跨进程 CAS 与将来的密钥
+ * 轮换用，不暴露给 HTTP 客户端。
+ *
+ * fail-closed：解密失败（master key 错了或密文损坏）不回落 env；用户可删掉这行重存。
+ */
+export const userProviderCredentials = pgTable(
+  "user_provider_credentials",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    providerId: text("provider_id").notNull(),
+    // envelope 格式版本，当前固定 1（AES-256-GCM + 下述 AAD 编码）。将来换格式时
+    // 旧行靠它识别、走旧解密路径
+    formatVersion: integer("format_version").notNull().default(1),
+    // 标识用哪个 master key 加密的：base64url(SHA-256(masterKey) 前 16 字节)
+    keyId: text("key_id").notNull(),
+    // AES-256-GCM 的 12 字节 nonce，base64url（16 字符）
+    nonce: text("nonce").notNull(),
+    // 密文，base64url
+    ciphertext: text("ciphertext").notNull(),
+    // 16 字节 GCM auth tag，base64url（22 字符）
+    authTag: text("auth_tag").notNull(),
+    // key 末 1–4 位，面板显示遮罩用
+    keyHint: text("key_hint").notNull(),
+    revision: integer("revision").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // 复合主键：一个用户对一家 provider 只一份
+    primaryKey({ columns: [table.userId, table.providerId] }),
+    // envelope 格式版本当前只认 1；将来换格式时新行用新版本号、旧行走旧解密路径
+    check("user_provider_credentials_format_check", sql`${table.formatVersion} = 1`),
+    // revision 单调递增（乐观锁），永不回退
+    check("user_provider_credentials_revision_check", sql`${table.revision} > 0`),
+    // base64url 字符集（A–Z a–z 0–9 - _）。钉死 envelope 各段的编码，防止非法字符混入
+    check("user_provider_credentials_key_id_check", sql`${table.keyId} ~ '^[A-Za-z0-9_-]+$'`),
+    check("user_provider_credentials_nonce_check", sql`${table.nonce} ~ '^[A-Za-z0-9_-]+$'`),
+    check("user_provider_credentials_ciphertext_check", sql`${table.ciphertext} ~ '^[A-Za-z0-9_-]+$'`),
+    check("user_provider_credentials_auth_tag_check", sql`${table.authTag} ~ '^[A-Za-z0-9_-]+$'`),
+    // key_hint：长度 1–4 的可打印 ASCII。钉死长度防御——末 4 位不应超过 4，
+    // 且必须非空（normalizeApiKey 保证 ≥8 字符 key 的 hint 恒为 4 位）
+    check(
+      "user_provider_credentials_key_hint_check",
+      sql`length(${table.keyHint}) BETWEEN 1 AND 4 AND ${table.keyHint} ~ '^[\\x21-\\x7E]+$'`,
+    ),
+    // provider_id 长度上限，防无界长字符串
+    check("user_provider_credentials_provider_id_check", sql`length(${table.providerId}) BETWEEN 1 AND 128`),
+  ],
+);

@@ -80,10 +80,16 @@ describe("PROVIDER_CREDENTIAL_HINTS 与运行时注册表一致", () => {
     expect([...PROVIDER_CREDENTIAL_HINTS.keys()].sort()).toEqual(expected.sort());
   });
 
-  it("每个 hint 的 envVars 非空且 note 非空", () => {
+  it("每个 hint 的 envVars/note/probeModelId 都完整，探针模型属于对应 provider", async () => {
+    const { models } = await import("./index.ts");
     for (const [id, hint] of PROVIDER_CREDENTIAL_HINTS) {
       expect(hint.envVars.length, `${id} 的 envVars 不应为空`).toBeGreaterThan(0);
       expect(hint.note.length, `${id} 的 note 不应为空`).toBeGreaterThan(0);
+      expect(hint.probeModelId.length, `${id} 的 probeModelId 不应为空`).toBeGreaterThan(0);
+      expect(
+        models.getModel(id, hint.probeModelId),
+        `${id} 的探针模型 ${hint.probeModelId} 必须属于其静态 catalog`,
+      ).toBeDefined();
       for (const v of hint.envVars) {
         expect(typeof v).toBe("string");
         expect(v.length).toBeGreaterThan(0);

@@ -168,6 +168,55 @@ describe("ensureLoaded", () => {
 
     expect(store.defaultModel).toBe(null);
   });
+
+  it("reload 强制重新读取模型与偏好，即使之前已经 loaded", async () => {
+    fetchPreferences
+      .mockResolvedValueOnce({
+        preferences: { defaultModel: V3.id, systemPrompt: "旧 prompt" },
+        models: MODELS,
+      })
+      .mockResolvedValueOnce({
+        preferences: { defaultModel: null, systemPrompt: "新 prompt" },
+        models: [FLASH],
+      });
+    const store = usePreferencesStore();
+    await store.ensureLoaded();
+
+    await store.reload();
+
+    expect(fetchPreferences).toHaveBeenCalledTimes(2);
+    expect(store.models).toEqual([FLASH]);
+    expect(store.defaultModel).toBe(null);
+    expect(store.systemPrompt).toBe("新 prompt");
+  });
+
+  it("reload 令更早的 ensureLoaded 迟到响应失效", async () => {
+    let resolveOldRequest;
+    fetchPreferences
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOldRequest = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({
+        preferences: { defaultModel: null, systemPrompt: "刷新后的 prompt" },
+        models: [FLASH],
+      });
+    const store = usePreferencesStore();
+    const oldRequest = store.ensureLoaded();
+
+    await store.reload();
+    resolveOldRequest({
+      preferences: { defaultModel: V3.id, systemPrompt: "迟到的旧 prompt" },
+      models: MODELS,
+    });
+    await oldRequest;
+
+    expect(store.models).toEqual([FLASH]);
+    expect(store.defaultModel).toBe(null);
+    expect(store.systemPrompt).toBe("刷新后的 prompt");
+  });
 });
 
 describe("modelName", () => {

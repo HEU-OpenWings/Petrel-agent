@@ -186,6 +186,8 @@ export const PROVIDERS = [deepseek, siliconflow, ...BUILTIN_PROVIDERS, ollama, v
 export interface ProviderCredentialHint {
   /** 该 provider 接受的环境变量名。本地推理服务也可能非空（见 ollama/vllm）。 */
   readonly envVars: readonly string[];
+  /** 连接测试使用的固定最小模型，必须属于该 provider 的静态 catalog。 */
+  readonly probeModelId: string;
   /** 面向用户的填写指引，纯文本，不含运行时 baseUrl / key / 异常细节。 */
   readonly note: string;
 }
@@ -195,6 +197,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "deepseek",
     {
       envVars: ["DEEPSEEK_API_KEY"],
+      probeModelId: DEFAULT_MODEL_ID,
       note: "DeepSeek 官方 API key，在 https://platform.deepseek.com 获取",
     },
   ],
@@ -202,6 +205,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "siliconflow",
     {
       envVars: ["SILICONFLOW_API_KEY"],
+      probeModelId: "deepseek-ai/DeepSeek-V3",
       note: "硅基流动 API key，在 https://siliconflow.cn 获取",
     },
   ],
@@ -209,6 +213,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "openai",
     {
       envVars: ["OPENAI_API_KEY"],
+      probeModelId: "gpt-5-nano",
       note: "OpenAI API key，在 https://platform.openai.com/api-keys 获取",
     },
   ],
@@ -217,6 +222,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "anthropic",
     {
       envVars: ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+      probeModelId: "claude-haiku-4-5",
       note: "Anthropic key（依次尝试 ANTHROPIC_AUTH_TOKEN、ANTHROPIC_OAUTH_TOKEN、ANTHROPIC_API_KEY，填任意一个均可）",
     },
   ],
@@ -224,6 +230,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "google",
     {
       envVars: ["GEMINI_API_KEY"],
+      probeModelId: "gemini-2.0-flash-lite",
       note: "Google AI / Gemini API key，在 https://aistudio.google.com/apikey 获取",
     },
   ],
@@ -231,6 +238,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "moonshotai",
     {
       envVars: ["MOONSHOT_API_KEY"],
+      probeModelId: "kimi-k2.5",
       note: "Moonshot / Kimi API key，在 https://platform.moonshot.cn 获取",
     },
   ],
@@ -238,6 +246,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "minimax",
     {
       envVars: ["MINIMAX_API_KEY"],
+      probeModelId: "MiniMax-M2.7",
       note: "MiniMax API key，在 https://platform.minimaxi.com 获取",
     },
   ],
@@ -245,6 +254,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "zai",
     {
       envVars: ["ZAI_API_KEY"],
+      probeModelId: "glm-5-turbo",
       note: "智谱 Z.AI API key，在 https://z.ai/manage-apikey 获取",
     },
   ],
@@ -252,6 +262,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "qwen-token-plan",
     {
       envVars: ["QWEN_TOKEN_PLAN_API_KEY"],
+      probeModelId: "qwen3.6-flash",
       note: "阿里 Qwen Token Plan API key，在 https://bailian.console.aliyun.com 获取",
     },
   ],
@@ -263,6 +274,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "ollama",
     {
       envVars: ["OLLAMA_API_KEY"],
+      probeModelId: "qwen2.5:0.5b",
       note: "本地推理服务。请确认已启动 Ollama（默认 http://localhost:11434）并 ollama pull 模型。当前运行时需设置非空的 OLLAMA_API_KEY 才会识别为已配置（可填任意占位值）",
     },
   ],
@@ -270,6 +282,7 @@ export const PROVIDER_CREDENTIAL_HINTS: ReadonlyMap<string, ProviderCredentialHi
     "vllm",
     {
       envVars: ["VLLM_API_KEY"],
+      probeModelId: "default",
       note: "本地推理服务。通过 VLLM_BASE_URL 指定服务地址（默认 http://localhost:8000/v1）。当前运行时需设置非空的 VLLM_API_KEY 才会识别为已配置（可填任意占位值）",
     },
   ],

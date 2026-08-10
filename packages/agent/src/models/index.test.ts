@@ -1,5 +1,29 @@
+import { type AuthContext, createModels } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_MODEL_ID, findModel, listConfiguredModels, listModels } from "./index.ts";
+import {
+  DEFAULT_MODEL_ID,
+  findModel,
+  findModelFor,
+  listConfiguredModels,
+  listConfiguredModelsFor,
+  listModels,
+  listModelsFor,
+  listProviderModelsFor,
+  listProviderStatusesFor,
+} from "./index.ts";
+import { PROVIDERS } from "./providers.ts";
+
+function injectedModels(values: Record<string, string> = {}, providerIds?: string[]) {
+  const authContext: AuthContext = {
+    env: async (name) => values[name],
+    fileExists: async () => false,
+  };
+  const registry = createModels({ authContext });
+  for (const provider of PROVIDERS) {
+    if (!providerIds || providerIds.includes(provider.id)) registry.setProvider(provider);
+  }
+  return registry;
+}
 
 describe("listModels", () => {
   it("列出所有已注册的模型", () => {
@@ -86,6 +110,51 @@ describe("findModel", () => {
   });
 });
 
+describe("参数化 Models helper", () => {
+  it("listModelsFor 与 findModelFor 只读取传入 registry，不回落 global", () => {
+    const registry = injectedModels({}, ["openai"]);
+
+    expect(new Set(listModelsFor(registry).map((model) => model.provider))).toEqual(new Set(["openai"]));
+    expect(findModelFor(registry, "gpt-5-nano")?.provider).toBe("openai");
+    expect(findModelFor(registry, DEFAULT_MODEL_ID)).toBeUndefined();
+  });
+
+  it("listConfiguredModelsFor 对不同凭据上下文给出独立结果", async () => {
+    const deepseek = injectedModels({ DEEPSEEK_API_KEY: "deepseek-test-key" });
+    const openai = injectedModels({ OPENAI_API_KEY: "openai-test-key" });
+
+    const deepseekProviders = new Set(
+      (await listConfiguredModelsFor(deepseek)).map((model) => model.provider),
+    );
+    const openaiProviders = new Set((await listConfiguredModelsFor(openai)).map((model) => model.provider));
+    expect(deepseekProviders).toContain("deepseek");
+    expect(deepseekProviders).not.toContain("openai");
+    expect(openaiProviders).toContain("openai");
+    expect(openaiProviders).not.toContain("deepseek");
+  });
+
+  it("listProviderStatusesFor 的配置状态来自传入 registry", async () => {
+    const registry = injectedModels({ DEEPSEEK_API_KEY: "deepseek-test-key" });
+    const result = await listProviderStatusesFor(registry);
+
+    expect(result.providers.find((provider) => provider.id === "deepseek")?.configured).toBe(true);
+    expect(result.providers.find((provider) => provider.id === "openai")?.configured).toBe(false);
+  });
+
+  it("listProviderModelsFor 的目录与可用性来自传入 registry", async () => {
+    const configured = injectedModels({ DEEPSEEK_API_KEY: "deepseek-test-key" });
+    const empty = injectedModels();
+
+    const configuredView = await listProviderModelsFor(configured, "deepseek");
+    const emptyView = await listProviderModelsFor(empty, "deepseek");
+    expect(configuredView?.configured).toBe(true);
+    expect(configuredView?.models.every((model) => model.available)).toBe(true);
+    expect(emptyView?.configured).toBe(false);
+    expect(emptyView?.models.every((model) => model.available === false)).toBe(true);
+    await expect(listProviderModelsFor(empty, "missing")).resolves.toBeUndefined();
+  });
+});
+
 describe("listConfiguredModels", () => {
   // 清理本用例 stub 的 env，避免污染同进程后续用例
   afterEach(() => {
@@ -95,10 +164,8 @@ describe("listConfiguredModels", () => {
   // 没配任何 API key 时，所有 provider 的 getAvailable 都因 auth 不完整被过滤，
   // 前端选择器应当是空的——而不是把一堆「选了就报错」的模型列出来。
   //
-  // 注意：部分 provider 还认额外的 env 变体（如 Anthropic 还认 ANTHROPIC_AUTH_TOKEN /
-  // ANTHROPIC_OAUTH_TOKEN）。开发机上设了这些（用代理网关的人常见）会让这条红，且失败信息
-  // 不指向根因。这里把已知的变体也一并清掉。根本解法是改注入式测试（独立 createModels 实例），
-  // 但那需要把 listConfiguredModels 改成接受 models 参数，超出本 PR 范围，留作 follow-up。
+  // global wrapper 仍要做兼容回归，所以这里清空所有已知 env 变体，避免开发机真实配置污染。
+  // 参数化实现已由上面的独立 createModels 用例验证，不依赖 process.env。
   it("未配置任何 API key 时返回空数组", async () => {
     const empty = "";
     vi.stubEnv("DEEPSEEK_API_KEY", empty);

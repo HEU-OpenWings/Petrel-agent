@@ -62,4 +62,35 @@ describe("createPreferencesRepository", () => {
       systemPrompt: null,
     });
   });
+
+  it("默认模型仍匹配时条件清空，并保留 systemPrompt", async () => {
+    await repo.save(TEST_USER_ID, { defaultModel: "m-1", systemPrompt: "保留这段提示词" });
+
+    await expect(repo.clearDefaultModelIfMatches(TEST_USER_ID, "m-1")).resolves.toBe(true);
+    await expect(repo.findByUserId(TEST_USER_ID)).resolves.toEqual({
+      defaultModel: null,
+      systemPrompt: "保留这段提示词",
+    });
+  });
+
+  it("并发保存了新默认模型后，过期的条件清理不会覆盖新值", async () => {
+    await repo.save(TEST_USER_ID, { defaultModel: "m-1", systemPrompt: "提示词" });
+
+    // 模拟删除凭据请求读到 m-1 后，另一个标签页先保存了 m-2。
+    await repo.save(TEST_USER_ID, { defaultModel: "m-2", systemPrompt: "新提示词" });
+
+    await expect(repo.clearDefaultModelIfMatches(TEST_USER_ID, "m-1")).resolves.toBe(false);
+    await expect(repo.findByUserId(TEST_USER_ID)).resolves.toEqual({
+      defaultModel: "m-2",
+      systemPrompt: "新提示词",
+    });
+  });
+
+  it("没有偏好行时条件清理幂等返回 false", async () => {
+    await expect(repo.clearDefaultModelIfMatches(TEST_USER_ID, "m-1")).resolves.toBe(false);
+    await expect(repo.findByUserId(TEST_USER_ID)).resolves.toEqual({
+      defaultModel: null,
+      systemPrompt: null,
+    });
+  });
 });

@@ -30,6 +30,8 @@ const state = vi.hoisted(() => ({
   promptFailureAt: undefined as number | undefined,
   /** HEU-40 配额测试开关：默认沿用真实 env（enforcement=false，不拦截） */
   quotaEnforcement: false,
+  /** 让真实 harness.prompt 在测试指定的边界直接失败，覆盖 SSE catch 的安全文案。 */
+  promptError: undefined as Error | undefined,
 }));
 
 /**
@@ -93,7 +95,9 @@ vi.mock("@petrel/agent", async (importOriginal) => {
     createHarness: (options: CreateHarnessOptions) => {
       state.seenHarnessOptions = options;
       const harness = actual.createHarness({ ...options, ...state.harnessOptions });
-      if (state.promptFailureAt !== undefined) {
+      if (state.promptError) {
+        vi.spyOn(harness, "prompt").mockRejectedValue(state.promptError);
+      } else if (state.promptFailureAt !== undefined) {
         const failureAt = state.promptFailureAt;
         const prompt = harness.prompt.bind(harness);
         let calls = 0;
@@ -170,6 +174,7 @@ beforeEach(async () => {
   state.harnessOptions = undefined;
   state.promptFailureAt = undefined;
   state.quotaEnforcement = false;
+  state.promptError = undefined;
   useFaux();
   await reset();
   __resetAuthRateLimits();
@@ -256,6 +261,12 @@ async function storedRoles(sessionId = SESSION_ID): Promise<string[]> {
   return rows
     .filter((row) => row.type === "message")
     .map((row) => (row.payload as { message: { role: string } }).message.role);
+}
+
+function currentModels() {
+  const models = state.harnessOptions?.models;
+  if (!models) throw new Error("faux Models 尚未初始化");
+  return models;
 }
 
 describe("POST /api/chat 请求体校验", () => {
@@ -448,7 +459,8 @@ describe("POST /api/chat 会话持久化", () => {
     const secondEvents = parseSse(await secondDone);
     await firstDone;
 
-    expect(secondEvents).toContainEqual({ event: "error", data: { message: "transport unavailable" } });
+    expect(secondEvents).toContainEqual({ event: "error", data: { message: "模型调用失败，请稍后重试" } });
+    expect(JSON.stringify(secondEvents)).not.toContain("transport unavailable");
   });
 
   // HEU-37 验收：abort 只停当前轮，排队中的消息照常被回答并落库
@@ -685,9 +697,53 @@ describe("POST /api/chat systemPrompt", () => {
   });
 });
 
+describe("POST /api/chat HEU-54 凭据 preflight", () => {
+  it("先检查模型凭据再检查配额，拒绝后释放 handle", async () => {
+    const db = state.db;
+    if (!db) throw new Error("测试数据库尚未初始化");
+    const user = await createUserRepository(db).findByEmail("a@x.io");
+    if (!user) throw new Error("测试用户未找到");
+    await createQuotaLimitsRepository(db).upsertLimit(user.id, 0);
+    state.quotaEnforcement = true;
+    vi.spyOn(currentModels(), "checkAuth").mockResolvedValueOnce(undefined);
+
+    const blocked = await postChat({ message: "你好", sessionId: SESSION_ID });
+
+    expect(blocked.status).toBe(409);
+    const payload = (await blocked.json()) as { error: { message: string } };
+    expect(payload.error.message).toContain("凭据");
+    expect(payload.error.message).not.toContain("配额");
+    expect(await storedRoles()).toEqual([]);
+
+    // 第一次 mock 只影响一次调用；关掉配额后，同一会话必须能继续进入 SSE。
+    // 若 preflight 拒绝路径没有 release，这条会留下泄漏的 registry 引用。
+    state.quotaEnforcement = false;
+    faux.setResponses([fauxAssistantMessage([fauxText("恢复后回答")])]);
+    const ok = await postChat({ message: "再问", sessionId: SESSION_ID });
+    expect(ok.status).toBe(200);
+    expect(await readAll(ok)).toContain("恢复后回答");
+  });
+
+  it("凭据存储或解密失败时固定返回 503，不回显内部错误", async () => {
+    vi.spyOn(currentModels(), "checkAuth").mockRejectedValueOnce(
+      new Error("opaque-decryption-detail-must-not-leak"),
+    );
+
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const text = await response.text();
+
+    expect(response.status).toBe(503);
+    expect(text).toContain("凭据");
+    expect(text).not.toContain("opaque-decryption-detail-must-not-leak");
+    expect(await storedRoles()).toEqual([]);
+  });
+});
+
 describe("POST /api/chat SSE 协议", () => {
-  it("仍然只发 event: agent，data 是 pi 的 AgentEvent 原文", async () => {
-    faux.setResponses([fauxAssistantMessage([fauxText("回答")])]);
+  it("只发送 core AgentEvent 的安全投影，丢弃 Harness 自有事件与不透明字段", async () => {
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("回答")], { responseId: "opaque-response-id-must-not-leak" }),
+    ]);
 
     const response = await postChat({ message: "你好", sessionId: SESSION_ID });
     const text = await readAll(response);
@@ -697,23 +753,39 @@ describe("POST /api/chat SSE 协议", () => {
     const events = parseSse(text);
     expect(events.every((entry) => entry.event === "agent")).toBe(true);
 
-    // 前端 useAgentStream.js 就是按这些 type 归约消息状态的，顺序和名字都不能变。
-    // AgentHarness 比裸 Agent 多发 after_provider_response / save_point / settled——
-    // 这是它自己落库与维护 running 标记要用的信号，前端按类型归约，多出来的类型不影响
+    expect(text).not.toContain("opaque-response-id-must-not-leak");
+
+    // 前端 useAgentStream.js 按这些 core AgentEvent 归约消息状态。
+    // after_provider_response / save_point / settled 属于 Harness 内部事件，必须 fail-closed 丢弃。
     const types = events.map((entry) => (entry.data as { type: string }).type);
     expect(types.filter((type) => type !== "message_update")).toEqual([
       "agent_start",
       "turn_start",
       "message_start",
       "message_end",
-      "after_provider_response",
       "message_start",
       "message_end",
       "turn_end",
-      "save_point",
       "agent_end",
-      "settled",
     ]);
+    expect(types).not.toContain("after_provider_response");
+    expect(types).not.toContain("save_point");
+    expect(types).not.toContain("settled");
+  });
+
+  it("模型运行抛错时只发送固定安全文案", async () => {
+    state.promptError = new Error("opaque-upstream-error-must-not-leak");
+
+    const response = await postChat({ message: "你好", sessionId: SESSION_ID });
+    const text = await readAll(response);
+    const events = parseSse(text);
+
+    expect(response.status).toBe(200);
+    expect(text).not.toContain("opaque-upstream-error-must-not-leak");
+    expect(events).toContainEqual({
+      event: "error",
+      data: { message: "模型调用失败，请稍后重试" },
+    });
   });
 });
 

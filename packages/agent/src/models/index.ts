@@ -1,4 +1,4 @@
-import { type Api, createModels, type Model } from "@earendil-works/pi-ai";
+import { type Api, createModels, type Model, type Models } from "@earendil-works/pi-ai";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER_ID,
@@ -38,8 +38,8 @@ export interface ModelSummary {
  * 且类型检查与测试都拦不住。providerName 也不必再抄一遍字面量——
  * Provider 自己就带 name。
  */
-export function listModels(): ModelSummary[] {
-  return models.getProviders().flatMap((provider) =>
+export function listModelsFor(registry: Models): ModelSummary[] {
+  return registry.getProviders().flatMap((provider) =>
     provider.getModels().map((model) => ({
       id: model.id,
       name: model.name,
@@ -53,6 +53,10 @@ export function listModels(): ModelSummary[] {
   );
 }
 
+export function listModels(): ModelSummary[] {
+  return listModelsFor(models);
+}
+
 /**
  * 按 model id 查。偏好里只存一个字符串，不区分 provider——因此遇到聚合平台
  * 代售的同名模型时，**默认 provider 优先**：例如 "deepseek-v4-flash" 同时存在于
@@ -62,13 +66,17 @@ export function listModels(): ModelSummary[] {
  * 在 model id 唯一性假设下无法表达——那需要把偏好改成 (provider, id) 二元键，
  * 超出 HEU-9 范围。本函数至少保证默认场景无歧义。
  */
-export function findModel(id: string): Model<Api> | undefined {
-  const all = models.getModels();
+export function findModelFor(registry: Models, id: string): Model<Api> | undefined {
+  const all = registry.getModels();
   // 默认 provider 的同名模型优先；没有再回退到第一个匹配
   return (
     all.find((model) => model.id === id && model.provider === DEFAULT_PROVIDER_ID) ??
     all.find((model) => model.id === id)
   );
+}
+
+export function findModel(id: string): Model<Api> | undefined {
+  return findModelFor(models, id);
 }
 
 /**
@@ -93,18 +101,18 @@ export function findModel(id: string): Model<Api> | undefined {
  * 非默认 provider 上的重名条目被跳过——想用它们需要先把偏好键改成 (provider, id) 二元，
  * 超出 HEU-9 范围。
  */
-export async function listConfiguredModels(): Promise<ModelSummary[]> {
+export async function listConfiguredModelsFor(registry: Models): Promise<ModelSummary[]> {
   // 用 pi-ai 的 getAvailable()：它并行解析所有 provider 的 auth、尊重 provider.filterModels
   // 钩子（按实际凭据收窄目录，如 github-copilot），比手写串行 for-await 11 个 provider 更快、
   // 更不易漏。getAvailable 只返回 auth 配置完整的 provider 的 Model[]（不含 providerName，
   // 这里从 models.getProvider 反查补上）。
-  const available = await models.getAvailable();
+  const available = await registry.getAvailable();
   const summaries: ModelSummary[] = [];
   for (const model of available) {
     // 重名去重：只暴露 findModel 会解析到的那一条，保证选择器与运行时解析一致
-    const resolved = findModel(model.id);
+    const resolved = findModelFor(registry, model.id);
     if (resolved && resolved.provider !== model.provider) continue;
-    const provider = models.getProvider(model.provider);
+    const provider = registry.getProvider(model.provider);
     summaries.push({
       id: model.id,
       name: model.name,
@@ -115,6 +123,10 @@ export async function listConfiguredModels(): Promise<ModelSummary[]> {
     });
   }
   return summaries;
+}
+
+export async function listConfiguredModels(): Promise<ModelSummary[]> {
+  return listConfiguredModelsFor(models);
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +198,7 @@ export interface ProviderModelsResponse {
 /** side table 缺项时的兜底文案（CI 的 hint parity 测试会让这种代码进不了 main） */
 const MISSING_HINT: ProviderCredentialHint = Object.freeze({
   envVars: [] as readonly string[],
+  probeModelId: "",
   note: "该 provider 的配置指引尚未维护",
 });
 
@@ -203,10 +216,10 @@ const STATUS_AVAILABILITY_UNAVAILABLE = "模型可用性暂时无法读取";
  * 任意一个 provider 抛错会整体 reject，无法隔离。传了 id 也仍可能抛错（该 provider 自己的
  * filterModels 钩子等），所以照样 try/catch。
  */
-async function toProviderStatus(providerId: string, name: string): Promise<ProviderStatus> {
+async function toProviderStatus(registry: Models, providerId: string, name: string): Promise<ProviderStatus> {
   const hint = PROVIDER_CREDENTIAL_HINTS.get(providerId) ?? MISSING_HINT;
   const isDefault = providerId === DEFAULT_PROVIDER_ID;
-  const modelCount = models.getModels(providerId).length;
+  const modelCount = registry.getModels(providerId).length;
 
   let configured: boolean | null;
   let availableModelCount: number | null;
@@ -214,7 +227,7 @@ async function toProviderStatus(providerId: string, name: string): Promise<Provi
   let statusMessage: string | null;
 
   try {
-    const auth = await models.checkAuth(providerId);
+    const auth = await registry.checkAuth(providerId);
     if (auth === undefined) {
       // 未配置：不调 getAvailable（它对未配置 provider 也返回空数组，但多一次解析无意义）
       configured = false;
@@ -225,7 +238,7 @@ async function toProviderStatus(providerId: string, name: string): Promise<Provi
       configured = true;
       // 已配置才查可用模型数；getAvailable(id) 失败时 configured 仍保留 true
       try {
-        availableModelCount = (await models.getAvailable(providerId)).length;
+        availableModelCount = (await registry.getAvailable(providerId)).length;
         runtimeStatus = "ready";
         statusMessage = null;
       } catch {
@@ -260,16 +273,20 @@ async function toProviderStatus(providerId: string, name: string): Promise<Provi
  * 列出全部运行时 provider 的配置状态。运行时注册顺序即输出顺序（自建云端 → 内置 → 本地）。
  * 并行解析但每个 provider 内部独立 try/catch，单个故障不影响其他项。
  */
-export async function listProviderStatuses(): Promise<ProviderListResponse> {
-  const providers = models.getProviders();
+export async function listProviderStatusesFor(registry: Models): Promise<ProviderListResponse> {
+  const providers = registry.getProviders();
   const statuses = await Promise.all(
-    providers.map((provider) => toProviderStatus(provider.id, provider.name)),
+    providers.map((provider) => toProviderStatus(registry, provider.id, provider.name)),
   );
   return {
     defaultProviderId: DEFAULT_PROVIDER_ID,
     defaultModelId: DEFAULT_MODEL_ID,
     providers: statuses,
   };
+}
+
+export async function listProviderStatuses(): Promise<ProviderListResponse> {
+  return listProviderStatusesFor(models);
 }
 
 /**
@@ -280,8 +297,11 @@ export async function listProviderStatuses(): Promise<ProviderListResponse> {
  *（已配置才查）。未配置 provider 仍返回目录，每个模型 available=false——让前端能展示
  * 「支持这些模型，但当前未配置」。
  */
-export async function listProviderModels(providerId: string): Promise<ProviderModelsResponse | undefined> {
-  const provider = models.getProvider(providerId);
+export async function listProviderModelsFor(
+  registry: Models,
+  providerId: string,
+): Promise<ProviderModelsResponse | undefined> {
+  const provider = registry.getProvider(providerId);
   if (!provider) return undefined;
 
   const isDefault = provider.id === DEFAULT_PROVIDER_ID;
@@ -295,7 +315,7 @@ export async function listProviderModels(providerId: string): Promise<ProviderMo
   let availableIds: Set<string> | null; // null 表示可用性查询失败，所有模型 available=null
 
   try {
-    const auth = await models.checkAuth(providerId);
+    const auth = await registry.checkAuth(providerId);
     if (auth === undefined) {
       configured = false;
       runtimeStatus = "ready";
@@ -304,7 +324,7 @@ export async function listProviderModels(providerId: string): Promise<ProviderMo
     } else {
       configured = true;
       try {
-        const available = await models.getAvailable(providerId);
+        const available = await registry.getAvailable(providerId);
         availableIds = new Set(available.map((m) => m.id));
         runtimeStatus = "ready";
         statusMessage = null;
@@ -336,4 +356,8 @@ export async function listProviderModels(providerId: string): Promise<ProviderMo
     statusMessage,
     models: modelsView,
   };
+}
+
+export async function listProviderModels(providerId: string): Promise<ProviderModelsResponse | undefined> {
+  return listProviderModelsFor(models, providerId);
 }

@@ -23,13 +23,21 @@ app.notFound(notFound);
 app.route("/api/system", system);
 app.route("/api/auth", auth);
 
+// Provider 响应包含当前凭据的实时状态；这层必须放在 requireAuth 前，
+// 才能让未登录 401 也带 no-store。已认证的成功、错误和自然 404
+// 还会由 providers 子路由的同名中间件防御性覆盖。
+app.use("/api/providers/*", async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  await next();
+});
+
 app.use("/api/*", requireAuth);
 
 app.route("/api/chat", chat);
 app.route("/api/sessions", sessions);
 app.route("/api/account", account);
-// HEU-53：Settings「模型服务」面板的只读 provider 配置状态接口。挂在 requireAuth 之下，
-// 与 /api/account 同级；isolation.test.ts 守着「无 cookie → 401」。
+// HEU-53/54：Settings「模型服务」的当前用户状态与凭据管理接口。
+// 挂在 requireAuth 之下，isolation.test.ts 守着「无 cookie → 401」。
 app.route("/api/providers", providers);
 app.use("/api/admin/*", requireAdmin);
 app.route("/api/admin", admin);

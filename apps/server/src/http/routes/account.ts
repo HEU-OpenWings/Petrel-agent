@@ -1,4 +1,4 @@
-import { listConfiguredModels } from "@petrel/agent";
+import { createUserProviderService } from "@petrel/agent";
 import { createPreferencesRepository, createUserRepository, getDb } from "@petrel/database";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -51,11 +51,14 @@ export const account = new Hono<AppEnv>()
    * 设置面板要用它渲染下拉，ChatView 要用它显示当前模型名。少一个端点少一个往返。
    */
   .get("/preferences", async (c) => {
-    const repo = createPreferencesRepository(getDb());
-    const preferences = await repo.findByUserId(c.get("currentUser").id);
+    const db = getDb();
+    const userId = c.get("currentUser").id;
+    const repo = createPreferencesRepository(db);
+    const preferences = await repo.findByUserId(userId);
     // 只返回已配置（API key 可解析）的 provider 的模型，没配 key 的厂商不下拉。
     // PUT 侧校验也用同一口径（见下方），读写一致，避免存入选择器里看不到的 id。
-    return c.json({ preferences, models: await listConfiguredModels() });
+    const models = await createUserProviderService(db, userId).listConfiguredModels();
+    return c.json({ preferences, models });
   })
 
   .put("/preferences", async (c) => {
@@ -69,13 +72,15 @@ export const account = new Hono<AppEnv>()
     }
     const fields = body as { defaultModel?: unknown; systemPrompt?: unknown };
 
+    const db = getDb();
+    const userId = c.get("currentUser").id;
     const defaultModel = parseNullableString(fields.defaultModel, "defaultModel");
     // 与 GET 同口径：按「已配置」（API key 可解析）校验，而非全部注册模型。
     // 否则能存一个选择器里根本看不到、且必然运行时失败的 model id——设置面板显示
     // 「跟随默认」但每条消息都传它，/api/chat 拿到没配 key 的 provider 直接报错。
     // PUT 本就是 async，await listConfiguredModels() 无副作用。
     if (defaultModel !== null) {
-      const configured = await listConfiguredModels();
+      const configured = await createUserProviderService(db, userId).listConfiguredModels();
       if (!configured.some((model) => model.id === defaultModel)) {
         throw new HTTPException(400, {
           message: `模型未配置或未注册：${defaultModel}（仅已配置 API key 的模型可设为默认）`,
@@ -90,8 +95,8 @@ export const account = new Hono<AppEnv>()
       });
     }
 
-    const repo = createPreferencesRepository(getDb());
-    const preferences = await repo.save(c.get("currentUser").id, { defaultModel, systemPrompt });
+    const repo = createPreferencesRepository(db);
+    const preferences = await repo.save(userId, { defaultModel, systemPrompt });
     return c.json({ preferences });
   })
 
