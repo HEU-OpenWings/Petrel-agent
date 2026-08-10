@@ -1,6 +1,7 @@
 import {
   AgentHarness,
   type AgentHarnessTool,
+  type AgentHarnessToolContextSource,
   InMemorySessionRepo,
   Session,
 } from "@earendil-works/pi-agent-core";
@@ -10,9 +11,29 @@ import { defaultModel, models as defaultModels, findModel, listModels } from "./
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID } from "./models/providers.ts";
 import { createUserModels } from "./models/user-models.ts";
 import { PgSessionStorage } from "./session/pg-storage.ts";
-import { currentTime } from "./tools/current-time.ts";
+import { selectTools } from "./tools/registry.ts";
+
+/**
+ * 从注册表解析工具名到工具对象。供 harness-registry 在切换工具子集时使用：
+ * setTools() 需要实际的工具数组，而 apps/server 只持有名字、不应碰 pi 类型。
+ */
+export function resolveTools(names?: string[]): AgentHarnessTool<ToolContext>[] {
+  return selectTools(names);
+}
 
 export const DEFAULT_SYSTEM_PROMPT = "你是 Petrel 智能助手。回答简洁准确，需要实时信息时调用工具。";
+
+/**
+ * 工具执行时携带的调用者上下文。
+ *
+ * 仅含 userId 与 sessionId——不给工具整个 user 对象（email / role 等与工具无关）。
+ * 用函数形式注入：常驻 harness 下静态值会冻住首次装配时的上下文，
+ * 函数形式每次工具执行时重新求值，确保拿到的是当前请求的身份。
+ */
+export interface ToolContext {
+  userId: string;
+  sessionId: string;
+}
 
 /**
  * 打开一个落在 Postgres 上的会话。
@@ -32,7 +53,25 @@ export interface CreateHarnessOptions {
   session: Session;
   /** 初始系统提示；常驻实例后续可通过 before_agent_start hook 按 run 覆盖。 */
   systemPrompt?: string;
-  tools?: AgentHarnessTool<undefined>[];
+  /**
+   * 直接注入工具对象。测试用（faux harness 绕过注册表）。
+   * 与 activeToolNames 互斥：传了 tools 就用它，忽略 activeToolNames。
+   */
+  tools?: AgentHarnessTool<ToolContext>[];
+  /**
+   * 从注册表按名选工具。生产路径用这个：apps/server 只传名字、不碰 pi 的工具类型，
+   * 守住「pi 的接线只在 agent 与 ai」这条约束。
+   *
+   * undefined 表示取全部 enabled 的工具；[] 表示一个工具都不用。
+   */
+  activeToolNames?: string[];
+  /**
+   * 工具执行时注入的调用者上下文。
+   *
+   * 必填——TContext 不再是 undefined，pi 强制要求非 undefined 时提供 toolContext。
+   * 用函数形式而不是静态值：harness 按 sessionId 常驻，静态值会冻住首次装配时的值。
+   */
+  toolContext: AgentHarnessToolContextSource<ToolContext>;
   /** 模型集合，测试注入 faux provider。优先级最高。 */
   models?: Models;
   model?: Model<Api>;
@@ -130,14 +169,16 @@ export function resolveModel(options: { model?: Model<Api>; modelId?: string; mo
  * Models 优先级：显式 options.models（测试 faux）> userCredentialScope（per-user DB 凭据）
  * > 全局 defaultModels（R0 行为）。
  */
-export function createHarness(options: CreateHarnessOptions): AgentHarness {
+export function createHarness(options: CreateHarnessOptions): AgentHarness<ToolContext> {
   const models = options.models ?? resolveModelsForScope(options.userCredentialScope);
+  const tools = options.tools ?? selectTools(options.activeToolNames);
   return new AgentHarness({
     session: options.session,
     models,
     model: resolveModel({ model: options.model, modelId: options.modelId, models }),
-    tools: options.tools ?? [currentTime],
+    tools,
     systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    toolContext: options.toolContext,
   });
 }
 

@@ -1,3 +1,5 @@
+import type { AgentHarness as PiAgentHarness } from "@earendil-works/pi-agent-core";
+import type { ToolContext } from "./harness.ts";
 import { currentTime } from "./tools/current-time.ts";
 
 // 供上层（apps/server 等）引用这些 pi 类型而不直接依赖 @earendil-works/*：
@@ -5,11 +7,16 @@ import { currentTime } from "./tools/current-time.ts";
 export type {
   Agent,
   AgentEvent,
-  AgentHarness,
   AgentHarnessEvent,
   AgentMessage,
   Session,
 } from "@earendil-works/pi-agent-core";
+
+/**
+ * AgentHarness 已带上 ToolContext 泛型，所有消费者拿到的都是 `AgentHarness<ToolContext>`。
+ * 改名重新导出：解决 `AgentHarness<undefined>` 不兼容的 typecheck 错误。
+ */
+export type AgentHarness = PiAgentHarness<ToolContext>;
 // 只转出 apps/server 真正消费的那几个。effectiveWindow / CompactionSkipReason /
 // MaybeCompactOptions 目前只在 packages/agent 内部用到，需要时再加
 export {
@@ -30,6 +37,8 @@ export {
   createPgSession,
   DEFAULT_SYSTEM_PROMPT,
   resolveModel,
+  resolveTools,
+  type ToolContext,
 } from "./harness.ts";
 // HEU-53 provider 配置状态查询（只读，给 Settings「模型服务」面板）
 export {
@@ -62,4 +71,5 @@ export {
   type UserProviderStatus,
 } from "./models/user-provider-service.ts";
 export { PgSessionStorage } from "./session/pg-storage.ts";
+export { initMcpTools, listToolNames, selectTools, shutdownMcpTools } from "./tools/registry.ts";
 export { currentTime };

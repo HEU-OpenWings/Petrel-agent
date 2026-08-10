@@ -58,7 +58,15 @@ function fauxFactory(chunked = false) {
     async create(sessionId: string) {
       created += 1;
       const session = await createMemorySession(sessionId);
-      return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+      return {
+        harness: createHarness({
+          session,
+          models,
+          model: faux.getModel(),
+          toolContext: () => ({ userId: TEST_USER_ID, sessionId }),
+        }),
+        session,
+      };
     },
   };
 }
@@ -257,8 +265,80 @@ describe("createHarnessRegistry", () => {
     expect(factory.created).toBe(2);
   });
 
-  it("运行中的后续消息都走 followUp，在同一个 run 内被消化", async () => {
+  it("运行中的后续消息进我们自己的队列，各自独立 run 消化且全部落库", async () => {
     // 慢速吐字，保证后续 send 进临界区时第一轮真的还在跑
+    const factory = fauxFactory(true);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const prompt = vi.spyOn(handle.harness, "prompt");
+    const types: string[] = [];
+    handle.harness.subscribe((event) => {
+      types.push(event.type);
+    });
+
+    const first = handle.send("第一个问题");
+    const second = handle.send("第二个问题");
+    const third = handle.send("第三个问题");
+    // send() 会等到这条消息自己的独立 run 真正结束才 resolve
+    await Promise.all([first, second, third]);
+    handle.release();
+
+    const text = JSON.stringify(await handle.session.getEntries());
+    expect(text).toContain("第一个问题");
+    expect(text).toContain("第二个问题");
+    expect(text).toContain("第三个问题");
+    expect(prompt.mock.calls.map(([message]) => message)).toEqual(["第一个问题", "第二个问题", "第三个问题"]);
+    // HEU-37：不再用 harness.followUp()（error/aborted 收尾会绕过它的抽干点），
+    // 每个排队消息各占一轮 run，所以是三次 agent_end——顺序仍然保持
+    expect(types.filter((type) => type === "agent_end")).toHaveLength(3);
+  });
+
+  it("首轮以 error 收尾时，排队中的第二条消息仍被回答并落库", async () => {
+    const factory = fauxFactory(true);
+    // 第一轮返回 stopReason: "error"，第二轮正常回答
+    factory.faux.setResponses([
+      fauxAssistantMessage([fauxText("答")], { stopReason: "error" }),
+      fauxAssistantMessage([fauxText("答")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const types: string[] = [];
+    handle.harness.subscribe((event) => {
+      types.push(event.type);
+    });
+
+    const first = handle.send("第一个问题");
+    const second = handle.send("第二个问题");
+    await Promise.all([first, second]);
+    handle.release();
+
+    const text = JSON.stringify(await handle.session.getEntries());
+    expect(text).toContain("第一个问题");
+    expect(text).toContain("第二个问题");
+    // 两轮 run：首轮 error 收尾、第二轮消化排队消息
+    expect(types.filter((type) => type === "agent_end")).toHaveLength(2);
+  });
+
+  it("排队消息的 prompt 抛异常时 send 会 reject，而不是静默成功", async () => {
+    const factory = fauxFactory(true);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const originalPrompt = handle.harness.prompt.bind(handle.harness);
+    vi.spyOn(handle.harness, "prompt")
+      .mockImplementationOnce((message, options) => originalPrompt(message, options))
+      .mockRejectedValueOnce(new Error("transport unavailable"));
+
+    const first = handle.send("第一个问题");
+    const second = handle.send("第二个问题");
+
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).rejects.toThrow("transport unavailable");
+    handle.release();
+  });
+
+  it("abort 只停当前轮，排队中的消息照常被回答并落库", async () => {
     const factory = fauxFactory(true);
     const registry = createHarnessRegistry({ db, createHarness: factory.create });
 
@@ -270,18 +350,41 @@ describe("createHarnessRegistry", () => {
 
     const first = handle.send("第一个问题");
     const second = handle.send("第二个问题");
-    const third = handle.send("第三个问题");
-    // send() 现在自己会等到整轮真正结束才 resolve（followUp 分支内部等了 waitForIdle）
-    await Promise.all([first, second, third]);
+    await registry.abort(SESSION_ID, TEST_USER_ID);
+    await Promise.all([first, second]);
     handle.release();
 
     const text = JSON.stringify(await handle.session.getEntries());
     expect(text).toContain("第一个问题");
     expect(text).toContain("第二个问题");
-    expect(text).toContain("第三个问题");
-    // 这条才是真正区分 followUp 与 prompt 的断言：followUp 的消息在同一个 run 内，
-    // 所以整个过程只有一次 agent_end。两条都走 prompt 的话这里会是 2
-    expect(types.filter((type) => type === "agent_end")).toHaveLength(1);
+    // abort 的首轮 + 排队消息的第二轮
+    expect(types.filter((type) => type === "agent_end")).toHaveLength(2);
+  });
+
+  it("evict 时排队中的消息被 reject，不挂住连接（HEU-37）", async () => {
+    const factory = fauxFactory(true);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const types: string[] = [];
+    handle.harness.subscribe((event) => {
+      types.push(event.type);
+    });
+    const first = handle.send("第一个问题");
+    // 等首轮真正开始（避免 evict 落在 send 的装配阶段，那条路径的语义不同）
+    await vi.waitFor(() => expect(types).toContain("agent_start"));
+    const second = handle.send("第二个问题");
+    // 预挂 handler：evict 会同步 reject 排队条目，断言要等 evict 结束后才 attach，
+    // 不预挂的话这个拒绝在 attach 之前被判 unhandled
+    second.catch(() => undefined);
+
+    // evict 会 abort 正在跑的首轮（首轮 resolve），并 reject 排队中的消息
+    await registry.evict(SESSION_ID);
+    handle.release();
+
+    await expect(first).resolves.toBeUndefined();
+    // reject 让对应 SSE 流收到 event:error，而不是永远挂住
+    await expect(second).rejects.toMatchObject({ kind: "forbidden" });
   });
 
   it("abort 只对属于自己的会话生效", async () => {
@@ -351,7 +454,15 @@ function compactionFactory() {
         });
         await session.appendMessage(fauxAssistantMessage([fauxText(chunk)]));
       }
-      return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+      return {
+        harness: createHarness({
+          session,
+          models,
+          model: faux.getModel(),
+          toolContext: () => ({ userId: TEST_USER_ID, sessionId }),
+        }),
+        session,
+      };
     },
   };
 }
@@ -514,6 +625,52 @@ describe("createHarnessRegistry 的自动压缩", () => {
     second.release();
 
     expect(seenSystem).toBe("第一个提示");
+  });
+
+  it("运行中 acquire 的配置会在它自己的排队 run 开始前应用", async () => {
+    const factory = fauxFactory();
+    let firstStarted = false;
+    let releaseFirst: () => void = () => undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let queuedSystemPrompt: string | undefined;
+    factory.faux.setResponses([
+      async () => {
+        firstStarted = true;
+        await firstGate;
+        return fauxAssistantMessage([fauxText("第一轮回答")]);
+      },
+      (context) => {
+        queuedSystemPrompt = context.systemPrompt;
+        return fauxAssistantMessage([fauxText("第二轮回答")]);
+      },
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const firstHandle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题", {
+      systemPrompt: "第一个提示",
+    });
+    const alternate = fauxProvider({
+      provider: "faux-alternate",
+      models: [{ id: "faux-alternate", name: "Faux Alternate" }],
+    });
+    firstHandle.harness.models.setProvider(alternate.provider);
+    const first = firstHandle.send("第一个问题");
+    await vi.waitFor(() => expect(firstStarted).toBe(true));
+
+    const setModel = vi.spyOn(firstHandle.harness, "setModel").mockResolvedValue(undefined);
+    const secondHandle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第二个问题", {
+      systemPrompt: "第二个提示",
+      modelId: "faux-alternate",
+    });
+    const second = secondHandle.send("第二个问题");
+    releaseFirst();
+    await Promise.all([first, second]);
+    firstHandle.release();
+    secondHandle.release();
+
+    expect(queuedSystemPrompt).toBe("第二个提示");
+    expect(setModel).toHaveBeenCalledWith(expect.objectContaining({ id: "faux-alternate" }));
   });
 
   it("压缩失败不阻断本轮，照常 prompt", async () => {
@@ -742,7 +899,15 @@ function overflowRecoveryFactory() {
         });
         await session.appendMessage(fauxAssistantMessage([fauxText(chunk)]));
       }
-      return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+      return {
+        harness: createHarness({
+          session,
+          models,
+          model: faux.getModel(),
+          toolContext: () => ({ userId: TEST_USER_ID, sessionId }),
+        }),
+        session,
+      };
     },
   };
 }
@@ -859,6 +1024,39 @@ describe("createHarnessRegistry 的 overflow 兜底", () => {
     handle.release();
 
     expect(text).toContain("已自动压缩历史，请重新发送");
+  });
+
+  it("排队 run 溢出时同样触发补救压缩，避免后续消息连锁失败", async () => {
+    const factory = overflowRecoveryFactory();
+    let firstStarted = false;
+    let releaseFirst: () => void = () => undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    factory.faux.setResponses([
+      async () => {
+        firstStarted = true;
+        await firstGate;
+        return fauxAssistantMessage([fauxText("第一轮回答")]);
+      },
+      OVERFLOW,
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+    ]);
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "第一个问题");
+    const first = handle.send("第一个问题");
+    await vi.waitFor(() => expect(firstStarted).toBe(true));
+    const notices: HarnessNotice[] = [];
+    const second = handle.send("第二个问题", { onNotice: (notice) => notices.push(notice) });
+    releaseFirst();
+
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).rejects.toThrow(/已自动压缩历史，请重新发送/);
+    handle.release();
+
+    expect(notices.at(-1)).toMatchObject({ phase: "end", outcome: { kind: "compacted" } });
+    const entries = await handle.session.buildContextEntries();
+    expect(entries.some((entry) => entry.type === "compaction")).toBe(true);
   });
 
   /**
@@ -1018,7 +1216,15 @@ describe("createHarnessRegistry 的 overflow 兜底", () => {
       db,
       createHarness: async (sessionId) => {
         const session = await createMemorySession(sessionId);
-        return { harness: createHarness({ session, models, model: faux.getModel() }), session };
+        return {
+          harness: createHarness({
+            session,
+            models,
+            model: faux.getModel(),
+            toolContext: () => ({ userId: TEST_USER_ID, sessionId }),
+          }),
+          session,
+        };
       },
     });
     const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, HUGE);

@@ -349,6 +349,11 @@ export const env = {
       providerStoredCredentialsEnabled || providerCredentialManagementEnabled,
     ),
   },
+  // HEU-13 web_search（Tavily）。空串表示未配置，此时 web_search 工具不出现在可选列表里。
+  tavilyApiKey: stringEnv("TAVILY_API_KEY", process.env.TAVILY_API_KEY, ""),
+  // HEU-13 MCP server 列表（JSON 数组）。空串表示未配置任何 server。
+  // 格式：[{"name":"my-server","url":"https://..."}]
+  mcpServers: stringEnv("MCP_SERVERS", process.env.MCP_SERVERS, ""),
 } as const;
 
 export const isProduction = nodeEnv === "production";

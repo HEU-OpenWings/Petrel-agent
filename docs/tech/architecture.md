@@ -110,8 +110,10 @@ app.route("/api/admin", admin);
   消息结构直接沿用 pi 的 `AgentMessage`，不自定义中间格式。
 - `stores/*` 用 pinia：`session`（会话列表与当前会话）、`preferences`（模型与
   system prompt 偏好）、`layout`、`theme`、`workspace`。
-- 斜杠命令：机制在 `composables/useCommandPalette.js`，命令在
-  `views/ChatView.vue` 注册（`/new` `/compact` `/context` `/workspace` `/sidebar`）。
+- Composer 命令：机制在 `composables/useCommandPalette.js`。对话页 `/` 命令由
+  `views/ChatView.vue` 注册（`/new` `/clear` `/model` `/compact` `/context`
+  `/workspace` `/sidebar`）；Shell 级 `Ctrl+K` 面板由 `layouts/AppShell.vue` 持有，跨路由提供
+  `new` / `clear` / `model` / `workspace` / `sidebar`。模型选择写入账号偏好，下一条消息读取最新值。
 
 `apps/web` 已从 v0.4 的 ESLint 迁移到 Biome，`pnpm run lint` 统一覆盖全仓（含前端）。
 前端目前仍为 JS 无 typecheck，但不影响 lint 运行。

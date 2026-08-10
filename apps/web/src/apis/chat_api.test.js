@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setUnauthorizedHandler } from "@/apis/http";
 import { useUserStore } from "@/stores/user";
-import { streamChat } from "./chat_api.js";
+import { abortChat, streamChat } from "./chat_api.js";
 
 /** 造一个 SSE 响应；streamChat 走 response.body.getReader() 读流，所以必须有正文 */
 function sseResponse(text) {
@@ -20,6 +20,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -103,5 +104,35 @@ describe("streamChat", () => {
     expect(handler).toHaveBeenCalledOnce();
     // 同步断言是有意的：跳转登录页之前本地态必须已经清掉
     expect(userStore.user).toBeNull();
+  });
+});
+
+describe("abortChat", () => {
+  it("给停止请求设置 10 秒超时，挂住后给出可重试错误", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url, init) => {
+        return new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(init.signal.reason));
+        });
+      }),
+    );
+
+    const pending = expect(abortChat("session-a")).rejects.toThrow("停止请求超时，请重试");
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await pending;
+  });
+
+  it("请求正常完成时清理超时定时器", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await abortChat("session-a");
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(false);
   });
 });

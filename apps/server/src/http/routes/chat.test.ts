@@ -26,6 +26,8 @@ const state = vi.hoisted(() => ({
   harnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
   /** 记录路由实际传给 createHarness 的选项，用来断言 modelId 有没有透传 */
   seenHarnessOptions: undefined as Partial<CreateHarnessOptions> | undefined,
+  /** 指定第几次 prompt 直接 reject，用来覆盖 pending drain 的运输层异常。 */
+  promptFailureAt: undefined as number | undefined,
   /** HEU-40 配额测试开关：默认沿用真实 env（enforcement=false，不拦截） */
   quotaEnforcement: false,
   /** 让真实 harness.prompt 在测试指定的边界直接失败，覆盖 SSE catch 的安全文案。 */
@@ -95,6 +97,15 @@ vi.mock("@petrel/agent", async (importOriginal) => {
       const harness = actual.createHarness({ ...options, ...state.harnessOptions });
       if (state.promptError) {
         vi.spyOn(harness, "prompt").mockRejectedValue(state.promptError);
+      } else if (state.promptFailureAt !== undefined) {
+        const failureAt = state.promptFailureAt;
+        const prompt = harness.prompt.bind(harness);
+        let calls = 0;
+        vi.spyOn(harness, "prompt").mockImplementation((message, promptOptions) => {
+          calls += 1;
+          if (calls === failureAt) return Promise.reject(new Error("transport unavailable"));
+          return prompt(message, promptOptions);
+        });
       }
       return harness;
     },
@@ -161,6 +172,7 @@ beforeEach(async () => {
   state.dbBroken = false;
   state.sessionRepoBroken = false;
   state.harnessOptions = undefined;
+  state.promptFailureAt = undefined;
   state.quotaEnforcement = false;
   state.promptError = undefined;
   useFaux();
@@ -397,6 +409,85 @@ describe("POST /api/chat 会话持久化", () => {
       postChat({ message: "第二个问题", sessionId: SESSION_ID }),
     ]);
     await Promise.all([readAll(first), readAll(second)]);
+
+    await vi.waitFor(async () => {
+      expect(await storedRoles()).toEqual(["user", "assistant", "user", "assistant"]);
+    }, 5000);
+  });
+
+  // HEU-37 验收：首轮以 error 收尾时，排队的第二条不能静默丢失
+  it("首轮以 error 收尾时，并发排队的第二条消息仍被回答并落库", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText("答")], { stopReason: "error" }),
+      fauxAssistantMessage([fauxText("第二轮回答")]),
+    ]);
+
+    // 先发第一条并等到首轮真正开始（firstByte），再发第二条——保证第二条进排队
+    // 分支而不是落在首轮结束后的 idle 路径，避免并发时序抖动消费错 faux 响应
+    const first = await postChat({ message: "第一个问题", sessionId: SESSION_ID });
+    const { firstByte: firstStarted, done: firstDone } = drain(first);
+    await firstStarted;
+
+    const second = await postChat({ message: "第二个问题", sessionId: SESSION_ID });
+    const { done: secondDone } = drain(second);
+
+    const secondText = await secondDone;
+    await firstDone;
+
+    // 第二条连接不能静默空流：必须带着答案正常收尾
+    expect(secondText).toContain("第二轮回答");
+    const secondEvents = parseSse(secondText);
+    expect(secondEvents.map((entry) => (entry.data as { type: string }).type)).toContain("agent_end");
+
+    await vi.waitFor(async () => {
+      expect(await storedRoles()).toEqual(["user", "assistant", "user", "assistant"]);
+    }, 5000);
+  });
+
+  it("排队 run 的 prompt 抛异常时，对应 SSE 收到 event:error", async () => {
+    useFaux(CHUNKED);
+    state.promptFailureAt = 2;
+    faux.setResponses([fauxAssistantMessage([fauxText(LONG_ANSWER)])]);
+
+    const first = await postChat({ message: "第一个问题", sessionId: SESSION_ID });
+    const { firstByte: firstStarted, done: firstDone } = drain(first);
+    await firstStarted;
+    const second = await postChat({ message: "第二个问题", sessionId: SESSION_ID });
+    const { done: secondDone } = drain(second);
+
+    const secondEvents = parseSse(await secondDone);
+    await firstDone;
+
+    expect(secondEvents).toContainEqual({ event: "error", data: { message: "模型调用失败，请稍后重试" } });
+    expect(JSON.stringify(secondEvents)).not.toContain("transport unavailable");
+  });
+
+  // HEU-37 验收：abort 只停当前轮，排队中的消息照常被回答并落库
+  it("abort 只停当前轮，排队中的消息仍被回答并落库", async () => {
+    useFaux(CHUNKED);
+    faux.setResponses([
+      fauxAssistantMessage([fauxText(LONG_ANSWER)]),
+      fauxAssistantMessage([fauxText("第二轮回答")]),
+    ]);
+
+    const first = await postChat({ message: "第一个问题", sessionId: SESSION_ID });
+    const { firstByte: firstStarted, done: firstDone } = drain(first);
+    await firstStarted;
+
+    const second = await postChat({ message: "第二个问题", sessionId: SESSION_ID });
+    const { done: secondDone } = drain(second);
+
+    // 首轮还在跑时 abort：排队中的第二条不能被静默丢弃
+    await app.request("/api/chat/abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ sessionId: SESSION_ID }),
+    });
+
+    const secondText = await secondDone;
+    await firstDone;
+    expect(secondText).toContain("第二轮回答");
 
     await vi.waitFor(async () => {
       expect(await storedRoles()).toEqual(["user", "assistant", "user", "assistant"]);
