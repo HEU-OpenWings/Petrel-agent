@@ -163,6 +163,9 @@ importers:
       '@petrel/database':
         specifier: workspace:*
         version: link:../database
+      '@petrel/memory':
+        specifier: workspace:*
+        version: link:../memory
 
   packages/config: {}
 
