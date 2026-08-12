@@ -169,6 +169,12 @@ describe("路由保护范围", () => {
 
     expect(response.status).toBe(401);
   });
+
+  it("记忆列表没有 cookie 返回 401", async () => {
+    const response = await app.request("/api/memories");
+
+    expect(response.status).toBe(401);
+  });
 });
 
 describe("会话跨用户隔离", () => {

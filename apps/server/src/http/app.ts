@@ -7,6 +7,7 @@ import { account } from "./routes/account.ts";
 import { admin } from "./routes/admin.ts";
 import { auth } from "./routes/auth.ts";
 import { chat } from "./routes/chat.ts";
+import { memories } from "./routes/memories.ts";
 import { providers } from "./routes/providers.ts";
 import { sessions } from "./routes/sessions.ts";
 import { system } from "./routes/system.ts";
@@ -39,5 +40,7 @@ app.route("/api/account", account);
 // HEU-53/54：Settings「模型服务」的当前用户状态与凭据管理接口。
 // 挂在 requireAuth 之下，isolation.test.ts 守着「无 cookie → 401」。
 app.route("/api/providers", providers);
+// 记忆管理。挂在 requireAuth 之下；isolation.test.ts 守着「无 cookie → 401」
+app.route("/api/memories", memories);
 app.use("/api/admin/*", requireAdmin);
 app.route("/api/admin", admin);
