@@ -1,7 +1,10 @@
 import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
+import { isEmbeddingConfigured } from "@petrel/memory";
 import type { ToolContext } from "../harness.ts";
 import { currentTime } from "./current-time.ts";
 import { connectAllMcpServers } from "./mcp.ts";
+import { memorySearch } from "./memory-search.ts";
+import { memoryWrite } from "./memory-write.ts";
 import { createWebSearchFromConfig } from "./web-search.ts";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +79,14 @@ registerTool("get_current_time", currentTime);
 const webSearch = createWebSearchFromConfig();
 if (webSearch) {
   registerTool("web_search", webSearch);
+}
+
+// 未配置 embedding 时不注册：模型看到一个必然失败的工具会反复重试，
+// 每次重试都是一次真实的模型调用。env 在进程启动时求值一次，
+// 所以这里在模块加载期判断就够了，不需要每次装配重算
+if (isEmbeddingConfigured()) {
+  registerTool("memory_search", memorySearch);
+  registerTool("memory_write", memoryWrite);
 }
 
 // ---------------------------------------------------------------------------

@@ -21,7 +21,15 @@ export function resolveTools(names?: string[]): AgentHarnessTool<ToolContext>[] 
   return selectTools(names);
 }
 
-export const DEFAULT_SYSTEM_PROMPT = "你是 Petrel 智能助手。回答简洁准确，需要实时信息时调用工具。";
+/**
+ * 记忆那一句只对使用默认提示词的用户生效：user_preferences.systemPrompt 是整体替换，
+ * 自定义之后这句就没了。不为此在用户写的提示词上偷偷追加内容——
+ * 工具的 description 才是主要引导手段，它不受这个影响。
+ */
+export const DEFAULT_SYSTEM_PROMPT =
+  "你是 Petrel 智能助手。回答简洁准确，需要实时信息时调用工具。" +
+  "你拥有跨会话的长期记忆：回答与用户本人相关的问题前先用 memory_search 回忆，" +
+  "用户透露稳定的偏好、身份或长期目标时用 memory_write 记下来。";
 
 /**
  * 工具执行时携带的调用者上下文。
