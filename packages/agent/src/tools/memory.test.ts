@@ -1,5 +1,11 @@
 import { type AgentHarnessEvent, InMemorySessionRepo } from "@earendil-works/pi-agent-core";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  fauxToolCall,
+} from "@earendil-works/pi-ai";
 import { MEMORY_EMBEDDING_DIM, users } from "@petrel/database";
 import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
