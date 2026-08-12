@@ -5,7 +5,15 @@ import { app } from "../app.ts";
 import { __resetAuthRateLimits } from "./auth.ts";
 
 /** state 用 vi.hoisted：vi.mock 会被提升到 import 之上，工厂里不能引用普通顶层变量 */
-const state = vi.hoisted(() => ({ db: undefined as TestDb | undefined }));
+const state = vi.hoisted(() => ({
+  db: undefined as TestDb | undefined,
+  embeddingConfigured: false,
+}));
+
+// 真实的 isEmbeddingConfigured 读的是进程 env，本机配了 EMBEDDING_API_KEY 时断言会翻转
+vi.mock("@petrel/memory", () => ({
+  isEmbeddingConfigured: () => state.embeddingConfigured,
+}));
 
 // 路由里的 getDb() 建的是 node-postgres 连接池，连不到 PGlite，整个模块替身一次
 vi.mock("@petrel/database", async (importOriginal) => {
@@ -71,6 +79,22 @@ describe("GET /api/memories", () => {
     // 1024 个浮点数不该出现在 HTTP 响应里
     expect(body.memories[0]).not.toHaveProperty("embedding");
   });
+
+  /**
+   * 未配置 embedding 时列表必然为空，面板要能把「没配」与「配了但还没记下东西」
+   * 区分开（设计 §5），而这个区别只有服务端知道。
+   */
+  it("带上 embedding 是否已配置", async () => {
+    const mine = await registerUser("mine@example.com");
+
+    state.embeddingConfigured = false;
+    const off = await app.request("/api/memories", { headers: { cookie: mine.cookie } });
+    expect(((await off.json()) as { configured: boolean }).configured).toBe(false);
+
+    state.embeddingConfigured = true;
+    const on = await app.request("/api/memories", { headers: { cookie: mine.cookie } });
+    expect(((await on.json()) as { configured: boolean }).configured).toBe(true);
+  });
 });
 
 describe("DELETE /api/memories/:id", () => {
@@ -113,5 +137,23 @@ describe("DELETE /api/memories/:id", () => {
     });
 
     expect(response.status).toBe(404);
+  });
+
+  /**
+   * 非 UUID 会让 Postgres 在 `WHERE id = $2` 上报类型错，一路冒到 onError 变成 500。
+   * 同 sessions.ts 的 requireUuid：格式非法是 400，不是「删不到」。
+   */
+  it("id 不是 UUID 时返回 400，不是 500", async () => {
+    const mine = await registerUser("mine@example.com");
+
+    const response = await app.request("/api/memories/not-a-uuid", {
+      method: "DELETE",
+      headers: { cookie: mine.cookie },
+    });
+    const body = (await response.json()) as { error: { message: string } };
+
+    expect(response.status).toBe(400);
+    // 响应里不该出现 SQL 片段
+    expect(body.error.message).not.toMatch(/select|delete|user_memories/i);
   });
 });

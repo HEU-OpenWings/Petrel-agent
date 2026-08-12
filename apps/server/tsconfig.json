@@ -10,6 +10,7 @@
     { "path": "../../packages/agent" },
     { "path": "../../packages/config" },
     { "path": "../../packages/database" },
-    { "path": "../../packages/logger" }
+    { "path": "../../packages/logger" },
+    { "path": "../../packages/memory" }
   ]
 }

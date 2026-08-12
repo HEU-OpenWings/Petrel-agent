@@ -55,18 +55,37 @@ export async function embed(texts: string[], options: { signal?: AbortSignal } =
     throw new EmbeddingError(`embedding 返回条数不符：期望 ${texts.length}，实际 ${data?.length ?? 0}`);
   }
 
-  // 按 index 排回原顺序：OpenAI 的响应实践上有序，但那是实现细节不是契约。
-  // 乱序会让「记忆 A 的内容配上记忆 B 的向量」——不报错，只是检索永远不准
-  const sorted = [...data].sort((left, right) => (left.index ?? 0) - (right.index ?? 0));
+  // 按 index 放回原位，而不是排序后按数组下标取：OpenAI 的响应实践上有序，但那是
+  // 实现细节不是契约。错位会让「记忆 A 的内容配上记忆 B 的向量」——不报错，只是检索永远不准。
+  //
+  // 排序解决不了 index 本身不是 0..n-1 的情况（例如 2 条文本回了 index 0 和 2，
+  // 条数校验放它过去），所以这里连「index 合法且不重复」一起钉住：位置放不下就是错。
+  const vectors = new Array<number[] | undefined>(texts.length);
 
-  return sorted.map((item, position) => {
+  for (const item of data) {
+    const index = item.index;
+    if (
+      !Number.isInteger(index) ||
+      index === undefined ||
+      index < 0 ||
+      index >= texts.length ||
+      vectors[index] !== undefined
+    ) {
+      throw new EmbeddingError(
+        `embedding 返回的 index 非法或重复：${String(index)}，期望 0 到 ${texts.length - 1} 各一次`,
+      );
+    }
+
     const values = item.embedding;
     if (!Array.isArray(values) || values.length !== MEMORY_EMBEDDING_DIM) {
       throw new EmbeddingError(
-        `embedding 维度不符：第 ${position} 条期望 ${MEMORY_EMBEDDING_DIM}，实际 ${values?.length ?? 0}；` +
+        `embedding 维度不符：第 ${index} 条期望 ${MEMORY_EMBEDDING_DIM}，实际 ${values?.length ?? 0}；` +
           `模型 ${env.embedding.model} 可能与 user_memories.embedding 的列宽不匹配`,
       );
     }
-    return values;
-  });
+    vectors[index] = values;
+  }
+
+  // 条数已校验过，且每个 index 都落在 [0, n) 且不重复 → 一定填满了
+  return vectors as number[][];
 }

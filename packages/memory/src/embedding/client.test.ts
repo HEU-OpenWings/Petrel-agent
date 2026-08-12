@@ -108,6 +108,42 @@ describe("embed", () => {
     await expect(embed(["用户的私密记忆"])).rejects.not.toThrow(/私密/);
   });
 
+  /**
+   * 条数对但 index 不是 0..n-1 时，光排序是排不出错的：
+   * 第 2 条会拿到 index 2 的向量，不报错、只是检索不准。
+   */
+  it("index 不连续时抛错", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          data: [
+            { index: 0, embedding: vectorOf(0.1) },
+            { index: 2, embedding: vectorOf(0.2) },
+          ],
+        }),
+      ),
+    );
+
+    await expect(embed(["一", "二"])).rejects.toThrow(/index/);
+  });
+
+  it("index 重复时抛错", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          data: [
+            { index: 0, embedding: vectorOf(0.1) },
+            { index: 0, embedding: vectorOf(0.2) },
+          ],
+        }),
+      ),
+    );
+
+    await expect(embed(["一", "二"])).rejects.toThrow(/index/);
+  });
+
   it("返回条数与入参不符时抛错", async () => {
     vi.stubGlobal(
       "fetch",

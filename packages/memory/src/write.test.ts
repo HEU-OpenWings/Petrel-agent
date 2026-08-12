@@ -3,9 +3,9 @@ import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testin
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { EmbeddingError, MemoryQuotaError } from "./errors.ts";
 import { searchMemories } from "./search.ts";
-import { writeMemory } from "./write.ts";
+import { MEMORY_CONTENT_LENGTH_LIMIT, writeMemory } from "./write.ts";
 
-const state = vi.hoisted(() => ({ apiKey: "test-key", maxPerUser: 200 }));
+const state = vi.hoisted(() => ({ apiKey: "test-key", maxPerUser: 200, searchLimit: 5 }));
 
 vi.mock("@petrel/config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@petrel/config")>();
@@ -22,9 +22,11 @@ vi.mock("@petrel/config", async (importOriginal) => {
         },
       },
       memory: {
-        searchLimit: 5,
         get maxPerUser() {
           return state.maxPerUser;
+        },
+        get searchLimit() {
+          return state.searchLimit;
         },
       },
     },
@@ -60,6 +62,7 @@ describe("writeMemory / searchMemories", () => {
   beforeEach(() => {
     state.apiKey = "test-key";
     state.maxPerUser = 200;
+    state.searchLimit = 5;
     return testDb.reset();
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -127,13 +130,50 @@ describe("writeMemory / searchMemories", () => {
     expect(hits.map((hit) => hit.content)).toEqual(["用户在做 Petrel 项目"]);
   });
 
-  it("检索用的是配置里的默认条数上限", async () => {
+  it("不传 limit 时用配置里的 MEMORY_SEARCH_LIMIT", async () => {
     stubEmbedding(0.1);
     await writeMemory(db, { userId: TEST_USER_ID, sessionId: null, content: "一" });
     stubEmbedding(0.1);
     await writeMemory(db, { userId: TEST_USER_ID, sessionId: null, content: "二" });
 
+    state.searchLimit = 1;
+    stubEmbedding(0.1);
+    expect(await searchMemories(db, { userId: TEST_USER_ID, query: "q" })).toHaveLength(1);
+  });
+
+  it("显式传 limit 时覆盖配置", async () => {
+    stubEmbedding(0.1);
+    await writeMemory(db, { userId: TEST_USER_ID, sessionId: null, content: "一" });
+    stubEmbedding(0.1);
+    await writeMemory(db, { userId: TEST_USER_ID, sessionId: null, content: "二" });
+
+    state.searchLimit = 5;
     stubEmbedding(0.1);
     expect(await searchMemories(db, { userId: TEST_USER_ID, query: "q", limit: 1 })).toHaveLength(1);
+  });
+
+  // 内容由模型产出，一次工具调用就能塞进很长的文本，之后每次命中都要整份发回上下文
+  it("超长内容不写库，也不发 embedding 请求", async () => {
+    const fetchSpy = stubEmbedding(0.1);
+
+    await expect(
+      writeMemory(db, {
+        userId: TEST_USER_ID,
+        sessionId: null,
+        content: "很".repeat(MEMORY_CONTENT_LENGTH_LIMIT + 1),
+      }),
+    ).rejects.toThrow(new RegExp(`不能超过 ${MEMORY_CONTENT_LENGTH_LIMIT} 字`));
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await createMemoryRepository(db).countByUserId(TEST_USER_ID)).toBe(0);
+  });
+
+  // 空 query 去 embed 是白花一次钱，返回的还是一组与任何东西都不像的向量
+  it("空白 query 直接返回空数组，不发 embedding 请求", async () => {
+    stubEmbedding(0.1);
+    await writeMemory(db, { userId: TEST_USER_ID, sessionId: null, content: "一" });
+
+    const fetchSpy = stubEmbedding(0.1);
+    expect(await searchMemories(db, { userId: TEST_USER_ID, query: "   " })).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
