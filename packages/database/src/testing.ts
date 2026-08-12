@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite-pgvector";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -8,6 +9,7 @@ import {
   sessionEntries,
   sessions,
   tokenUsage,
+  userMemories,
   userPreferences,
   userProviderCredentials,
   userQuotaLimits,
@@ -44,7 +46,10 @@ export async function createTestDb(): Promise<{
   reset: () => Promise<void>;
   close: () => Promise<void>;
 }> {
-  const client = new PGlite();
+  // pglite 0.4.11 起不再内置 pgvector，扩展被拆到 @electric-sql/pglite-pgvector。
+  // 不装载的话，migration 里的 CREATE EXTENSION vector 会失败，
+  // 而 createTestDb() 被 18 个测试文件依赖——崩的是全部数据层测试，不只是记忆相关的
+  const client = new PGlite({ extensions: { vector } });
   const db = drizzle({ client, schema });
 
   await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
@@ -68,7 +73,7 @@ export async function createTestDb(): Promise<{
       // token_usage / user_quota_limits / user_provider_credentials 也列入：
       // HEU-40 的用量事实、配额覆盖、HEU-54 的用户凭据若跨用例残留，会让断言 flake。
       await db.execute(
-        sql`TRUNCATE ${users}, ${sessions}, ${sessionEntries}, ${userPreferences}, ${tokenUsage}, ${userQuotaLimits}, ${userProviderCredentials} RESTART IDENTITY CASCADE`,
+        sql`TRUNCATE ${users}, ${sessions}, ${sessionEntries}, ${userPreferences}, ${tokenUsage}, ${userQuotaLimits}, ${userProviderCredentials}, ${userMemories} RESTART IDENTITY CASCADE`,
       );
       await seedTestUser();
     },

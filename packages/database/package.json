@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
+    "@electric-sql/pglite-pgvector": "0.0.5",
     "@types/pg": "^8.20.2",
     "drizzle-kit": "^0.31.10"
   }

@@ -13,6 +13,7 @@ import {
   text,
   timestamp,
   uuid,
+  vector,
 } from "drizzle-orm/pg-core";
 
 /** 用户表。email 是登录标识，展示名由前端取邮箱前缀，不落库 */
@@ -260,5 +261,42 @@ export const userProviderCredentials = pgTable(
     ),
     // provider_id 长度上限，防无界长字符串
     check("user_provider_credentials_provider_id_check", sql`length(${table.providerId}) BETWEEN 1 AND 128`),
+  ],
+);
+
+/**
+ * 用户级长期记忆。跨会话的用户画像、偏好、稳定事实，每人几十到几百条。
+ *
+ * **embedding 是 notNull**：没有向量的记忆检索不到，等于写了条查不到的东西——
+ * 静默失效。写入时 embedding 失败就不落库（工具抛异常，pi 会把它转成 isError
+ * 的 tool result 并让对话继续），不留半成品。
+ *
+ * **source_session_id 故意不做级联外键**，与 token_usage.session_id 同理：
+ * 删会话不该让记忆消失，记忆是用户级的不是会话级的。副作用是「删了会话记忆还在」，
+ * 这一点必须在前端记忆管理界面上写清楚，否则是隐私暗坑。
+ *
+ * 维度 1024 与 backend-plan 里知识库的统一列宽一致，也是 BAAI/bge-m3 的 dense 维度。
+ * 换 embedding 模型 = 全量重新索引。
+ */
+export const userMemories = pgTable(
+  "user_memories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    embedding: vector("embedding", { dimensions: 1024 }).notNull(),
+    sourceSessionId: uuid("source_session_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // 记忆管理页按时间倒序列出
+    index("user_memories_user_created_idx").on(table.userId, table.createdAt.desc()),
+    // 每用户上限 200 条时规划器多半仍走顺序扫描，现在建它是因为知识库（HEU-21）
+    // 会复用同一套且届时数据量完全不同。cosine 是安全默认：无论向量是否已归一化，
+    // 余弦距离都给出正确排序，内积只在已归一化时与它等价
+    index("user_memories_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
   ],
 );
