@@ -71,6 +71,13 @@
       "when": 1786270509061,
       "tag": "0009_young_post",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786500322946,
+      "tag": "0010_enable_vector",
+      "breakpoints": true
     }
   ]
 }
