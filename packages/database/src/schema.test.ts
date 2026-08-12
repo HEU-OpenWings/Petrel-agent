@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { sessionEntries, sessions, userPreferences, users } from "./schema.ts";
+import { sessionEntries, sessions, userMemories, userPreferences, users } from "./schema.ts";
 import { createTestDb, TEST_USER_ID, type TestDb } from "./testing.ts";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
@@ -100,5 +100,34 @@ describe("session_entries", () => {
     await db.delete(users).where(eq(users.id, TEST_USER_ID));
 
     expect(await db.select().from(userPreferences)).toHaveLength(0);
+  });
+});
+
+describe("user_memories", () => {
+  it("删用户会级联删掉他的记忆", async () => {
+    await db.insert(userMemories).values({
+      userId: TEST_USER_ID,
+      content: "用户喜欢简洁的回答",
+      embedding: new Array<number>(1024).fill(0),
+    });
+
+    await db.delete(users).where(eq(users.id, TEST_USER_ID));
+
+    expect(await db.select().from(userMemories)).toHaveLength(0);
+  });
+
+  // 记忆是用户级的，不是会话级的；这条行为的隐私含义要在前端界面上写清楚
+  it("删会话不会删掉由它产生的记忆", async () => {
+    await db.insert(sessions).values({ id: SESSION_ID, userId: TEST_USER_ID, title: "t" });
+    await db.insert(userMemories).values({
+      userId: TEST_USER_ID,
+      content: "用户在做 Petrel 项目",
+      embedding: new Array<number>(1024).fill(0),
+      sourceSessionId: SESSION_ID,
+    });
+
+    await db.delete(sessions).where(eq(sessions.id, SESSION_ID));
+
+    expect(await db.select().from(userMemories)).toHaveLength(1);
   });
 });

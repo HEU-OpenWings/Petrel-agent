@@ -9,6 +9,7 @@ import {
   sessionEntries,
   sessions,
   tokenUsage,
+  userMemories,
   userPreferences,
   userProviderCredentials,
   userQuotaLimits,
@@ -72,7 +73,7 @@ export async function createTestDb(): Promise<{
       // token_usage / user_quota_limits / user_provider_credentials 也列入：
       // HEU-40 的用量事实、配额覆盖、HEU-54 的用户凭据若跨用例残留，会让断言 flake。
       await db.execute(
-        sql`TRUNCATE ${users}, ${sessions}, ${sessionEntries}, ${userPreferences}, ${tokenUsage}, ${userQuotaLimits}, ${userProviderCredentials} RESTART IDENTITY CASCADE`,
+        sql`TRUNCATE ${users}, ${sessions}, ${sessionEntries}, ${userPreferences}, ${tokenUsage}, ${userQuotaLimits}, ${userProviderCredentials}, ${userMemories} RESTART IDENTITY CASCADE`,
       );
       await seedTestUser();
     },
