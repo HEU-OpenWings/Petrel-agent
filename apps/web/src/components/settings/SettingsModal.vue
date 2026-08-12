@@ -28,6 +28,7 @@
           :open="visible"
           :user-id="userStore.user?.id ?? null"
         />
+        <MemoriesPanel v-else-if="activeTab === 'memories'" />
         <AccountPanel v-else />
       </div>
     </div>
@@ -40,6 +41,7 @@ import { usePreferencesStore } from "@/stores/preferences";
 import { useUserStore } from "@/stores/user";
 import AccountPanel from "./AccountPanel.vue";
 import GeneralPanel from "./GeneralPanel.vue";
+import MemoriesPanel from "./MemoriesPanel.vue";
 import ProvidersPanel from "./ProvidersPanel.vue";
 
 const props = defineProps({
@@ -51,6 +53,7 @@ const emit = defineEmits(["update:open"]);
 const TABS = [
   { key: "general", label: "通用" },
   { key: "providers", label: "模型服务" },
+  { key: "memories", label: "记忆" },
   { key: "account", label: "账号" },
 ];
 
