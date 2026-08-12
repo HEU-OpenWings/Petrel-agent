@@ -43,7 +43,7 @@ export function createMemoryRepository(db: Database) {
       // returning(fields) 会误解析到 0 参重载而报 TS2554（同 sessions.ts 的说明）
       const rows = await db
         .insert(userMemories)
-        .values({ userId, ...values })
+        .values({ ...values, userId })
         .returning();
       // 没有 onConflict，插不进去只可能是异常（已经抛了），所以这里必有一行
       const row = rows[0];
@@ -83,14 +83,22 @@ export function createMemoryRepository(db: Database) {
      *
      * 用余弦而不是内积：内积只在向量已 L2 归一化时与余弦等价，
      * 而 embedding 模型是否归一化是 provider 的实现细节，不该被这里假设。
+     *
+     * ORDER BY 用的是升序距离 distance，不是降序相似度 similarity：
+     * HNSW 的 vector_cosine_ops 索引（见 migration 0011）只能满足
+     * `ORDER BY embedding <=> $1 ASC` 这种形状，`ORDER BY (1 - distance) DESC`
+     * 对索引来说是另一个表达式，走不到索引，会退化成全表扫描再排序。
+     * `1 - d` 对 d 严格单调递减，所以按距离升序等价于按相似度降序，
+     * 结果不变，只是把这一步换成能命中索引的写法。
      */
     async searchByEmbedding(userId: string, embedding: number[], limit: number): Promise<MemorySearchHit[]> {
-      const similarity = sql<number>`1 - (${cosineDistance(userMemories.embedding, embedding)})`;
+      const distance = cosineDistance(userMemories.embedding, embedding);
+      const similarity = sql<number>`1 - (${distance})`;
       return db
         .select({ ...COLUMNS, similarity })
         .from(userMemories)
         .where(eq(userMemories.userId, userId))
-        .orderBy(desc(similarity))
+        .orderBy(distance)
         .limit(limit);
     },
   };
