@@ -265,6 +265,16 @@ export const userProviderCredentials = pgTable(
 );
 
 /**
+ * 记忆向量的维度。BAAI/bge-m3 的 dense 输出就是 1024，与 backend-plan 里
+ * 知识库的统一列宽一致。
+ *
+ * 导出而不是写字面量：embedding 客户端要拿它校验响应长度。两处共用一个常量，
+ * 改它必然同时改到列定义与校验，不会出现「配了个 768 维的模型，运行期才在
+ * INSERT 上报错」。换模型 = 全量重新索引，不是改个环境变量的事。
+ */
+export const MEMORY_EMBEDDING_DIM = 1024;
+
+/**
  * 用户级长期记忆。跨会话的用户画像、偏好、稳定事实，每人几十到几百条。
  *
  * **embedding 是 notNull**：没有向量的记忆检索不到，等于写了条查不到的东西——
@@ -286,7 +296,7 @@ export const userMemories = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
-    embedding: vector("embedding", { dimensions: 1024 }).notNull(),
+    embedding: vector("embedding", { dimensions: MEMORY_EMBEDDING_DIM }).notNull(),
     sourceSessionId: uuid("source_session_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
