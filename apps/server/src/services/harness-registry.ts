@@ -19,6 +19,7 @@ import {
   maybeCompact,
   resolveModel,
   resolveTools,
+  skillsSystemPromptBlock,
 } from "@petrel/agent";
 import { env } from "@petrel/config";
 import { createSessionRepository, type Database } from "@petrel/database";
@@ -555,7 +556,14 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     });
     // AgentHarness 没有 setSystemPrompt()，但这个 hook 会在每个新 run 开始时执行。
     // 读取 entry 上的可变值，让常驻实例复用时也能应用用户刚保存的偏好。
-    harness.on("before_agent_start", () => ({ systemPrompt: entry.systemPrompt }));
+    //
+    // skill 列表在这里追加而不是在构造时定死：hook 返回的字符串会整体覆盖构造时的 systemPrompt，
+    // 若不在这里补上，用户自定义 systemPrompt（整体替换）后就看不到 skill 了。这与「工具 description
+    // 是主要引导手段、不受 prompt 覆盖影响」同一思路。没有可见 skill 时 block 为空串，拼接无副作用。
+    harness.on("before_agent_start", () => {
+      const block = skillsSystemPromptBlock();
+      return { systemPrompt: block ? `${entry.systemPrompt}\n\n${block}` : entry.systemPrompt };
+    });
 
     return entry;
   }

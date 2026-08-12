@@ -31,6 +31,9 @@ services:
     volumes:
       - ./apps/server/src:/app/apps/server/src
       - ./packages/agent/src:/app/packages/agent/src
+      # 捆绑 skill 目录也要挂：initSkills() 启动时读它，只挂 src 的话用的是烘进镜像的旧副本，
+      # 改了 SKILL.md 却不生效（同下方 drizzle 的理由）。改动后需重启容器让 initSkills 重跑。
+      - ./packages/agent/skills:/app/packages/agent/skills
       - ./packages/config/src:/app/packages/config/src
       - ./packages/logger/src:/app/packages/logger/src
       - ./packages/memory/src:/app/packages/memory/src

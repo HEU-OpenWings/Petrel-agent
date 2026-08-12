@@ -71,5 +71,13 @@ export {
   type UserProviderStatus,
 } from "./models/user-provider-service.ts";
 export { PgSessionStorage } from "./session/pg-storage.ts";
-export { initMcpTools, listToolNames, selectTools, shutdownMcpTools } from "./tools/registry.ts";
+export { findSkill, getSkills, initSkills } from "./skills/catalog.ts";
+export { skillsSystemPromptBlock } from "./skills/system-prompt.ts";
+export {
+  initMcpTools,
+  listToolNames,
+  registerSkillTool,
+  selectTools,
+  shutdownMcpTools,
+} from "./tools/registry.ts";
 export { currentTime };
