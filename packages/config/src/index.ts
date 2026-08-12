@@ -329,6 +329,29 @@ export const env = {
   quotaWindowHours: nonNegativeInt("QUOTA_WINDOW_HOURS", process.env.QUOTA_WINDOW_HOURS, 24),
   quotaEnforcement: booleanEnv("QUOTA_ENFORCEMENT", process.env.QUOTA_ENFORCEMENT, false),
   /**
+   * 记忆系统的 embedding（硅基流动，OpenAI 兼容端点）。
+   *
+   * 走 @petrel/config 而非 pi-ai 的 auth 机制：那个例外只给模型凭据，
+   * pi-ai 不认识 embedding 端点。
+   *
+   * 不设 EMBEDDING_DIM：维度是表的列宽（MEMORY_EMBEDDING_DIM），换模型要全量
+   * 重建索引，做成运行时可配等于允许配出一个必然 INSERT 失败的组合。
+   */
+  embedding: {
+    baseUrl: stringEnv("EMBEDDING_BASE_URL", process.env.EMBEDDING_BASE_URL, "https://api.siliconflow.cn/v1"),
+    apiKey: process.env.EMBEDDING_API_KEY?.trim() ?? "",
+    model: stringEnv("EMBEDDING_MODEL", process.env.EMBEDDING_MODEL, "BAAI/bge-m3"),
+    timeoutMs: positiveInt("EMBEDDING_TIMEOUT_MS", process.env.EMBEDDING_TIMEOUT_MS, 10_000),
+  },
+  /**
+   * maxPerUser 是成本闸门而不是产品限制：embedding 按次计费，而写入由模型驱动（M3），
+   * 没有上限等于成本可被无限放大。
+   */
+  memory: {
+    maxPerUser: nonNegativeInt("MEMORY_MAX_PER_USER", process.env.MEMORY_MAX_PER_USER, 200),
+    searchLimit: positiveInt("MEMORY_SEARCH_LIMIT", process.env.MEMORY_SEARCH_LIMIT, 5),
+  },
+  /**
    * HEU-54 R1 provider 凭据（用户自填 API key）。两个开关构成 kill switch 矩阵：
    *
    *   stored   management   行为
