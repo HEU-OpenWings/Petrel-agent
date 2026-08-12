@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite-pgvector";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -44,7 +45,10 @@ export async function createTestDb(): Promise<{
   reset: () => Promise<void>;
   close: () => Promise<void>;
 }> {
-  const client = new PGlite();
+  // pglite 0.4.11 起不再内置 pgvector，扩展被拆到 @electric-sql/pglite-pgvector。
+  // 不装载的话，migration 里的 CREATE EXTENSION vector 会失败，
+  // 而 createTestDb() 被 18 个测试文件依赖——崩的是全部数据层测试，不只是记忆相关的
+  const client = new PGlite({ extensions: { vector } });
   const db = drizzle({ client, schema });
 
   await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
