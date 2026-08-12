@@ -9,5 +9,5 @@
  */
 export { embed, isEmbeddingConfigured } from "./embedding/client.ts";
 export { EmbeddingError, MemoryQuotaError } from "./errors.ts";
-export { searchMemories, type SearchMemoriesParams } from "./search.ts";
-export { MEMORY_CONTENT_LENGTH_LIMIT, writeMemory, type WriteMemoryParams } from "./write.ts";
+export { type SearchMemoriesParams, searchMemories } from "./search.ts";
+export { MEMORY_CONTENT_LENGTH_LIMIT, type WriteMemoryParams, writeMemory } from "./write.ts";

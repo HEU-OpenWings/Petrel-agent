@@ -338,11 +338,7 @@ export const env = {
    * 重建索引，做成运行时可配等于允许配出一个必然 INSERT 失败的组合。
    */
   embedding: {
-    baseUrl: stringEnv(
-      "EMBEDDING_BASE_URL",
-      process.env.EMBEDDING_BASE_URL,
-      "https://api.siliconflow.cn/v1",
-    ),
+    baseUrl: stringEnv("EMBEDDING_BASE_URL", process.env.EMBEDDING_BASE_URL, "https://api.siliconflow.cn/v1"),
     apiKey: process.env.EMBEDDING_API_KEY?.trim() ?? "",
     model: stringEnv("EMBEDDING_MODEL", process.env.EMBEDDING_MODEL, "BAAI/bge-m3"),
     timeoutMs: positiveInt("EMBEDDING_TIMEOUT_MS", process.env.EMBEDDING_TIMEOUT_MS, 10_000),

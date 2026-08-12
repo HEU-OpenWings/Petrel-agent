@@ -17,10 +17,7 @@ interface EmbeddingResponse {
  * 与记忆域零耦合：只认「文本进、向量出」，不认 Memory 类型。
  * 知识库（HEU-21）落地时这个目录可以整体平移。
  */
-export async function embed(
-  texts: string[],
-  options: { signal?: AbortSignal } = {},
-): Promise<number[][]> {
+export async function embed(texts: string[], options: { signal?: AbortSignal } = {}): Promise<number[][]> {
   if (!isEmbeddingConfigured()) {
     throw new EmbeddingError("未配置 EMBEDDING_API_KEY，记忆功能不可用");
   }
@@ -55,9 +52,7 @@ export async function embed(
   const payload = (await response.json().catch(() => null)) as EmbeddingResponse | null;
   const data = payload?.data;
   if (!Array.isArray(data) || data.length !== texts.length) {
-    throw new EmbeddingError(
-      `embedding 返回条数不符：期望 ${texts.length}，实际 ${data?.length ?? 0}`,
-    );
+    throw new EmbeddingError(`embedding 返回条数不符：期望 ${texts.length}，实际 ${data?.length ?? 0}`);
   }
 
   // 按 index 排回原顺序：OpenAI 的响应实践上有序，但那是实现细节不是契约。

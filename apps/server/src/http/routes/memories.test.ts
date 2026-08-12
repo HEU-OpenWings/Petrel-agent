@@ -1,8 +1,4 @@
-import {
-  createMemoryRepository,
-  createUserRepository,
-  MEMORY_EMBEDDING_DIM,
-} from "@petrel/database";
+import { createMemoryRepository, createUserRepository, MEMORY_EMBEDDING_DIM } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app.ts";

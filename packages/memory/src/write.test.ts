@@ -107,9 +107,9 @@ describe("writeMemory / searchMemories", () => {
   it("空白内容不写库", async () => {
     const fetchSpy = stubEmbedding(0.1);
 
-    await expect(
-      writeMemory(db, { userId: TEST_USER_ID, sessionId: null, content: "   " }),
-    ).rejects.toThrow(/内容不能为空/);
+    await expect(writeMemory(db, { userId: TEST_USER_ID, sessionId: null, content: "   " })).rejects.toThrow(
+      /内容不能为空/,
+    );
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

@@ -40,9 +40,7 @@ export async function writeMemory(
   const repo = createMemoryRepository(db);
   const count = await repo.countByUserId(params.userId);
   if (count >= env.memory.maxPerUser) {
-    throw new MemoryQuotaError(
-      `记忆条数已达上限 ${env.memory.maxPerUser}，请先删除一些不再需要的记忆`,
-    );
+    throw new MemoryQuotaError(`记忆条数已达上限 ${env.memory.maxPerUser}，请先删除一些不再需要的记忆`);
   }
 
   const [embedding] = await embed([content], options);
