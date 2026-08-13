@@ -1,5 +1,5 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import { type CreateHarnessOptions, DEFAULT_SYSTEM_PROMPT } from "@petrel/agent";
+import { type CreateHarnessOptions, DEFAULT_SYSTEM_PROMPT, setSkillsForTest } from "@petrel/agent";
 import {
   createEntryRepository,
   createQuotaLimitsRepository,
@@ -7,7 +7,7 @@ import {
   createUserRepository,
 } from "@petrel/database";
 import { createTestDb, type TestDb } from "@petrel/database/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService } from "../../services/session.ts";
 import { app } from "../app.ts";
 import { __resetAuthRateLimits } from "./auth.ts";
@@ -323,6 +323,74 @@ describe("POST /api/chat 请求体校验", () => {
     await expect(response.json()).resolves.toEqual({ error: { message: "sessionId 必须是 UUID" } });
     // 校验在 registry.acquire 之前，所以既没有建会话也没有写条目
     expect(await service.list()).toEqual([]);
+  });
+});
+
+describe("POST /api/chat skill 显式调用", () => {
+  const SKILL = {
+    name: "root-cause-analysis",
+    description: "结构化根因分析",
+    content: "先复现再定位",
+    filePath: "/skills/root-cause-analysis/SKILL.md",
+    disableModelInvocation: false,
+  };
+
+  // skill 目录是进程级模块状态，用例之间清掉
+  afterEach(() => setSkillsForTest([]));
+
+  it("GET /skills 列出可用 skill，只含 name/description 不含正文", async () => {
+    setSkillsForTest([SKILL]);
+    const response = await app.request("/api/chat/skills", { headers: { Cookie: cookie } });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      skills: [{ name: "root-cause-analysis", description: "结构化根因分析" }],
+    });
+  });
+
+  it("skill 模式把 skill 正文注入为一轮 run 并落库", async () => {
+    setSkillsForTest([SKILL]);
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        sessionId: SESSION_ID,
+        skill: { name: "root-cause-analysis", args: "看这个 bug" },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const events = parseSse(await readAll(response)).map((frame) => frame.event);
+    expect(events).toContain("agent");
+    // harness.skill 注入的 <skill 正文进了会话树
+    const rows = await entryRepo.listAll(SESSION_ID);
+    expect(JSON.stringify(rows)).toContain("先复现再定位");
+  });
+
+  it("未知 skill 在开流前返回 400，不进 SSE", async () => {
+    setSkillsForTest([SKILL]);
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ sessionId: SESSION_ID, skill: { name: "nope" } }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: { message: "未知 skill：nope" } });
+    // 校验在 acquire 之前：没建会话
+    expect(await service.list()).toEqual([]);
+  });
+
+  it("skill.args 不是字符串返回 400", async () => {
+    setSkillsForTest([SKILL]);
+    const response = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ sessionId: SESSION_ID, skill: { name: "root-cause-analysis", args: 123 } }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: { message: "skill.args 必须是字符串" } });
   });
 });
 

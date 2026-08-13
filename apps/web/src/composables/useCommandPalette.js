@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed, ref, toValue } from "vue";
 
 /**
  * `/` 命令的过滤与键盘导航。
@@ -26,6 +26,21 @@ export function filterCommands(commands, query, { searchAll = false } = {}) {
   });
 }
 
+/**
+ * 解析 /skill: 显式调用命令。
+ *
+ * `/skill:name` 或 `/skill:name args` → { name, args }；args 去空白，空则为 undefined。
+ * 不是 /skill: 开头返回 null（按普通消息处理）。
+ *
+ * @param {string} text 已 trim 的整段输入
+ * @returns {{ name: string, args?: string } | null}
+ */
+export function parseSkillCommand(text) {
+  const match = text.match(/^\/skill:(\S+)(?:\s+([\s\S]*))?$/);
+  if (!match) return null;
+  return { name: match[1], args: match[2]?.trim() || undefined };
+}
+
 /** 只认 Ctrl/Cmd+K 本身，不吞掉浏览器的 Ctrl+Shift+K / Ctrl+Alt+K。 */
 export function isCommandPaletteShortcut(event) {
   return (
@@ -33,13 +48,18 @@ export function isCommandPaletteShortcut(event) {
   );
 }
 
-/** @param {Command[]} commands @param {{ searchAll?: boolean }} options */
+/**
+ * @param {Command[] | (() => Command[]) | import("vue").Ref<Command[]>} commands
+ *   命令列表，或返回列表的 getter/ref——skill 补全项是异步拉来的，需要响应式来源。
+ * @param {{ searchAll?: boolean }} options
+ */
 export function useCommandPalette(commands, { searchAll = false } = {}) {
   const open = ref(false);
   const query = ref("");
   const activeIndex = ref(0);
 
-  const filtered = computed(() => filterCommands(commands, query.value, { searchAll }));
+  // toValue 兼容三种入参：纯数组（原有调用）、ref、getter。数组时等价于原行为。
+  const filtered = computed(() => filterCommands(toValue(commands), query.value, { searchAll }));
 
   function close() {
     open.value = false;

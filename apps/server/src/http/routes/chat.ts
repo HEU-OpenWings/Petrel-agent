@@ -1,5 +1,5 @@
 import type { CompactionOutcome } from "@petrel/agent";
-import { listModels, projectAgentEvent } from "@petrel/agent";
+import { findSkill, getSkills, listModels, projectAgentEvent } from "@petrel/agent";
 import { getDb } from "@petrel/database";
 import { logger } from "@petrel/logger";
 import { Hono } from "hono";
@@ -76,6 +76,31 @@ function toHttpException(error: unknown): never {
 }
 
 /**
+ * skill 显式调用（/skill: 命令）的字段。name 在开流前就校验存在——skill 不存在时
+ * 直接 400，不进 streamSSE（开流后只能用 event:error，分不清「用户拼错名字」与「模型报错」）。
+ *
+ * disableModelInvocation 的 skill 也允许 /skill: 调用：那个标记只对模型隐藏，不限制用户。
+ */
+function parseSkillField(raw: unknown): { name: string; args?: string } | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object") {
+    throw new HTTPException(400, { message: "skill 必须是对象" });
+  }
+  const { name, args } = raw as { name?: unknown; args?: unknown };
+  if (typeof name !== "string" || name === "") {
+    throw new HTTPException(400, { message: "skill.name 必须是非空字符串" });
+  }
+  if (!findSkill(name)) {
+    throw new HTTPException(400, { message: `未知 skill：${name}` });
+  }
+  if (args !== undefined && typeof args !== "string") {
+    throw new HTTPException(400, { message: "skill.args 必须是字符串" });
+  }
+  const trimmedArgs = typeof args === "string" ? args.trim() : "";
+  return { name, args: trimmedArgs || undefined };
+}
+
+/**
  * 请求体是运行时来的 unknown，必须真判类型再用：
  * c.req.json<T>() 的泛型只是断言，body 完全可能是 null、数组、或者数字 message，
  * 直接 body.message?.trim() 会抛成 500——客户端错误报成服务端错误。
@@ -88,11 +113,18 @@ function parseChatRequest(body: unknown) {
     sessionId?: unknown;
     systemPrompt?: unknown;
     model?: unknown;
+    skill?: unknown;
   } | null;
 
-  const message = typeof fields?.message === "string" ? fields.message.trim() : "";
-  if (!message) {
-    throw new HTTPException(400, { message: "message 必须是非空字符串" });
+  // skill 模式与 message 模式二选一。skill 模式下 message 由 name/args 合成，
+  // 供会话标题与压缩 pendingMessage 用；message 模式保持原有「空消息先于 sessionId 校验」。
+  const skill = parseSkillField(fields?.skill);
+  let message = "";
+  if (!skill) {
+    message = typeof fields?.message === "string" ? fields.message.trim() : "";
+    if (!message) {
+      throw new HTTPException(400, { message: "message 必须是非空字符串" });
+    }
   }
 
   const sessionId = fields?.sessionId;
@@ -118,7 +150,12 @@ function parseChatRequest(body: unknown) {
     });
   }
 
-  return { message, sessionId, systemPrompt, model };
+  // skill 模式：合成展示文本（会话标题取其首句、压缩 pendingMessage 也用它）。
+  if (skill) {
+    message = skill.args ? `/skill:${skill.name} ${skill.args}` : `/skill:${skill.name}`;
+  }
+
+  return { message, sessionId, systemPrompt, model, skill };
 }
 
 function requireSessionId(body: unknown): string {
@@ -134,7 +171,7 @@ export const chat = new Hono<AppEnv>()
     const body: unknown = await c.req.json().catch(() => {
       throw new HTTPException(400, { message: "请求体必须是 JSON" });
     });
-    const { message, sessionId, systemPrompt, model } = parseChatRequest(body);
+    const { message, sessionId, systemPrompt, model, skill } = parseChatRequest(body);
 
     // acquire 里的 upsert 同时完成归属校验与建会话；不属于自己时抛 403（容量满时 503）。
     // 放在 streamSSE 之外：一旦开了流就只能在流里报错了。
@@ -239,6 +276,8 @@ export const chat = new Hono<AppEnv>()
           onNotice: (notice) => {
             queue.push({ event: "compaction", data: JSON.stringify(toCompactionFrame(notice)) });
           },
+          // 存在则本轮走 harness.skill()：与普通 prompt 共用同一条串行 chain 与 SSE 收尾。
+          skill,
         });
       } catch {
         // 上游异常可能带请求 id、headers、响应正文甚至 key 片段：既不进日志，也不进 SSE。
@@ -296,4 +335,15 @@ export const chat = new Hono<AppEnv>()
     const sessionId = requireSessionId({ sessionId: c.req.query("sessionId") });
     const usage = await getRegistry().inspect(sessionId, c.get("currentUser").id).catch(toHttpException);
     return c.json(usage);
+  })
+
+  /**
+   * 可用 skill 列表（前端 /skill: 命令的补全）。
+   *
+   * 列出全部 skill：disableModelInvocation 只对模型隐藏，用户仍可 /skill: 调用。
+   * 只透出 name/description，不含正文（正文进上下文由 harness.skill() 负责）。
+   */
+  .get("/skills", (c) => {
+    const skills = getSkills().map((skill) => ({ name: skill.name, description: skill.description }));
+    return c.json({ skills });
   });

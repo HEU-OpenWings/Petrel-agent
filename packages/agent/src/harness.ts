@@ -11,6 +11,7 @@ import { defaultModel, models as defaultModels, findModel, listModels } from "./
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID } from "./models/providers.ts";
 import { createUserModels } from "./models/user-models.ts";
 import { PgSessionStorage } from "./session/pg-storage.ts";
+import { getSkills } from "./skills/catalog.ts";
 import { selectTools } from "./tools/registry.ts";
 
 /**
@@ -187,6 +188,9 @@ export function createHarness(options: CreateHarnessOptions): AgentHarness<ToolC
     tools,
     systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
     toolContext: options.toolContext,
+    // 供 harness.skill()（阶段二的 /skill: 显式调用）解析 skill；模型自主路径走 read_skill
+    // 工具，不经这里。skill 是全局静态资源，装配时读一次即可。
+    resources: { skills: getSkills() },
   });
 }
 

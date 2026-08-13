@@ -1,10 +1,12 @@
 import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import { isEmbeddingConfigured } from "@petrel/memory";
 import type { ToolContext } from "../harness.ts";
+import { getSkills } from "../skills/catalog.ts";
 import { currentTime } from "./current-time.ts";
 import { connectAllMcpServers } from "./mcp.ts";
 import { memorySearch } from "./memory-search.ts";
 import { memoryWrite } from "./memory-write.ts";
+import { readSkill } from "./read-skill.ts";
 import { createWebSearchFromConfig } from "./web-search.ts";
 
 // ---------------------------------------------------------------------------
@@ -87,6 +89,25 @@ if (webSearch) {
 if (isEmbeddingConfigured()) {
   registerTool("memory_search", memorySearch);
   registerTool("memory_write", memoryWrite);
+}
+
+// ---------------------------------------------------------------------------
+// skill 工具注册
+// ---------------------------------------------------------------------------
+
+/**
+ * 在 skill 目录加载完成后注册 read_skill 工具。
+ *
+ * 由 apps/server 在 initSkills() 之后调用一次。放在这里而不是模块顶层：skill 是启动时
+ * 异步加载的，模块加载期 catalog 还是空的。没有任何 skill 时不注册——不给模型一个
+ * 必然返回「未知 skill」的空工具（同 embedding 未配置时不注册 memory 工具的先例）。
+ *
+ * 幂等：已注册过就跳过，避免测试重复调用时撞 registerTool 的名冲突检查。
+ */
+export function registerSkillTool(): void {
+  if (getSkills().length === 0) return;
+  if (registry.has("read_skill")) return;
+  registerTool("read_skill", readSkill);
 }
 
 // ---------------------------------------------------------------------------

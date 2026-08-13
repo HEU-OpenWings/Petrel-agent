@@ -5,9 +5,11 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER_ID,
   resolveModel,
+  type Skill,
+  setSkillsForTest,
 } from "@petrel/agent";
 import { createTestDb, TEST_USER_ID, type TestDb } from "@petrel/database/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 // HarnessNotice 定义在 registry 自己这里（它是 registry 与 route 之间的契约，
 // 不是 agent 包的概念），所以从本地模块导入，不是从 @petrel/agent
 import { createHarnessRegistry, type HarnessNotice, HarnessRegistryError } from "./harness-registry.ts";
@@ -1389,5 +1391,68 @@ describe("HEU-54 R1 checkModelAuth 与 userId 防御", () => {
     spy.mockRestore();
     h1.release();
     h2.release();
+  });
+});
+
+describe("createHarnessRegistry 的 skill 显式调用", () => {
+  function fakeSkill(overrides: Partial<Skill> = {}): Skill {
+    return {
+      name: "root-cause-analysis",
+      description: "结构化根因分析",
+      content: "先复现再定位",
+      filePath: "/skills/root-cause-analysis/SKILL.md",
+      disableModelInvocation: false,
+      ...overrides,
+    };
+  }
+
+  // skill 目录是进程级模块状态，用例之间清掉，别污染其它 describe
+  afterEach(() => setSkillsForTest([]));
+
+  it("skill 显式调用走 harness.skill(name, args)，不走 prompt", async () => {
+    setSkillsForTest([fakeSkill()]);
+    const factory = fauxFactory();
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "/skill:root-cause-analysis 看这个 bug");
+    const skill = vi.spyOn(handle.harness, "skill");
+    const prompt = vi.spyOn(handle.harness, "prompt");
+
+    await handle.send("/skill:root-cause-analysis 看这个 bug", {
+      skill: { name: "root-cause-analysis", args: "看这个 bug" },
+    });
+    handle.release();
+
+    expect(skill).toHaveBeenCalledWith("root-cause-analysis", "看这个 bug");
+    expect(prompt).not.toHaveBeenCalled();
+    // harness.skill 把 skill 正文注入为 user turn，落库的 transcript 因此带 <skill 块
+    const text = JSON.stringify(await handle.session.getEntries());
+    expect(text).toContain("先复现再定位");
+  });
+
+  it("运行中的第二条 skill 调用进队列，settled 后 drain 逐个跑完", async () => {
+    setSkillsForTest([fakeSkill()]);
+    const factory = fauxFactory(true); // 慢速吐字，保证第二条进临界区时首轮还在跑
+    const registry = createHarnessRegistry({ db, createHarness: factory.create });
+
+    const handle = await registry.acquire(SESSION_ID, TEST_USER_ID, "/skill:root-cause-analysis");
+    const skill = vi.spyOn(handle.harness, "skill");
+    const types: string[] = [];
+    handle.harness.subscribe((event) => {
+      types.push(event.type);
+    });
+
+    const first = handle.send("/skill:root-cause-analysis 一", {
+      skill: { name: "root-cause-analysis", args: "一" },
+    });
+    const second = handle.send("/skill:root-cause-analysis 二", {
+      skill: { name: "root-cause-analysis", args: "二" },
+    });
+    await Promise.all([first, second]);
+    handle.release();
+
+    // 两条各占一轮独立 run，都走 skill()——串行入口没有把第二条丢掉，也没抛 busy
+    expect(skill.mock.calls.map(([, args]) => args)).toEqual(["一", "二"]);
+    expect(types.filter((type) => type === "agent_end")).toHaveLength(2);
   });
 });

@@ -13,7 +13,11 @@
           <Check v-if="copied" :size="14" />
           <Copy v-else :size="14" />
         </div>
-        <p class="message-text">{{ plainText }}</p>
+        <template v-if="skillInvocation">
+          <div class="skill-chip"><Sparkles :size="13" /> skill：{{ skillInvocation.name }}</div>
+          <p v-if="skillInvocation.args" class="message-text">{{ skillInvocation.args }}</p>
+        </template>
+        <p v-else class="message-text">{{ plainText }}</p>
       </template>
 
       <!-- 助手消息 -->
@@ -70,7 +74,7 @@
 
 <script setup>
 import { CaretRightOutlined } from "@ant-design/icons-vue";
-import { Check, Copy, TriangleAlert } from "lucide-vue-next";
+import { Check, Copy, Sparkles, TriangleAlert } from "lucide-vue-next";
 import { MdPreview } from "md-editor-v3";
 import { computed, onUnmounted, ref } from "vue";
 import "md-editor-v3/lib/preview.css";
@@ -104,6 +108,21 @@ const plainText = computed(() =>
     .map((block) => block.text)
     .join("\n"),
 );
+
+/**
+ * 用户 /skill: 调用注入的 user turn 是 `<skill name="X">…</skill>` 正文（含 args）。
+ * 直接渲染会露出一大段 XML，这里识别出来友好显示成 chip + args。历史回放同样走这条路
+ * （落库的就是这段正文），所以不用前端乐观补一条气泡。
+ */
+const skillInvocation = computed(() => {
+  if (props.message.role !== "user") return null;
+  const text = plainText.value;
+  const match = text.match(/^<skill name="([^"]+)"/);
+  if (!match) return null;
+  const closeIndex = text.indexOf("</skill>");
+  const args = closeIndex >= 0 ? text.slice(closeIndex + "</skill>".length).trim() : "";
+  return { name: match[1], args };
+});
 
 let copyTimer = null;
 
@@ -164,6 +183,17 @@ onUnmounted(() => clearTimeout(copyTimer));
   max-width: 100%;
   margin-bottom: 0;
   white-space: pre-line;
+}
+
+// /skill: 调用的友好标签：贴在 args 上方，视觉上比正文弱一档
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  color: var(--main-color);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .message-copy-btn {
