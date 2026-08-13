@@ -196,11 +196,14 @@ HTTP 接口 + `psql` 查表（不是浏览器点击）：
 第 11 项还额外确认了一件事：`ensureSession` 本身失败时**不会**留下空会话行（下方已知问题 2
 说的是 `ensureSession` 成功而 `loadHistory` 失败那条路径，两者不是一回事）。
 
-**仍未验证：**
+**2026-08-10 浏览器人工验收：**
 
-- **浏览器 UI 观感**——hover 才出现的重命名/删除图标、`prompt` / `confirm` / `alert`
-  三个原生弹窗、active 高亮、切换会话的手感。上面 11 项验的是后端契约与数据落地，
-  前端把这些数据渲染成什么样，仍然**没有人在浏览器里看过**。
+- 会话 hover 操作、active 高亮、双会话切换、刷新恢复、空新会话不入列、中断半截回答均通过。
+- 设置三 tab、密码表单校验、保存期间输入禁用、加载失败与重试均通过。
+- 停止按钮确认命中 `POST /api/chat/abort`；切换会话与离开 Agent 没有发 abort，后台回答完整落库，返回后可恢复。
+- `prompt` / `confirm` / `alert` 的代码路径已复核，但 Codex 内置浏览器会自动关闭原生 JS dialog，
+  仍需在普通 Chrome / Edge 补一次可见性确认。完整证据见
+  [会话与设置前端人工验收](tech/frontend-session-settings-qa-2026-08-10.md)。
 **默认模型换成 DeepSeek 官方的 `deepseek-v4-flash`（2026-08-03）**
 
 起因是 SiliconFlow 的 `deepseek-ai/DeepSeek-V3` 被平台限流（`code 50609 / System is too busy`，
