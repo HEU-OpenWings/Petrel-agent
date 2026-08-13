@@ -215,9 +215,21 @@ export interface HarnessAssemblyOptions {
   activeToolNames?: string[];
 }
 
+/**
+ * 用户 /skill: 显式调用的描述。存在时这一轮走 harness.skill(name, args) 而不是
+ * harness.prompt()——pi 会把 skill 正文注入为 user turn 并跑一整轮。name 由路由层
+ * 在开流前用 findSkill 校验过，到这里一定存在。
+ */
+export interface SkillInvocation {
+  name: string;
+  args?: string;
+}
+
 export interface SendOptions {
   /** 同步回调，调用方（SSE 路由）负责把它变成帧。绝不能在里面做网络 I/O */
   onNotice?: (notice: HarnessNotice) => void;
+  /** 存在则本轮是 skill 显式调用，走 harness.skill()；缺省是普通 prompt。 */
+  skill?: SkillInvocation;
 }
 
 /**
@@ -230,6 +242,8 @@ export interface SendOptions {
  */
 interface PendingMessage {
   message: string;
+  /** 存在则这条排队的是 skill 显式调用，drain 时走 harness.skill()。 */
+  skill?: SkillInvocation;
   /** 这条消息自己的模型与系统提示，不能被后到请求覆盖。 */
   assembly: HarnessAssemblyOptions;
   /** 这条消息对应 SSE 连接的压缩通知回调。 */
@@ -398,8 +412,13 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
     sessionId: string,
     message: string,
     notify: (notice: HarnessNotice) => void,
+    skill?: SkillInvocation,
   ): Promise<void> {
-    const result = await entry.harness.prompt(message);
+    // skill 显式调用走 harness.skill()：pi 把 skill 正文注入为 user turn 并跑一整轮，
+    // 返回的 AssistantMessage 与 prompt() 同型，所以下面的溢出兜底对两条路一致。
+    const result = skill
+      ? await entry.harness.skill(skill.name, skill.args)
+      : await entry.harness.prompt(message);
     if (!isContextOverflow(entry.harness, result)) return;
     // evict() 可能正好落在 prompt() resolve 与补救压缩之间；已退休实例不能再写会话树。
     if (entry.retired) return;
@@ -464,7 +483,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
             // 排队消息各占独立 run，因此要在起轮前应用它自己 acquire 时的配置。
             await applyAssembly(entry, item.assembly);
             // 保留「不做预压缩」的取舍，但与普通 send 共用溢出后的强制压缩兜底。
-            await promptWithOverflowRecovery(entry, sessionId, item.message, item.notify);
+            await promptWithOverflowRecovery(entry, sessionId, item.message, item.notify, item.skill);
           })().finally(() => {
             entry.running = false;
             entry.lastUsedAt = now();
@@ -810,7 +829,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
               // send() 的 promise 在「这条消息自己那轮跑完」时才 resolve，
               // 并发连接的 SSE 流因此能看到答案再收尾（与旧 followUp 语义一致）。
               outcome = new Promise<void>((resolve, reject) => {
-                held.pending.push({ message, assembly, notify, resolve, reject });
+                held.pending.push({ message, skill: options.skill, assembly, notify, resolve, reject });
               });
               // settled → setImmediate 的窗口里 running 已经复位，但旧队列尚未启动；
               // 此时也必须排在队尾，并补一次唤醒，不能直接 prompt 插队。
@@ -866,12 +885,14 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
                 }
 
                 held.running = true;
-                return promptWithOverflowRecovery(held, sessionId, message, notify).finally(() => {
-                  // settled 通常已经复位过；这里兜住 prompt 抛异常、没有 agent_end 的情况。
-                  held.running = false;
-                  held.lastUsedAt = now();
-                  if (held.pending.length > 0) kickDrain(held, sessionId);
-                });
+                return promptWithOverflowRecovery(held, sessionId, message, notify, options.skill).finally(
+                  () => {
+                    // settled 通常已经复位过；这里兜住 prompt 抛异常、没有 agent_end 的情况。
+                    held.running = false;
+                    held.lastUsedAt = now();
+                    if (held.pending.length > 0) kickDrain(held, sessionId);
+                  },
+                );
               });
             // 不 return outcome：chain 到此放行，下一个请求会看到 compaction 已置真
             return undefined;

@@ -10,6 +10,7 @@ export type {
   AgentHarnessEvent,
   AgentMessage,
   Session,
+  Skill,
 } from "@earendil-works/pi-agent-core";
 
 /**
@@ -71,7 +72,7 @@ export {
   type UserProviderStatus,
 } from "./models/user-provider-service.ts";
 export { PgSessionStorage } from "./session/pg-storage.ts";
-export { findSkill, getSkills, initSkills } from "./skills/catalog.ts";
+export { findSkill, getSkills, initSkills, setSkillsForTest } from "./skills/catalog.ts";
 export { skillsSystemPromptBlock } from "./skills/system-prompt.ts";
 export {
   initMcpTools,
