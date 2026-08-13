@@ -34,14 +34,16 @@ function parseFrame(frame) {
  * model 与 systemPrompt 来自 stores/preferences，缺省时后端回落到系统默认值。
  * JSON.stringify 会丢掉值为 undefined 的键，所以不传等于没这个字段。
  *
- * @param {{ message: string, sessionId: string, systemPrompt?: string, model?: string, signal?: AbortSignal }} params
+ * skill 存在时是 /skill: 显式调用：后端走 harness.skill(name, args)，message 只作展示。
+ *
+ * @param {{ message: string, sessionId: string, systemPrompt?: string, model?: string, skill?: { name: string, args?: string }, signal?: AbortSignal }} params
  * @param {(frame: { event: string, data: any }) => void} onFrame
  */
-export async function streamChat({ message, sessionId, systemPrompt, model, signal }, onFrame) {
+export async function streamChat({ message, sessionId, systemPrompt, model, skill, signal }, onFrame) {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, sessionId, systemPrompt, model }),
+    body: JSON.stringify({ message, sessionId, systemPrompt, model, skill }),
     signal,
   });
 
@@ -148,4 +150,12 @@ export async function fetchContextUsage(sessionId) {
   const response = await fetch(`/api/chat/context?sessionId=${encodeURIComponent(sessionId)}`);
   if (!response.ok) throw await readError(response, "读取上下文占用失败");
   return response.json();
+}
+
+/** 可用 skill 列表（/skill: 命令的补全）→ [{ name, description }] */
+export async function fetchSkills() {
+  const response = await fetch("/api/chat/skills");
+  if (!response.ok) throw await readError(response, "读取 skill 列表失败");
+  const body = await response.json();
+  return Array.isArray(body.skills) ? body.skills : [];
 }

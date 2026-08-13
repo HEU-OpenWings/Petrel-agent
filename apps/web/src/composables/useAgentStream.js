@@ -180,6 +180,8 @@ export function useAgentStream() {
           sessionId: options.sessionId,
           systemPrompt: options.systemPrompt,
           model: options.model,
+          // 存在则本轮是 /skill: 显式调用，后端走 harness.skill()；message 只作展示。
+          skill: options.skill,
           signal: controller.value.signal,
         },
         (frame) => {

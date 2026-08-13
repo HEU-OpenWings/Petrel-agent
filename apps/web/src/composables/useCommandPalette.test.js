@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { filterCommands, isCommandPaletteShortcut, useCommandPalette } from "./useCommandPalette.js";
+import { ref } from "vue";
+import {
+  filterCommands,
+  isCommandPaletteShortcut,
+  parseSkillCommand,
+  useCommandPalette,
+} from "./useCommandPalette.js";
 
 const COMMANDS = [
   { name: "new", description: "新对话", run: () => {} },
@@ -98,6 +104,50 @@ describe("useCommandPalette", () => {
     const palette = useCommandPalette([{ name: "new", description: "新对话", run }]);
     palette.pick();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  // skill 补全项是异步拉来的，命令来源必须能是响应式的 ref/getter
+  it("命令来源是 ref 时随其变化过滤（供 skill 补全动态注入）", () => {
+    const commands = ref([{ name: "new", description: "新对话", run: () => {} }]);
+    const palette = useCommandPalette(commands);
+    palette.openWith("skill:");
+    expect(palette.filtered.value).toEqual([]);
+
+    commands.value = [
+      ...commands.value,
+      { name: "skill:root-cause-analysis", description: "根因分析", run: () => {} },
+    ];
+    palette.openWith("skill:");
+    expect(palette.filtered.value.map((command) => command.name)).toEqual(["skill:root-cause-analysis"]);
+  });
+});
+
+describe("parseSkillCommand", () => {
+  it("解析 /skill:name args", () => {
+    expect(parseSkillCommand("/skill:root-cause-analysis 看这个 bug")).toEqual({
+      name: "root-cause-analysis",
+      args: "看这个 bug",
+    });
+  });
+
+  it("只有 name 时 args 为 undefined", () => {
+    expect(parseSkillCommand("/skill:root-cause-analysis")).toEqual({
+      name: "root-cause-analysis",
+      args: undefined,
+    });
+  });
+
+  it("name 后只有空白时 args 为 undefined", () => {
+    expect(parseSkillCommand("/skill:root-cause-analysis   ")).toEqual({
+      name: "root-cause-analysis",
+      args: undefined,
+    });
+  });
+
+  it("不是 /skill: 开头返回 null（按普通消息处理）", () => {
+    expect(parseSkillCommand("你好")).toBeNull();
+    expect(parseSkillCommand("/compact")).toBeNull();
+    expect(parseSkillCommand("/skill")).toBeNull();
   });
 });
 

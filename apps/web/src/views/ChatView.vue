@@ -102,7 +102,7 @@
 <script setup>
 import { Slash } from "lucide-vue-next";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { fetchContextUsage } from "@/apis/chat_api";
+import { fetchContextUsage, fetchSkills } from "@/apis/chat_api";
 import { fetchMessages } from "@/apis/session_api";
 import CommandPalette from "@/components/chat/CommandPalette.vue";
 import CompactionDivider from "@/components/chat/CompactionDivider.vue";
@@ -110,7 +110,7 @@ import ComposerModelSelector from "@/components/chat/ComposerModelSelector.vue";
 import MessageItem from "@/components/chat/MessageItem.vue";
 import MessageInputComponent from "@/components/MessageInputComponent.vue";
 import { useAgentStream } from "@/composables/useAgentStream";
-import { useCommandPalette } from "@/composables/useCommandPalette";
+import { parseSkillCommand, useCommandPalette } from "@/composables/useCommandPalette";
 import { useLayoutStore } from "@/stores/layout";
 import { usePreferencesStore } from "@/stores/preferences";
 import { useSessionStore } from "@/stores/session";
@@ -151,6 +151,7 @@ onMounted(() => {
   // 幂等，SettingsModal 打开时也会调一次。拉不到不阻断对话：
   // model / systemPrompt 保持 null，后端回落到系统默认值
   void preferences.ensureLoaded();
+  void refreshSkills();
   if (!sessionStore.currentId) sessionStore.startNew();
   else void loadSession(sessionStore.currentId);
 });
@@ -278,7 +279,7 @@ async function selectModel(modelId) {
   }
 }
 
-const commands = [
+const fixedCommands = [
   { name: "new", description: "新对话", keywords: ["新建"], run: newChat },
   {
     name: "model",
@@ -298,7 +299,36 @@ const commands = [
   { name: "sidebar", description: "开合左栏", keywords: ["侧栏"], run: () => layout.toggleLeft() },
 ];
 
+// 内置 skill 拉过来做 /skill: 补全。命名成 `skill:<name>`：命令面板按 name 前缀过滤，
+// 输入 /skill:root 就能筛出对应项。fill 标记这类项「选中只填草稿、不立即执行」——
+// skill 要跟一段自由文本 args，不是无参动作。
+const skills = ref([]);
+const commands = computed(() => [
+  ...fixedCommands,
+  ...skills.value.map((skill) => ({
+    name: `skill:${skill.name}`,
+    description: skill.description,
+    keywords: [skill.name],
+    fill: `/skill:${skill.name} `,
+    run: () => fillSkill(skill.name),
+  })),
+]);
+
 const slashPalette = useCommandPalette(commands);
+
+async function refreshSkills() {
+  try {
+    skills.value = await fetchSkills();
+  } catch {
+    // 拉不到不阻断对话：/skill: 补全暂时为空而已
+  }
+}
+
+// 选中 skill 补全项：只把 `/skill:<name> ` 填进草稿并聚焦，等用户接着打 args，不立即发送。
+function fillSkill(name) {
+  draft.value = `/skill:${name} `;
+  void nextTick(() => input.value?.focus());
+}
 
 /** 只在整段输入以 / 开头时唤起面板，避免正文里的斜杠误触发 */
 function onDraftChange(value) {
@@ -337,8 +367,10 @@ function toggleCommands() {
 }
 
 function onPickCommand(index) {
+  // fill 类命令（skill 补全）的 run 已经把草稿填好了，别再清掉
+  const command = slashPalette.filtered.value[index];
   slashPalette.pick(index);
-  draft.value = "";
+  if (!command?.fill) draft.value = "";
 }
 
 function onKeydown(event) {
@@ -362,8 +394,10 @@ function onKeydown(event) {
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      // fill 类命令（skill 补全）的 run 已经把草稿填好了，别再清掉
+      const command = slashPalette.filtered.value[slashPalette.activeIndex.value];
       slashPalette.pick();
-      draft.value = "";
+      if (!command?.fill) draft.value = "";
       return;
     }
   }
@@ -397,12 +431,16 @@ async function submit() {
   draft.value = "";
   // 必须在 send 之前自增：在飞的 loadSession 靠它判断「我拉的历史已经过期了」
   sendSeq += 1;
+  // /skill:name args → 走 harness.skill()；解析不出就是普通消息。名字非法时后端 400，
+  // useAgentStream 会把错误显示出来，不在前端预判。
+  const skill = parseSkillCommand(text);
   await send(text, {
     sessionId,
     // ?? undefined：store 里「跟随系统默认」是 null，而请求体里不该出现
     // model: null——后端的类型校验只认字符串或不传
     model: preferences.defaultModel ?? undefined,
     systemPrompt: preferences.systemPrompt ?? undefined,
+    skill,
   });
 
   // 首条消息会让后端 upsert 出这个会话，刷新列表才能把它显示出来；
