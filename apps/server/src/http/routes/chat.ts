@@ -76,13 +76,6 @@ function toHttpException(error: unknown): never {
 }
 
 /**
- * 请求体是运行时来的 unknown，必须真判类型再用：
- * c.req.json<T>() 的泛型只是断言，body 完全可能是 null、数组、或者数字 message，
- * 直接 body.message?.trim() 会抛成 500——客户端错误报成服务端错误。
- *
- * 校验顺序是 message 先于 sessionId：空消息是最常见的误用。
- */
-/**
  * skill 显式调用（/skill: 命令）的字段。name 在开流前就校验存在——skill 不存在时
  * 直接 400，不进 streamSSE（开流后只能用 event:error，分不清「用户拼错名字」与「模型报错」）。
  *
@@ -107,6 +100,13 @@ function parseSkillField(raw: unknown): { name: string; args?: string } | undefi
   return { name, args: trimmedArgs || undefined };
 }
 
+/**
+ * 请求体是运行时来的 unknown，必须真判类型再用：
+ * c.req.json<T>() 的泛型只是断言，body 完全可能是 null、数组、或者数字 message，
+ * 直接 body.message?.trim() 会抛成 500——客户端错误报成服务端错误。
+ *
+ * 校验顺序是 message 先于 sessionId：空消息是最常见的误用。
+ */
 function parseChatRequest(body: unknown) {
   const fields = body as {
     message?: unknown;

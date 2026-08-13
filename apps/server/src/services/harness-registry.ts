@@ -18,7 +18,6 @@ import {
   isContextOverflow,
   maybeCompact,
   resolveModel,
-  resolveTools,
   skillsSystemPromptBlock,
 } from "@petrel/agent";
 import { env } from "@petrel/config";
@@ -1052,17 +1051,6 @@ export function createHarnessRegistry(options: HarnessRegistryOptions) {
       return entries.get(sessionId)?.compactionState;
     },
   };
-}
-
-/**
- * 比较两个 activeToolNames 是否内容相同。
- * 不能用 `===`：前端每次请求传的是新数组对象（引用不同），即使工具列表没变。
- */
-function sameTools(a: string[] | undefined, b: string[] | undefined): boolean {
-  if (a === b) return true; // 两个都是 undefined 或同一引用
-  if (!a || !b) return false; // 一个 undefined 一个不是
-  if (a.length !== b.length) return false;
-  return a.every((name, i) => name === b[i]);
 }
 
 const TITLE_MAX_LENGTH = 30;
